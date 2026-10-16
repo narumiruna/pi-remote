@@ -6,11 +6,12 @@ The native workflow implementation has advanced, but `PLAN.md` is not complete. 
 
 Verified on this Mac with Pi 1.3.0, Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
-- 47 root package tests pass; the root and shared suites also pass with Thread Sanitizer.
+- 51 root package tests pass; the root and shared suites also pass with Thread Sanitizer.
 - 18 shared-package tests pass.
-- Eight iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips.
+- Fourteen iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips.
 - Both unsigned app builds pass. The unsigned iOS device-SDK build is a compile check, not an installed personal build.
 - An isolated check using the installed Pi passes model and thinking changes, input/editor dialogs, editor prefill, idle Stop, directory launch and idle session restoration. It sends no inference prompt.
+- An explicit provider check through the native host passes synthetic image input, observed live text, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart. Tools and installed resources are disabled.
 
 ## History
 
@@ -32,7 +33,17 @@ Thinking uses a disclosure. New conversations start at the latest output. Transc
 
 The app tests host real UIKit-backed SwiftUI views for idle, working, retrying, compacting and interrupted fixtures in light/dark appearance with accessibility text sizes. They also use a reduced 375 × 367-point viewport. The final four working-state captures are retained in the local result bundle for review. A reduced viewport is not a real keyboard or a tested minimum-device claim. Directory/session sheets, VoiceOver, actual keyboard and dictation, and the complete physical coding flow still need review.
 
+## Directory browsing and launch protection
+
+The picker displays one page of at most 100 entries and caches at most eight other pages. Previous/next navigation reuses cached pages because host directory cursors advance on read. Returning beyond the cache requires a fresh listing. Folder changes clear the cache and preview. Six simulator tests cover bounded paging, cached forward navigation, stale successes and failures, cancelled loads, stale previews and failed-navigation retry. A failed navigation leaves no folder selected for launch.
+
+The host checks directory identity and read/search permissions before creation and resumption, before replacing an existing process. Parameterized tests cover unknown IDs, file IDs, removed/replaced folders and read/search permission loss; each verifies that Pi never starts and no session is created. A separate resume test proves that permission loss does not replace the active process. Two activation-race cases replace the folder while the old process shuts down or executable inspection waits. Both initially launched RPC in the replacement folder. Revalidation after each wait now rejects the stale selection before RPC launch. Session headers are also rechecked after executable inspection, and executable changes are rejected while activation or inspection is active. Tests also reject traversal strings in typed directory IDs and report broken links and symbolic-link loops. The native-host dispatch test launches through an accessible symbolic-link alias and records the canonical selected directory. Production TLS tests reject unauthenticated directory requests.
+
+These are automated filesystem and simulator checks, not physical protected-folder/TCC acceptance. The isolated installed-Pi check also passes after the permission change without a provider request. The complete real-device coding flow remains open.
+
 ## Session and lifecycle protection
+
+The production TLS integration test also injects client snapshots through the internal state receiver. An older sequence cannot replace newer text. A wrong host or epoch closes the connection and blocks further requests. The receiver remains internal; no public injection API or runtime bypass was added.
 
 All conversation and sheet actions are bound to the displayed host, epoch and session. The client checks that context before dispatch, and the host still checks its epoch and selected session. Stale UI actions, attachments and resend confirmations cannot silently target a newer session. Tests reject wrong-host, wrong-epoch and stale-session actions without dispatch. Sheets reset their local state at a context change.
 
@@ -54,14 +65,29 @@ swift run NativeWorkflowCheck "$(command -v pi)" \
 
 The second argument is the checked demo extension bundled with the installed Pi. Resolve its path for other installations. The Swift check creates a private temporary wrapper and an isolated Pi config/session directory. It loads only that demo, disables tools, MCP, context files and other resources, and uses offline mode. A dummy, nonfunctional OpenAI key permits local model-selection checks; it is never used for a provider request. The wrapper records the subprocess working directory inside its private fixture. The check verifies that the user's global settings file is unchanged and removes its fixture after shutdown. It does not copy provider credentials or print transcripts, dialog answers or tool output.
 
-This check does not prove normal installed-extension compatibility, active-run steering/follow-up, real compaction, attachments with a provider, or nonempty real-Pi history restoration. Those acceptance checks remain open. See [the original RPC exercise](verification.md#installed-pi-exercise) for its separate, earlier provider-run evidence.
+This metadata-only check does not exercise provider work. The separate provider check below covers active-run controls, synthetic image input and nonempty native-host restoration. Normal installed-extension compatibility, real compaction and physical product-app acceptance remain open. See [the original RPC exercise](verification.md#installed-pi-exercise) for its separate, earlier provider-run evidence.
+
+### Native provider check
+
+The following command sends synthetic prompts and a generated white 64 × 64 PNG to the configured provider. It can incur provider usage. It is not part of `swift test`; run it deliberately:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+swift run NativeProviderCheck "$(command -v pi)" --exercise-model
+```
+
+The check starts three initial prompts, sends steering/follow-up instructions during active work, and stops the final run with queued instructions. It verifies visible streaming, delivery of both queue types, idle Stop with no later user-message delivery, history paging, clone/fork, return to the original session and nonempty restoration after a new coordinator acquires the same private catalog. Restored text, thinking and display flags must match; display-only message IDs can change. The working directory must remain unchanged.
+
+The check disables tools, extensions, MCP, skills, templates and project context. `--offline` disables Pi's automatic network activity, not these explicit provider requests. It uses Pi's existing credentials in place without copying or printing them. Session files and the nested working directory stay in a private temporary fixture, removed after shutdown. The effective agent settings file must remain unchanged. The check never resends an accepted prompt. Failures report only an assertion location or typed app fault, not model text or provider diagnostics.
+
+This is a native-host exercise, not a signed product-app, physical-device or normal installed-extension test. It does not test real compaction, full image output, in-place tree navigation, hardware unlock, sleep/wake or off-site access.
 
 ## Failures and external gates
 
 1. The first real-host check compared path strings and rejected a `/var` alias of the same directory. The check now compares canonical filesystem identities. The new resume regression first failed because equivalent directory URLs had different trailing-slash hints. Registered paths now compare canonical paths and filesystem identities rather than URL hints. The test passes valid header aliases and still rejects a different directory.
 2. `ImageRenderer` produced blank transcript regions and unsupported-control markers for UIKit-backed controls. The harness now captures a hosted UIKit hierarchy. Fixture safe areas and appearance settings were corrected before review. These failures were not treated as passing visual evidence.
-3. A fresh signed Mac build still fails in CodeSign with `errSecInternalComponent`. The session is a Background launch context. No Keychain ACL, password or certificate check was changed. The product apps still need foreground Xcode signing and physical installation; the older diagnostic signature cannot sign this source revision.
-4. CoreDevice reports the iPhone 16 Pro connected. Tailscale still reports that phone offline. Off-site acceptance needs the phone connected to Tailscale from a different network; no VPN or routing configuration was changed.
+3. A fresh signed Mac build on this branch still fails in CodeSign with `errSecInternalComponent` (`/tmp/pi-remote-plan-signing.log`). The session is a Background launch context. No Keychain ACL, password or certificate check was changed. The product apps still need foreground Xcode signing and physical installation; the older diagnostic signature cannot sign this source revision.
+4. The branch recheck reports the iPhone 16 Pro connected by USB, iOS 26.7.1 (23H30), with DDI available. Tailscale reports that phone offline. Off-site acceptance needs the phone connected to Tailscale from a different network; no VPN or routing configuration was changed.
 5. Full workflow compatibility remains blocked by terminal-only extension APIs and missing in-place tree navigation. No scope reduction or feature deferral has been accepted.
 
-The local iOS result bundle is `/tmp/pi-remote-workflow-phone-reviewed`. Captures and result bundles are temporary and are not committed. Build/test commands for the package and apps remain in [native app verification](native-apps.md#automated-checks).
+The branch checkpoint passed 14 iOS tests with zero failures or skips in `/tmp/pi-remote-apps-ios/Logs/Test/Test-PiRemote-2026.10.16_21-47-58-+0800.xcresult`. Its first test build failed because the pending-request test helper lacked main-actor isolation; adding that isolation fixed the compile error. The activation-race regression first failed both cases before the path-revalidation fix; the full suite now passes. An initial provider-image check build used the wrong attachment type name; it was corrected to the shared `ImageAttachment` before the passing run. The earlier visual-review result bundle is `/tmp/pi-remote-workflow-phone-reviewed`. Captures and result bundles are temporary and are not committed. Build/test commands for the package and apps remain in [native app verification](native-apps.md#automated-checks).

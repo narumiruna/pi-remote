@@ -64,7 +64,7 @@ public actor HostCoordinator {
         publish()
     }
     public func setExecutable(_ url: URL) throws {
-        guard rpc == nil else { throw RemoteFault.busy }
+        guard rpc == nil, mutations.isEmpty, utility == nil, !closing else { throw RemoteFault.busy }
         executable = url
     }
 
@@ -299,8 +299,8 @@ public actor HostCoordinator {
     private func requireRPC() throws -> RPCProcess { guard let rpc else { throw RemoteFault.unavailable }; return rpc }
 
     private func activate(_ id: UUID) async throws {
-        guard let index = sessions.firstIndex(where: { $0.info.id == id }),
-              try DirectoryRegistry.identify(sessions[index].directory.url) == sessions[index].directory else { throw RemoteFault.staleDirectory }
+        guard let index = sessions.firstIndex(where: { $0.info.id == id }) else { throw RemoteFault.staleDirectory }
+        try DirectoryRegistry.validateDirectory(sessions[index].directory)
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw RemoteFault.unavailable }
         let previous = rpc
         generation = UUID()
@@ -312,20 +312,16 @@ public actor HostCoordinator {
         if let previous, !(await previous.shutdown()) { throw RemoteFault.unavailable }
         guard !closing, generation == activation else { throw RemoteFault.cancelled }
         let item = sessions[index]
-        var args = ["--mode", "rpc", "--session-dir", item.folder.path]
-        if let file = item.file, FileManager.default.fileExists(atPath: file.path) {
-            try validateSessionFile(file)
-            try validateSessionHeader(file, session: item)
-            args += ["--session", file.path]
-        } else if item.file != nil && item.hasHistory != false {
-            throw RemoteFault.staleDirectory
-        } else { args += ["--session-id", item.piID] }
+        try DirectoryRegistry.validateDirectory(item.directory)
+        _ = try sessionArguments(item)
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = [executable.deletingLastPathComponent().path, "/opt/homebrew/bin", "/usr/local/bin", environment["PATH"] ?? "/usr/bin:/bin"].joined(separator: ":")
         let version = try await runUtility(executable.path, ["--version"], directory: item.directory.url, limit: 256, environment: environment)
         snapshot.piVersion = String(decoding: version.0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !closing, generation == activation, !Task.isCancelled else { throw RemoteFault.cancelled }
-        let child = try RPCProcess(executable: executable, arguments: args, workingDirectory: item.directory.url, environment: environment)
+        // Shutdown and executable inspection suspend this actor. Recheck paths before launch.
+        try DirectoryRegistry.validateDirectory(item.directory)
+        let child = try RPCProcess(executable: executable, arguments: sessionArguments(item), workingDirectory: item.directory.url, environment: environment)
         rpc = child
         let token = generation
         observer = Task { [weak self] in
@@ -346,6 +342,18 @@ public actor HostCoordinator {
             throw error
         }
         publish()
+    }
+
+    private func sessionArguments(_ item: ManagedSession) throws -> [String] {
+        var args = ["--mode", "rpc", "--session-dir", item.folder.path]
+        if let file = item.file, FileManager.default.fileExists(atPath: file.path) {
+            try validateSessionFile(file)
+            try validateSessionHeader(file, session: item)
+            args += ["--session", file.path]
+        } else if item.file != nil && item.hasHistory != false {
+            throw RemoteFault.staleDirectory
+        } else { args += ["--session-id", item.piID] }
+        return args
     }
 
     private func refreshConfiguration() async throws {

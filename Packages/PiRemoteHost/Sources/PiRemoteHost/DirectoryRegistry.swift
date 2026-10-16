@@ -44,6 +44,11 @@ public actor DirectoryRegistry {
         return RegisteredPath(url: canonical, identity: fingerprint, directory: directory)
     }
 
+    static func validateDirectory(_ path: RegisteredPath) throws {
+        guard path.directory, try identify(path.url) == path else { throw RemoteFault.staleDirectory }
+        guard access(path.url.path, R_OK | X_OK) == 0 else { throw RemoteFault.permissionDenied }
+    }
+
     public func register(_ url: URL) throws -> UUID {
         let path = try Self.identify(url)
         if let existing = nodes.first(where: { $0.value.path == path })?.key {
@@ -61,6 +66,7 @@ public actor DirectoryRegistry {
     public func resolve(_ id: UUID, directory: Bool = true) throws -> RegisteredPath {
         guard let node = nodes[id], node.path.directory == directory,
               try Self.identify(node.path.url) == node.path else { throw RemoteFault.staleDirectory }
+        if directory { try Self.validateDirectory(node.path) }
         nodes[id]?.touched = Date()
         return node.path
     }
