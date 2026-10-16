@@ -61,7 +61,43 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.Tests
+  PiRemoteInterfaceFixture:
+    type: application
+    platform: iOS
+    sources:
+      - path: Apps/iOS
+        excludes:
+          - PiRemoteApp.swift
+      - Apps/Shared
+      - Tests/InterfaceFixture
+    dependencies:
+      - package: PiRemoteSpikes
+        product: PiRemoteClient
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.InterfaceFixture
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: Test camera-result handling in the interface fixture.
+  PiRemoteInterfaceTests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - Tests/InterfaceTests
+    dependencies:
+      - target: PiRemoteInterfaceFixture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.InterfaceTests
 schemes:
+  PiRemoteInterface:
+    build:
+      targets:
+        PiRemoteInterfaceFixture: all
+        PiRemoteInterfaceTests: [test]
+    test:
+      targets:
+        - PiRemoteInterfaceTests
   PiRemote:
     build:
       targets:

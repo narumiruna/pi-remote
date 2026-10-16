@@ -35,6 +35,26 @@ final class PhoneTests: XCTestCase {
         }
     }
 
+    func testDismissedHostErrorDoesNotReturnUntilANewFailureOrContext() {
+        withPreferences { defaults in
+            let model = PhoneModel(defaults: defaults), host = UUID()
+            model.chooseMac(host); model.locked = false
+            var state = HostSnapshot(host: host, epoch: UUID()); state.error = .permissionDenied
+            model.applyState(state)
+            XCTAssertEqual(model.visibleFault, .permissionDenied)
+            model.reviewedFault()
+            XCTAssertNil(model.visibleFault)
+            state.sequence += 1; model.applyState(state)
+            XCTAssertNil(model.visibleFault)
+            state.error = nil; model.applyState(state)
+            state.error = .permissionDenied; model.applyState(state)
+            XCTAssertEqual(model.visibleFault, .permissionDenied)
+            model.reviewedFault(); state.epoch = UUID(); model.applyState(state)
+            XCTAssertEqual(model.visibleFault, .permissionDenied)
+            model.lock()
+        }
+    }
+
     func testSecretAccessWithoutUnlockFailsClosed() {
         let secrets = ProtectedSecrets()
         XCTAssertThrowsError(try secrets.get("test")) { XCTAssertEqual($0 as? RemoteFault, .unauthorized) }

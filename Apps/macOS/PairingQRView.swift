@@ -23,7 +23,7 @@ struct PairingQRView: View {
                         Text("This code is too large for a QR code. Copy the pairing code and paste it into Pi Remote on your iPhone.")
                     }
                     Text("The code expires after two minutes. Approve the device on this Mac after the phone requests pairing.")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.callout).foregroundStyle(.primary.opacity(0.75))
                     Text("This code gives access to pairing. Do not share it or include it in screenshots.")
                         .font(.callout)
                     Button("Copy pairing code") {

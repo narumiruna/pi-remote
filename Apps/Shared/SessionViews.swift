@@ -11,7 +11,7 @@ struct SessionListView: View {
     var body: some View {
         List {
             Button("New session", systemImage: "plus", action: newSession).frame(minHeight: 44).disabled(state.working)
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(.primary) }
             ForEach(state.sessions) { session in
                 Button {
                     if session.interrupted { interrupted = session }
@@ -19,7 +19,7 @@ struct SessionListView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(session.title).foregroundStyle(.primary)
-                        Text(session.directory).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+                        Text(session.directory).font(.caption.monospaced()).foregroundStyle(.primary.opacity(0.75)).lineLimit(2)
                         if session.interrupted { Label("Review interrupted work before continuing", systemImage: "exclamationmark.triangle").font(.caption) }
                     }.padding(.vertical, 4)
                 }.disabled(state.working)
@@ -47,7 +47,7 @@ struct SessionControls: View {
     @State private var error: String?
     var body: some View {
         Form {
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(.primary) }
             if let session = state.sessions.first(where: { $0.id == state.selected }) {
                 Section("Working directory") {
                     Text(session.directory).font(.caption.monospaced()).textSelection(.enabled)
@@ -82,12 +82,12 @@ struct SessionControls: View {
                     Button { perform(.command(name: command.name, arguments: arguments)) } label: {
                         VStack(alignment: .leading) {
                             Text("/" + command.name)
-                            Text(command.detail).font(.caption).foregroundStyle(.secondary)
+                            Text(command.detail).font(.caption).foregroundStyle(.primary.opacity(0.75))
                         }
                     }
                 }
                 Text("Terminal-only extension interfaces require native adapters; full compatibility is not yet verified.")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.primary.opacity(0.75))
             }.disabled(state.working || state.selected == nil)
         }
         .navigationTitle("Session controls")
@@ -111,16 +111,16 @@ struct HistoryView: View {
     @State private var preview: FilePreview?
     var body: some View {
         List {
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(error).foregroundStyle(.primary) }
             Text("Includes compacted history and abandoned branches. Fork is available only for user messages on the active branch; it does not switch an abandoned branch.")
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.caption).foregroundStyle(.primary.opacity(0.75))
             if loading { ProgressView("Loading history") }
             if !newer.isEmpty { Button("Newer entries") { page = newer.removeLast() }.frame(minHeight: 44).disabled(loading) }
             Button("Reload newest entries") { Task { newer = []; await load(nil) } }.frame(minHeight: 44).disabled(loading)
             ForEach(page.items) { item in
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(item.kind + " · " + item.id).font(.caption.monospaced()).foregroundStyle(.secondary)
-                    if let parent = item.parent { Text("Parent: " + parent).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+                    Text(item.kind + " · " + item.id).font(.caption.monospaced()).foregroundStyle(.primary.opacity(0.75))
+                    if let parent = item.parent { Text("Parent: " + parent).font(.caption2.monospaced()).foregroundStyle(.primary.opacity(0.75)) }
                     Text(item.text).textSelection(.enabled)
                     if let id = item.preview {
                         Button("Read entry") {

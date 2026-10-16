@@ -48,7 +48,7 @@ struct CompanionWindow: View {
                 VStack(alignment: .leading) {
                     Text(model.state.sessions.first(where: { $0.id == model.state.selected })?.title ?? "Pi Remote").font(.headline)
                     Text(model.state.sessions.first(where: { $0.id == model.state.selected })?.directory ?? "No session selected")
-                        .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).help("The full working directory is shown in Session controls.")
+                        .font(.caption.monospaced()).foregroundStyle(.primary.opacity(0.75)).lineLimit(1).help("The full working directory is shown in Session controls.")
                 }
                 Spacer()
                 Text(model.state.phase).font(.caption)
@@ -60,8 +60,8 @@ struct CompanionWindow: View {
                 }
                 Button("Connection", systemImage: "network") { settings.toggle() }.labelStyle(.iconOnly)
             }.padding(16)
-            if let error = model.startupError { Text(error).foregroundStyle(.red).padding() }
-            if let fault = model.needsActionReview ? RemoteFault.unknownOutcome : (model.fault ?? model.state.error) {
+            if let error = model.startupError { Text(error).foregroundStyle(.primary).padding() }
+            if let fault = model.visibleFault {
                 HStack { Text(fault.explanation).font(.caption); Spacer(); Button(model.needsActionReview ? "Reviewed" : "Dismiss") { model.reviewedFault() } }.padding(12)
             }
             if settings || !model.listening { connectionSettings }
@@ -71,7 +71,7 @@ struct CompanionWindow: View {
                     Text(pending.device.id.uuidString).font(.caption.monospaced()).textSelection(.enabled)
                     Text("This device can control Pi with your Mac permissions, including file changes and command execution.").font(.caption)
                     HStack {
-                        Button("Allow") { model.approve(pending.id) }.buttonStyle(.borderedProminent)
+                        Button("Allow") { model.approve(pending.id) }.buttonStyle(.borderedProminent).foregroundStyle(.background)
                         Button("Deny", role: .cancel) { model.deny(pending.id) }
                     }
                 }.padding()
@@ -120,6 +120,7 @@ struct CompanionWindow: View {
             .frame(minWidth: 480, minHeight: model.panel == "pairingQR" ? 720 : 420)
             .id(state.context)
         }
+        .modifier(InterfaceAppearance())
     }
 
     private var connectionSettings: some View {

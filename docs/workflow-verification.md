@@ -2,13 +2,13 @@
 
 ## Result
 
-The native workflow implementation has advanced, but `PLAN.md` is not complete. Normal installed-extension compatibility, accessibility review and several workflow checks remain open. Plan completion requires simulator and laptop evidence, not physical-device installation or off-site testing.
+The native workflow implementation has advanced, but `PLAN.md` is not complete. Normal installed-extension compatibility, clean product setup and several workflow checks remain open. Compact interface checks now pass; see [interface verification](interface-verification.md). Plan completion requires simulator and laptop evidence, not physical-device installation or off-site testing.
 
 Verified on this Mac with Pi 1.3.0, Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
 - 59 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
 - 18 shared-package tests pass.
-- Twenty-three iOS app tests pass with the explicit provider fixture on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips; see the local audit below.
+- Twenty-five iOS app tests pass with the explicit provider fixture on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips; see the local audit below.
 - Both unsigned app builds pass. The unsigned iOS device-SDK build is a compile check, not an installed personal build.
 - An isolated check using the installed Pi passes model and thinking changes, input/editor dialogs, editor prefill, idle Stop, directory launch and idle session restoration. It sends no inference prompt.
 - An explicit provider check through the native host passes synthetic image input, observed live text, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart. Tools and installed resources are disabled.
@@ -21,7 +21,7 @@ The latest local run verifies:
 
 - Unsigned Mac, iOS simulator and iOS device-SDK builds. `project.yml` sets automatic signing, iOS 18 and macOS 15 deployment floors. The installed SDKs are version 26.5. These checks do not establish minimum-version compatibility or signed installation.
 - All 59 root tests, also with Thread Sanitizer, and 18 shared-package tests.
-- Twenty-three iOS simulator tests with the explicit provider fixture, with zero failures or skips. The full suite passed on both the Mac's LAN and Tailscale interfaces. Xcode result summaries confirm the counts. Without the fixture, the provider integration test skips; normal app tests make no provider requests.
+- Twenty-five iOS simulator tests with the explicit provider fixture, with zero failures or skips. The full suite passed on both the Mac's LAN and Tailscale interfaces. Xcode result summaries confirm the counts. Without the fixture, the provider integration test skips; normal app tests make no provider requests.
 - The isolated `NativeWorkflowCheck` with Pi 1.3.0. Directory launch, models, thinking, dialogs, Stop and idle restoration pass without inference or global-settings changes.
 
 ### Transport correction
@@ -93,7 +93,7 @@ Foundation parses Markdown. Native views render headings, paragraphs, lists, quo
 
 Thinking uses a disclosure. New conversations start at the latest output. Transcript content is clipped to its viewport so it cannot cover the header or composer. The composer limits accessibility-size input to two visible lines to preserve control space.
 
-The app tests host real UIKit-backed SwiftUI views for idle, working, retrying, compacting and interrupted fixtures in light/dark appearance with accessibility text sizes. They also use a reduced 375 × 367-point viewport. The final four working-state captures are retained in the local result bundle for review. A reduced viewport is not a real keyboard or a tested minimum-device claim. Directory/session sheets, VoiceOver, actual keyboard and dictation, and the complete physical coding flow still need review.
+The app tests host real UIKit-backed SwiftUI views for idle, working, retrying, compacting and interrupted fixtures in light/dark appearance with accessibility text sizes. Six separate UI tests now cover real keyboard use, compact large-text layouts, saved connections, directory/session sheets, editor actions, live scroll retention and a 100-message transcript; see [current interface evidence](interface-verification.md). They also use a reduced 375 × 367-point viewport. The final four working-state captures are retained in the local result bundle for review. A reduced viewport is not a real keyboard or a tested minimum-device claim. The earlier capture-only checkpoint did not verify directory/session sheets or real keyboard reachability. The newer interface record supersedes those local gaps. Physical VoiceOver, hardware dictation and physical coding remain unverified limits.
 
 ## Directory browsing and launch protection
 

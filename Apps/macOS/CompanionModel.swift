@@ -18,6 +18,12 @@ final class CompanionModel {
     @ObservationIgnored private var resendContext: SessionContext?
     @ObservationIgnored private var submissions = SubmissionState()
     var fault: RemoteFault?
+    private var dismissedHostFault: RemoteFault?
+    var visibleFault: RemoteFault? {
+        if needsActionReview { return .unknownOutcome }
+        if let fault { return fault }
+        return state.error == dismissedHostFault ? nil : state.error
+    }
     var startupError: String?
     var addresses = ListenAddress.all()
     var address = ""
@@ -68,6 +74,7 @@ final class CompanionModel {
             let stream = await coordinator.updates()
             for await state in stream {
                 guard let self, !Task.isCancelled else { return }
+                if self.state.context != state.context || self.state.error != state.error { self.dismissedHostFault = nil }
                 if self.state.context != state.context {
                     self.preview = nil; self.editorOffer = nil; self.confirmResend = false; self.resendContext = nil; self.approvedResend = false
                 }
@@ -139,7 +146,10 @@ final class CompanionModel {
         if let session = state.selected { drafts[session] = text }
     }
     var needsActionReview: Bool { submissions.uncertain }
-    func reviewedFault() { submissions.reviewed(); fault = nil; Task { _ = try? await request(.snapshot) } }
+    func reviewedFault() {
+        submissions.reviewed(); dismissedHostFault = state.error; fault = nil
+        if coordinator != nil { Task { _ = try? await request(.snapshot) } }
+    }
     func resend() {
         guard let resendContext, state.context == resendContext else { fault = .conflict; return }
         approvedResend = true; submissions.reviewed(); send(context: resendContext); self.resendContext = nil

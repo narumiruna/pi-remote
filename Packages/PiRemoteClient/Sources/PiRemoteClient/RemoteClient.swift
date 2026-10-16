@@ -43,6 +43,10 @@ public actor RemoteClient {
         return mac
     }
 
+    public func pair(code: PairingCode, device: UUID, name: String) async throws -> SavedMac {
+        try await Self.pair(code: code, device: device, name: name, secrets: secrets)
+    }
+
     private static func account(_ mac: SavedMac) -> String { mac.id.uuidString + "/" + mac.device.uuidString }
 
     public func updates() -> AsyncStream<ClientUpdate> {

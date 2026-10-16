@@ -10,7 +10,8 @@ Verified on macOS 26.6.2 with Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 - All 59 root package tests pass, including production TLS pairing, LAN/Tailscale binding and fake-Pi integration tests.
 - All 18 shared package tests pass.
 - All 59 root tests pass with Thread Sanitizer.
-- Twenty-three iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with the explicit provider fixture on both LAN and Tailscale. The integration flow checks coding, reconnect, Stop and idle/active host restart. Without the fixture, that one test skips. The other twenty-two tests check QR encode/decode, invalid and stale pairing scans, bounded directory paging, stale/cancelled browse responses, launch/background protection, denied/failed and stale unlock results, denied secret access, draft retention, editor offers, context boundaries and hosted UIKit rendering in light/dark appearance with large text. Captures do not prove physical accessibility or keyboard behavior.
+- Twenty-five iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with the explicit provider fixture on both LAN and Tailscale. The integration flow checks coding, reconnect, Stop and idle/active host restart. Without the fixture, that one test skips. The other twenty-four tests check QR encode/decode, invalid and stale pairing scans, bounded directory paging, stale/cancelled browse responses, launch/background protection, denied/failed and stale unlock results, denied secret access, draft retention, editor offers, context boundaries, error acknowledgement, color contrast and hosted UIKit rendering in light/dark appearance with large text.
+- Six separate interface UI tests pass twice on a compact iPhone SE simulator with large text and the real software keyboard. Requested label/target audits and capture review pass; see [interface verification](interface-verification.md). These checks do not establish hardware behavior.
 - The installed Pi passes an isolated native-host metadata/dialog check without inference. A separate explicit provider check passes synthetic image input, live streaming, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart; see [workflow evidence](workflow-verification.md#native-provider-check).
 
 See the commands below for repeatable checks. Physical product-app signing, Face ID/passcode behavior, folder permissions, accessibility, and off-site Tailscale operation remain unverified. The provisional deployment floors are iOS 18 and macOS 15; these are build settings, not tested support claims.
@@ -28,7 +29,9 @@ See the commands below for repeatable checks. Physical product-app signing, Face
 | `Packages/PiRemoteClient/` | Pairing, authenticated connection, state recovery and request correlation |
 | `Packages/PiRemoteConnection/` | Certificate-pinned Network.framework WebSocket |
 | `Packages/PiRemoteSecurity/` | Keychain storage and private metadata files |
-| `project.yml` | XcodeGen source for both apps and the iOS app test target |
+| `Tests/InterfaceFixture/` | Separate in-memory UI review app; not included in product targets |
+| `Tests/InterfaceTests/` | Compact simulator, keyboard, reading-position and accessibility checks |
+| `project.yml` | XcodeGen source for product apps, app tests and the interface review targets |
 
 The generated `PiRemote.xcodeproj` is ignored. No TypeScript backend, terminal, hosted service, or release workflow was added.
 
@@ -38,9 +41,11 @@ The generated `PiRemote.xcodeproj` is ignored. No TypeScript backend, terminal, 
 - The companion owns one Pi RPC process. Sessions use private storage under `~/Library/Application Support/PiRemote/`, not the user's terminal session directory. A process lock prevents two companions from writing the catalog. Resume checks the saved directory identity, session path, session header ID, and header working directory. Missing populated sessions fail instead of starting an empty replacement.
 - Local and remote controls use the same coordinator. Incompatible actions return a conflict or busy error. Stop clears queues, cancels pending dialogs, aborts work, and checks Pi's idle state. It cannot undo file changes.
 - The native controls include prompts, steering, follow-up, models, thinking levels, rename, compaction, command discovery, history, fork, clone, image input, text-file input, text previews and working-tree diff. These controls have not all passed a real-Pi product-app comparison.
+- The working directory uses a compact folder label in the header and the complete path in Session controls. The folder picker scrolls long paths horizontally. Short error banners open full recovery instructions. Editor actions remain above the keyboard.
 - Final messages and completed content blocks replace deltas. Only `agent_settled` indicates completion of automatic work. Thinking and tool output are expandable. The display retains 100 messages and 256 KiB of UTF-8 text, with 16 KiB shared by text and thinking per message. Redacted thinking and signatures are not displayed. Pi keeps the full managed session on the Mac.
 - Published state events are authoritative display snapshots with an epoch and sequence. Replay keeps a contiguous suffix of at most 32 events and 2 MiB. A stale cursor or changed epoch requires a fresh snapshot. Registration of a state observer and its initial snapshot occur in the same actor operation. Slow clients retain only the latest pending state; they do not block Pi stdout.
 - The request journal saves a payload fingerprint and unknown outcome before dispatch. It does not store prompt text. Duplicate accepted requests do not run again. A previous host epoch is rejected. Neither client nor host automatically retries an uncertain mutation.
+- The bounded transcript uses an eager stack to avoid a reproduced lazy-layout stall during live updates. User scrolling pauses live following; layout and keyboard changes do not. Latest restores following. A 100-message fixture remains usable.
 - Phone drafts are stored per Mac and session. Mac drafts are held per session during the app lifetime. Conversation and sheet actions are bound to the displayed host, epoch and session. An extension prefill does not overwrite a nonempty draft without an explicit Replace decision. Session changes clear old host prefill state.
 - Disconnecting or locking the phone does not stop accepted Mac-side work. Returning to the foreground requires local authentication before reconnection. Companion exit stops its owned child. Interrupted sessions require review; no prompt is resumed automatically.
 
@@ -93,6 +98,8 @@ xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemote \
   -derivedDataPath /tmp/pi-remote-apps-ios CODE_SIGNING_ALLOWED=NO test
 ```
 
+Run the separate `PiRemoteInterface` scheme for compact keyboard and accessibility checks, using the dedicated simulator commands in [interface verification](interface-verification.md#repeat-the-review). This scheme does not run Pi or use the provider fixture.
+
 The simulator ID is local to this Mac. Use `xcrun simctl list devices available` to select an available simulator elsewhere. These commands do not install a signed personal build on an iPhone. An additional unsigned device-SDK build passed with destination `generic/platform=iOS` and derived-data path `/tmp/pi-remote-native-device`.
 
 The host tests exercise a controlled fake Pi. They verify local approval, certificate and hostname rejection, unauthenticated access rejection, authenticated control, a dialog while its command remains pending, active-run reconnection without duplicate dispatch, Stop, revocation, stale IDs, file IDs used as folders, traversal-path decoding rejection, folder replacement/removal, symbolic links and loops, read/search permission loss, bounded output, unknown outcomes, replay fallback, injected stale/wrong-identity client states, session restoration, changed session headers, expired/oversized dialogs and bounded utility cancellation. The fake Pi does not prove real-provider behavior. The separate optional provider exercise verifies one native-host workflow with real saved history; it does not replace physical product acceptance.
@@ -105,5 +112,5 @@ The host tests exercise a controlled fake Pi. They verify local approval, certif
 - A fresh product signing retry still fails with `errSecInternalComponent` in the Background session. The older signed diagnostic app is not a signed build of these product apps; see [current gates](workflow-verification.md#failures-and-external-gates).
 - LAN and Tailscale authenticated transport and simulator coding checks now pass locally. Off-site operation remains unverified; it is not a plan-completion gate.
 - Pi's terminal-only extension UI has no equivalent transport in the inspected RPC interface. Accounts, btw, usage, progress and sync need further integration work. No feature deferral has been accepted. See `docs/verification.md` for the installed-package inventory.
-- Physical UI review, VoiceOver, keyboard/dictation, large-text reachability, protected-folder/TCC cases, missing provider credentials, Mac sleep/wake and real-Pi product-app recovery remain open. A render test does not satisfy these gates.
+- Compact keyboard, large-text, label and recovery checks now have simulator UI-test evidence. Physical VoiceOver, dictation, TCC and sleep/wake behavior remain unverified, not completion gates. Missing-provider-credential and process-crash host checks remain open; see `PLAN.md`.
 - The first pull-request creation attempt failed with HTTP 401. The user restored GitHub CLI authentication; `gh auth status` now passes. SSH Git access alone did not authorize pull-request creation.

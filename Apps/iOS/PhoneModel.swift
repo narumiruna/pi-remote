@@ -22,6 +22,12 @@ final class PhoneModel {
     var image: ImageAttachment?
     var sending = false
     var fault: RemoteFault?
+    private var dismissedHostFault: RemoteFault?
+    var visibleFault: RemoteFault? {
+        if needsActionReview { return .unknownOutcome }
+        if let fault { return fault }
+        return state?.error == dismissedHostFault ? nil : state?.error
+    }
     var authError: String?
     var pairingText = ""
     var pairingInfo: String?
@@ -36,7 +42,7 @@ final class PhoneModel {
     @ObservationIgnored private let authenticate: Authenticate
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let secrets: ProtectedSecrets
-    @ObservationIgnored private let client: RemoteClient
+    @ObservationIgnored private let client: any PhoneConnection
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var lastDraft: UUID?
     @ObservationIgnored private var context: LAContext?
@@ -50,13 +56,13 @@ final class PhoneModel {
     @ObservationIgnored private var draftKey: String?
     @ObservationIgnored private var drafts: [String: String] = [:]
 
-    init(defaults: UserDefaults = .standard, authenticate: @escaping Authenticate = { context in
+    init(defaults: UserDefaults = .standard, connection: (any PhoneConnection)? = nil, authenticate: @escaping Authenticate = { context in
         try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Pi Remote to view sessions and control your Mac.")
     }) {
         self.defaults = defaults
         self.authenticate = authenticate
         let secrets = ProtectedSecrets()
-        self.secrets = secrets; client = RemoteClient(secrets: secrets)
+        self.secrets = secrets; client = connection ?? RemoteClient(secrets: secrets)
         device = defaults.string(forKey: "deviceID").flatMap(UUID.init(uuidString:)) ?? UUID()
         defaults.set(device.uuidString, forKey: "deviceID")
         if let data = defaults.data(forKey: "savedMacs"),
@@ -108,7 +114,7 @@ final class PhoneModel {
         state = nil; connected = false; connecting = false; unlocking = false; pairing = false
         image = nil; pairingText = ""; pairingInfo = nil; panel = nil; preview = nil; editorOffer = nil
         confirmResend = false; resendContext = nil; approvedResend = false
-        Task { await client.disconnect() }
+        Task { await client.disconnect(fault: .unavailable) }
     }
     private func observe() {
         guard observation == nil else { return }
@@ -129,6 +135,7 @@ final class PhoneModel {
     func applyState(_ state: HostSnapshot) {
         guard !locked, selectedMac == state.host else { return }
         if fault == .unavailable { fault = nil }
+        if self.state?.context != state.context || self.state?.error != state.error { dismissedHostFault = nil }
         if self.state?.context != state.context {
             preview = nil; editorOffer = nil; confirmResend = false; resendContext = nil; approvedResend = false
         }
@@ -186,7 +193,7 @@ final class PhoneModel {
             do {
                 let code = try PairingCode.decode(pairingText)
                 pairingInfo = "Confirm this device on " + code.name + ": " + device.uuidString
-                let mac = try await RemoteClient.pair(code: code, device: device, name: UIDevice.current.name, secrets: secrets)
+                let mac = try await client.pair(code: code, device: device, name: UIDevice.current.name)
                 guard generation == token, !locked else { return }
                 saved.removeAll { $0.id == mac.id }; saved.append(mac)
                 try persistMacs(); pairingText = ""; panel = nil
@@ -282,7 +289,8 @@ final class PhoneModel {
     }
     var needsActionReview: Bool { submissions.uncertain }
     func reviewedFault() {
-        submissions.reviewed(); defaults.set(submissions.needsReview, forKey: "uncertainAction"); fault = nil
+        submissions.reviewed(); defaults.set(submissions.needsReview, forKey: "uncertainAction")
+        dismissedHostFault = state?.error; fault = nil
     }
     func resend() {
         guard !locked, connected, let resendContext, state?.context == resendContext else { fault = .conflict; return }

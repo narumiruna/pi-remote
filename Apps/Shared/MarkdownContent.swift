@@ -27,7 +27,7 @@ struct MarkdownContent: View {
                 .accessibilityAddTraits(.isHeader).textSelection(.enabled)
         case .code:
             VStack(alignment: .leading, spacing: 4) {
-                if let language = block.language, !language.isEmpty { Text(language).font(.caption).foregroundStyle(.secondary) }
+                if let language = block.language, !language.isEmpty { Text(language).font(.caption).foregroundStyle(.primary.opacity(0.75)) }
                 ScrollView(.horizontal) {
                     Text(String(block.text.characters)).font(.system(.body, design: .monospaced))
                         .textSelection(.enabled).padding(12)

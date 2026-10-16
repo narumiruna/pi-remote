@@ -6,9 +6,9 @@ Choose a Mac directory from your phone, start a managed session, watch output an
 
 ## Status
 
-**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Twenty-three iOS simulator app tests pass with the explicit local provider fixture on both LAN and Tailscale, including coding, reconnection and host restart. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
+**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Twenty-five iOS simulator app tests pass with the explicit local provider fixture on LAN and Tailscale, including coding, reconnection and host restart. Six separate compact-interface UI tests also pass. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
 
-The full Pi workflow and simulator accessibility reviews remain open. Signed physical-device coding, off-site Tailscale and hardware unlock are unverified limits, not completion gates for the current local plan. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
+The full Pi workflow and clean product-setup reviews remain open. Compact simulator checks now cover the real keyboard, large text, readable controls, error recovery and live scroll position. Signed physical-device coding, off-site Tailscale and hardware unlock are unverified limits, not completion gates for the current local plan. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
 
 ## Implemented foundation
 
@@ -40,7 +40,7 @@ These are implemented controls, not proof of complete terminal parity. Real-Pi a
 
 `project.yml` defines the SwiftUI app targets and iOS app tests. The root `Package.swift` defines the host, client and integration tests; `Packages/PiRemoteCore` holds the shared protocol. Platform-specific process and network code stays outside that package. There is no TypeScript backend.
 
-Verified unsigned build and test commands are in [native app verification](docs/native-apps.md#automated-checks). Personal signing and installation instructions still need a clean physical-device validation. The build settings use iOS 18 and macOS 15 as provisional floors, not tested supported versions. Pi 1.3.0 passed the earlier RPC spike; a supported-version matrix does not exist yet.
+Verified unsigned build and test commands are in [native app verification](docs/native-apps.md#automated-checks). Compact-interface checks are recorded in [interface verification](docs/interface-verification.md). Personal signing and installation remain unverified; they are not current plan-completion requirements. The build settings use iOS 18 and macOS 15 as provisional floors, not tested supported versions. Pi 1.3.0 passed the earlier RPC spike; a supported-version matrix does not exist yet.
 
 Start with personal builds for iPhone 16 Pro and the current Mac. TestFlight comes later. A future phase can add accounts and a public connection service; its authentication, encryption and routing still require design.
 

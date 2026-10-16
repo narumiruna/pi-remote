@@ -9,6 +9,7 @@ struct DirectoryBrowser: View {
     @State private var browser = DirectoryBrowserModel()
     @State private var error: String?
     @State private var selectingSession = false
+    @State private var pathStartsClipped = false
     private var page: DirectoryPage? { browser.page }
     private var loading: Bool { browser.loading || selectingSession }
 
@@ -16,19 +17,29 @@ struct DirectoryBrowser: View {
         VStack(spacing: 0) {
             if let page {
                 HStack {
-                    Button("Parent folder", systemImage: "arrow.up") { directory = page.parent }
-                        .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44).disabled(page.parent == nil || loading)
-                    Text(page.path).font(.caption.monospaced()).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button { directory = page.parent } label: {
+                        Label("Parent folder", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                    }.disabled(page.parent == nil || loading)
+                    HStack(spacing: 0) {
+                        Text("…").font(.caption.monospaced()).opacity(pathStartsClipped ? 1 : 0).accessibilityHidden(true)
+                        ScrollView(.horizontal) {
+                            Text(page.path).font(.caption.monospaced()).fixedSize()
+                                .accessibilityHint("Mac folder path. Scroll horizontally to read the full path.")
+                        }.defaultScrollAnchor(.trailing).id(page.id)
+                            .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.x + $0.contentInsets.leading > 1 } action: { _, clipped in
+                                pathStartsClipped = clipped
+                            }
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
                 }.padding(.horizontal)
             }
-            if let error = error ?? browser.fault?.explanation { Text(error).foregroundStyle(.red).padding() }
+            if let error = error ?? browser.fault?.explanation { Text(error).foregroundStyle(.primary).padding() }
             List {
                 if loading { ProgressView("Loading folders") }
                 if !loading, let page {
-                    if page.items.isEmpty { Text("This folder is empty.").foregroundStyle(.secondary) }
+                    if page.items.isEmpty { Text("This folder is empty.").foregroundStyle(.primary.opacity(0.75)) }
                     else if selecting, !page.items.contains(where: { $0.isDirectory || $0.fault != nil }) {
-                        Text("No subfolders on this page.").foregroundStyle(.secondary)
+                        Text("No subfolders on this page.").foregroundStyle(.primary.opacity(0.75))
                     }
                 }
                 if error != nil || browser.fault != nil {
@@ -41,7 +52,7 @@ struct DirectoryBrowser: View {
                     if let fault = item.fault {
                         VStack(alignment: .leading) {
                             Label(item.name, systemImage: "exclamationmark.triangle")
-                            Text(fault.explanation).font(.caption).foregroundStyle(.secondary)
+                            Text(fault.explanation).font(.caption).foregroundStyle(.primary.opacity(0.75))
                         }.frame(minHeight: 44)
                     } else if item.isDirectory {
                         Button { directory = item.id } label: { Label(item.name, systemImage: "folder") }
@@ -57,7 +68,7 @@ struct DirectoryBrowser: View {
             }
             .disabled(loading)
             if selecting {
-                Button("Start Pi Here") {
+                Button {
                     if let id = page?.id {
                         Task {
                             selectingSession = true
@@ -66,8 +77,8 @@ struct DirectoryBrowser: View {
                             catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
                         }
                     }
-                }
-                    .buttonStyle(.borderedProminent).frame(minHeight: 44).padding()
+                } label: { Text("Start Pi Here").frame(minHeight: 44) }
+                    .buttonStyle(.borderedProminent).foregroundStyle(.background).padding()
                     .disabled(loading || page == nil)
             }
         }
@@ -86,7 +97,7 @@ struct FilePreviewView: View {
         NavigationStack {
             ScrollView([.horizontal, .vertical]) {
                 VStack(alignment: .leading) {
-                    if preview.truncated { Text("Preview truncated at the display limit.").foregroundStyle(.secondary) }
+                    if preview.truncated { Text("Preview truncated at the display limit.").foregroundStyle(.primary.opacity(0.75)) }
                     Text(preview.text.isEmpty ? "No changes or content." : preview.text)
                         .font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }.padding()
@@ -102,22 +113,36 @@ struct ExtensionDialogView: View {
     let answer: (String?, Bool?, Bool) -> Void
     @State private var value = ""
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(dialog.title).font(.headline)
-            if !dialog.message.isEmpty { Text(dialog.message) }
-            switch dialog.method {
-            case "select":
-                ScrollView { ForEach(dialog.options, id: \.self) { option in Button(option) { answer(option, nil, false) }.frame(minHeight: 44) } }
-            case "confirm":
-                Button("Confirm") { answer(nil, true, false) }.buttonStyle(.borderedProminent).frame(minHeight: 44)
-            case "input", "editor":
-                TextEditor(text: $value).frame(minHeight: 120)
-                Button("Submit") { answer(value, nil, false) }.buttonStyle(.borderedProminent).frame(minHeight: 44)
-            default: Text("This dialog cannot be displayed safely. Cancel it on this device.")
-            }
-            Button("Cancel", role: .cancel) { answer(nil, nil, true) }.frame(minHeight: 44)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if !dialog.message.isEmpty { Text(dialog.message) }
+                switch dialog.method {
+                case "select":
+                    ForEach(dialog.options, id: \.self) { option in
+                        Button { answer(option, nil, false) } label: {
+                            Text(option).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        }
+                    }
+                case "input", "editor":
+                    TextEditor(text: $value).frame(height: 160).accessibilityLabel("Dialog text")
+                case "confirm": EmptyView()
+                default: Text("This dialog cannot be displayed safely. Cancel it on this device.")
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(24)
         }
-        .padding(24).onAppear { value = dialog.text }
-        .interactiveDismissDisabled()
+        .safeAreaInset(edge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                if dialog.method == "confirm" {
+                    Button { answer(nil, true, false) } label: { Text("Confirm").frame(minHeight: 44) }
+                        .buttonStyle(.borderedProminent).foregroundStyle(.background)
+                } else if dialog.method == "input" || dialog.method == "editor" {
+                    Button { answer(value, nil, false) } label: { Text("Submit").frame(minHeight: 44) }
+                        .buttonStyle(.borderedProminent).foregroundStyle(.background)
+                }
+                Button(role: .cancel) { answer(nil, nil, true) } label: { Text("Cancel").frame(minHeight: 44) }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(.bar)
+        }
+        .navigationTitle(dialog.title)
+        .onAppear { value = dialog.text }.interactiveDismissDisabled()
     }
 }

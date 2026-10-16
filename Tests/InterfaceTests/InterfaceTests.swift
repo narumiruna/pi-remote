@@ -1,0 +1,168 @@
+import XCTest
+
+@MainActor
+final class InterfaceTests: XCTestCase {
+    private func launch(_ arguments: [String]) -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = arguments
+        app.launch()
+        XCTAssertTrue(app.buttons["More"].waitForExistence(timeout: 10))
+        return app
+    }
+    private func instruction(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "instruction").firstMatch
+    }
+    private func reachable(_ element: XCUIElement, app: XCUIApplication, keyboard: Bool = false) {
+        XCTAssertTrue(element.exists)
+        XCTAssertTrue(element.isHittable, element.label)
+        XCTAssertGreaterThanOrEqual(element.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44)
+        XCTAssertTrue(app.frame.contains(element.frame), element.label)
+        if keyboard { XCTAssertLessThanOrEqual(element.frame.maxY, app.keyboards.firstMatch.frame.minY + 1) }
+    }
+    private func capture(_ app: XCUIApplication, _ name: String) {
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.name = name; image.lifetime = .keepAlways; add(image)
+    }
+    private func audit(_ app: XCUIApplication) throws {
+        // Contrast uses resolved-color tests and capture review. Whole-screen pixel audits
+        // misclassify clipped SwiftUI scroll content. Layout is checked with real keyboard frames.
+        let requested: XCUIAccessibilityAuditType = [.hitRegion, .sufficientElementDescription]
+        try app.performAccessibilityAudit(for: requested) { issue in
+            guard !requested.contains(issue.auditType) else { return false }
+            let detail = XCTAttachment(string: "The framework returned an unrequested audit type: \(issue.auditType.rawValue). " + issue.detailedDescription)
+            detail.name = "Unrequested accessibility audit"; detail.lifetime = .keepAlways; self.add(detail)
+            return true
+        }
+    }
+    private func controls(_ app: XCUIApplication) {
+        app.buttons["More"].tap()
+        app.buttons["Session controls"].tap()
+        XCTAssertTrue(app.navigationBars["Session controls"].waitForExistence(timeout: 5))
+    }
+
+    func testLightConversationWithKeyboardStopAndRetainedDraft() throws {
+        let app = launch(["working"])
+        try audit(app)
+        let tool = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Read file")).firstMatch
+        XCTAssertTrue(tool.waitForExistence(timeout: 5) && tool.isHittable)
+        let input = instruction(app)
+        input.tap(); input.typeText("Keyboard fixture")
+        XCTAssertTrue((instruction(app).value as? String)?.contains("Keyboard fixture") == true)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        reachable(app.buttons["Stop"], app: app, keyboard: true)
+        reachable(app.buttons["Send"], app: app, keyboard: true)
+        XCTAssertTrue(tool.isHittable, "Opening the keyboard must keep the latest output in view")
+        capture(app, "compact-light-working-keyboard")
+        app.buttons["Send"].tap()
+        app.buttons["Stop"].tap()
+        XCTAssertTrue(app.buttons["Stop"].waitForNonExistence(timeout: 5))
+        instruction(app).tap(); instruction(app).typeText("Retained fixture draft")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(instruction(app).waitForExistence(timeout: 5))
+        XCTAssertTrue((instruction(app).value as? String)?.contains("Retained fixture draft") == true)
+    }
+
+    func testBoundedTranscriptWithOneHundredMessagesRemainsUsable() throws {
+        let app = launch(["large"])
+        let last = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Bounded transcript complete")).firstMatch
+        XCTAssertTrue(last.waitForExistence(timeout: 5) && last.isHittable)
+        reachable(app.buttons["Send"], app: app)
+        last.tap()
+        capture(app, "compact-bounded-transcript")
+        controls(app)
+        XCTAssertTrue(app.buttons["Close"].isHittable)
+    }
+
+    func testReadingPositionSurvivesNewOutputAndLatestReturnsToTheBottom() throws {
+        let app = launch(["streaming"])
+        let transcript = app.scrollViews.firstMatch
+        transcript.swipeDown()
+        let first = app.staticTexts["Review the fixture change."]
+        XCTAssertTrue(first.waitForExistence(timeout: 5) && first.isHittable)
+        let position = first.frame.minY
+        let output = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Streaming fixture output"))
+        let count = output.count
+        let more = XCTNSPredicateExpectation(predicate: NSPredicate(format: "count > %d", count), object: output)
+        XCTAssertEqual(XCTWaiter.wait(for: [more], timeout: 8), .completed)
+        XCTAssertEqual(first.frame.minY, position, accuracy: 2)
+        reachable(app.buttons["Latest"], app: app)
+        capture(app, "compact-reading-position")
+        app.buttons["Latest"].tap()
+        let tool = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Read file")).firstMatch
+        XCTAssertTrue(tool.waitForExistence(timeout: 5) && tool.isHittable)
+    }
+
+    func testDarkErrorsAndSessionControlsRemainReadable() throws {
+        let app = launch(["dark", "error"])
+        let failure = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Permission denied for the fixture file")).firstMatch
+        XCTAssertTrue(failure.waitForExistence(timeout: 5), "Tool errors must not require expanding a result")
+        try audit(app)
+        capture(app, "compact-dark-error")
+        app.buttons["Access denied"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Grant access on the Mac")).firstMatch.waitForExistence(timeout: 5))
+        capture(app, "compact-dark-recovery")
+        app.buttons["Close"].tap()
+        app.buttons["Dismiss"].tap()
+        XCTAssertTrue(app.buttons["Access denied"].waitForNonExistence(timeout: 5))
+        controls(app)
+        try audit(app)
+        capture(app, "compact-dark-session-controls")
+        app.buttons["Close"].tap()
+        reachable(app.buttons["Send"], app: app)
+    }
+
+    func testDisconnectedRecoveryAndSavedConnectionsRemainReachable() throws {
+        let app = launch(["disconnected"])
+        XCTAssertTrue(app.buttons["Unavailable"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Sessions"].isEnabled)
+        let reconnect = app.buttons["Reconnect"]
+        for _ in 0..<6 where !reconnect.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        reachable(reconnect, app: app)
+        reconnect.tap()
+        let connections = app.buttons["Connections"]
+        for _ in 0..<6 where !connections.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        reachable(connections, app: app)
+        capture(app, "compact-disconnected")
+        connections.tap()
+        XCTAssertTrue(app.buttons["Fixture Mac"].waitForExistence(timeout: 5))
+        try audit(app)
+        capture(app, "compact-saved-connections")
+        app.buttons["Close"].tap()
+    }
+
+    func testDirectorySelectionAndEditorWithKeyboard() throws {
+        let app = launch([])
+        instruction(app).tap(); instruction(app).typeText("Directory draft")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Sessions"].tap()
+        app.buttons["New session"].tap()
+        XCTAssertTrue(app.buttons["project"].waitForExistence(timeout: 5))
+        app.buttons["project"].tap()
+        XCTAssertTrue(app.buttons["nested"].waitForExistence(timeout: 5))
+        app.buttons["nested"].tap()
+        XCTAssertTrue(app.staticTexts["/Users/fixture/project/nested"].waitForExistence(timeout: 5))
+        reachable(app.buttons["Start Pi Here"], app: app)
+        try audit(app)
+        capture(app, "compact-directory")
+        app.buttons["Start Pi Here"].tap()
+        XCTAssertTrue(app.staticTexts["nested"].waitForExistence(timeout: 5))
+        controls(app)
+        XCTAssertTrue(app.staticTexts["/Users/fixture/project/nested"].waitForExistence(timeout: 5))
+        let command = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "/fixture-dialog")).firstMatch
+        for _ in 0..<8 where !command.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(command.isHittable)
+        command.tap()
+        XCTAssertTrue(app.staticTexts["Fixture editor"].waitForExistence(timeout: 5))
+        app.textViews.firstMatch.tap()
+        app.textViews.firstMatch.typeText(" edited")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        reachable(app.buttons["Submit"], app: app, keyboard: true)
+        reachable(app.buttons["Cancel"], app: app, keyboard: true)
+        capture(app, "compact-editor-keyboard")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.staticTexts["Fixture editor"].waitForNonExistence(timeout: 5))
+    }
+}

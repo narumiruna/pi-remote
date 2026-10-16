@@ -254,7 +254,7 @@ done
         let grant = try await server.openPairing()
         let code = PairingCode(host: host.hostID, name: "Fixture Mac", url: URL(string: "wss://127.0.0.1:\(port)/")!, certificate: identity.certificate, grant: grant, expires: Date().addingTimeInterval(120))
         let updates = await server.pairingUpdates()
-        let pairing = Task { try await RemoteClient.pair(code: code, device: UUID(), name: "Fixture phone", secrets: store) }
+        let pairing = Task { try await client.pair(code: code, device: UUID(), name: "Fixture phone") }
         var approved = false
         for await candidate in updates {
             if let candidate { try await server.approve(candidate.id); approved = true; break }
