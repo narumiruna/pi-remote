@@ -145,6 +145,12 @@ final class CompanionModel {
             } catch { fault = error as? RemoteFault ?? .unavailable }
         }
     }
+    func attachText(_ preview: FilePreview, context: SessionContext) throws {
+        guard !shuttingDown, state.context == context else { throw RemoteFault.conflict }
+        text = try TextAttachment.append(preview, to: text)
+        if let session = state.selected { drafts[session] = text }
+    }
+
     func acceptEditorOffer(_ offer: EditorOffer) {
         guard offer.session == state.selected else { editorOffer = nil; return }
         text = offer.text; editorOffer = nil

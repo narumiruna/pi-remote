@@ -153,6 +153,14 @@ final class PhoneModel {
         if state.dialogs.first != nil { panel = "dialog" }
         else if panel == "dialog" { panel = nil }
     }
+    func attachText(_ preview: FilePreview, context: SessionContext) throws {
+        guard !locked, !covered else { throw RemoteFault.unauthorized }
+        guard connected else { throw RemoteFault.unavailable }
+        guard state?.context == context else { throw RemoteFault.conflict }
+        text = try TextAttachment.append(preview, to: text)
+        saveDraft()
+    }
+
     func connect() {
         guard !locked, !connecting, let mac = saved.first(where: { $0.id == selectedMac }) else { return }
         connectTask?.cancel(); connecting = true

@@ -95,6 +95,27 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(tool.waitForExistence(timeout: 5) && tool.isHittable)
     }
 
+    func testMacFileAttachmentAppendsToTheDraftWithoutSending() throws {
+        let app = launch(["idle"])
+        instruction(app).tap(); instruction(app).typeText("Keep this draft")
+        app.buttons["More"].tap(); app.buttons["Mac files"].tap()
+        XCTAssertTrue(app.buttons["project"].waitForExistence(timeout: 5))
+        app.buttons["project"].tap()
+        XCTAssertTrue(app.buttons["fixture.swift"].waitForExistence(timeout: 5))
+        app.buttons["fixture.swift"].tap()
+        XCTAssertTrue(app.navigationBars["fixture.swift"].waitForExistence(timeout: 5))
+        let attach = app.buttons["Attach text"]
+        reachable(attach, app: app, keyboard: app.keyboards.firstMatch.exists)
+        reachable(app.buttons["Done"], app: app, keyboard: app.keyboards.firstMatch.exists)
+        capture(app, "compact-mac-text-attachment")
+        attach.tap()
+        XCTAssertTrue(instruction(app).waitForExistence(timeout: 5))
+        let draft = instruction(app).value as? String ?? ""
+        XCTAssertTrue(draft.hasPrefix("Keep this draft\n\nFile: fixture.swift"))
+        XCTAssertTrue(draft.contains("let attached = 42"))
+        XCTAssertFalse(app.buttons["Stop"].exists, "Attaching text must not start a run")
+    }
+
     func testImageOutputOpensNativePreviewAndFullResolution() throws {
         let app = launch(["images"])
         let viewImage = app.buttons["View image 1"]

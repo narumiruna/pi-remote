@@ -4,7 +4,7 @@
 
 Bounded raster image output now works through the production host and client. The native conversation and history views can open image output without a terminal or an external image URL. This does not complete the full Pi compatibility review.
 
-The simulator reads a synthetic PNG with the installed Pi read tool, retrieves its exact original bytes through authenticated transport, decodes it natively and retrieves it again after host restart. All 27 app tests pass with zero failures or skips on both local LAN and Tailscale. Eight compact-interface tests pass, including image preview, the Full resolution switch, Done and image-sheet removal after background return. Reviewed captures show the image and controls at accessibility-extra-large text.
+The simulator reads a synthetic PNG with the installed Pi read tool, retrieves its exact original bytes through authenticated transport, decodes it natively and retrieves it again after host restart. At the image-output checkpoint, all 27 app tests pass with zero failures or skips on both local LAN and Tailscale. Eight compact-interface tests pass, including image preview, the Full resolution switch, Done and image-sheet removal after background return. Reviewed captures show the image and controls at accessibility-extra-large text.
 
 ## Data and security
 
@@ -35,7 +35,7 @@ An evicted image can be recovered by reloading History and reading its entry aga
 - The real-Pi simulator coding flow reads `image.png` before writing the exact Swift fixture result. The image bytes equal the source PNG, decode to 32 × 32 pixels and remain retrievable after host restart.
 - The compact UI fixture opens a colored image, enables the actual Full resolution switch, checks its value, closes with a 44-point Done control and verifies sheet removal after background/activate.
 
-All 69 root tests pass normally and with Thread Sanitizer. All 23 shared tests, two Mac-model tests, 27 product simulator tests and eight interface tests pass. Unsigned Mac, iOS simulator and iOS device-SDK builds pass. This is laptop/simulator evidence, not hardware, off-site or release evidence.
+The image-output checkpoint passes all 69 root tests normally and with Thread Sanitizer, plus 23 shared tests, two Mac-model tests, 27 product simulator tests and eight interface tests. The later [text-attachment checks](workflow-verification.md#mac-text-file-attachment) extend the current suite. Unsigned Mac, iOS simulator and iOS device-SDK builds pass. This is laptop/simulator evidence, not hardware, off-site or release evidence.
 
 ## Failure record
 

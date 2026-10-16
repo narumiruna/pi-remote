@@ -135,7 +135,7 @@ struct PhoneRoot: View {
                 let data = try handle.read(upToCount: 256 * 1_024 + 1) ?? Data()
                 guard data.count <= 256 * 1_024, let content = String(data: data, encoding: .utf8) else { throw RemoteFault.tooLarge }
                 guard !model.locked, !model.covered, attachmentScope == model.contentScope else { throw RemoteFault.cancelled }
-                model.text += "\n\nFile: " + url.lastPathComponent + "\n```\n" + content + "\n```"
+                model.text = try TextAttachment.append(FilePreview(name: url.lastPathComponent, text: content, truncated: false), to: model.text)
             } catch let error as CocoaError where error.code == .userCancelled {
                 // Cancelling a picker is not a file-access failure.
             } catch {
@@ -163,7 +163,10 @@ struct PhoneRoot: View {
                     DirectoryBrowser(selecting: true, request: request) { id in
                         _ = try await request(.createSession(directory: id)); model.panel = nil
                     }
-                case "files": DirectoryBrowser(selecting: false, request: request) { _ in }
+                case "files":
+                    DirectoryBrowser(selecting: false, request: request, attach: { preview in
+                        try model.attachText(preview, context: state.context); model.panel = nil
+                    }) { _ in }
                 case "controls": SessionControls(state: state, request: request) { model.preview = $0; model.panel = "preview" }
                 case "history": HistoryView(request: request, paged: state.capabilities.contains("history-pages")) { model.panel = nil }
                 case "preview": if let value = model.preview { FilePreviewView(preview: value) }

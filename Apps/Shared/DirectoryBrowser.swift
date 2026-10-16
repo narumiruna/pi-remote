@@ -4,6 +4,7 @@ import SwiftUI
 struct DirectoryBrowser: View {
     var selecting: Bool
     var request: (SessionAction) async throws -> AppResult
+    var attach: ((FilePreview) throws -> Void)? = nil
     var selected: (UUID) async throws -> Void
     @State private var directory: UUID?
     @State private var browser = DirectoryBrowserModel()
@@ -85,7 +86,7 @@ struct DirectoryBrowser: View {
         .navigationTitle(selecting ? "Choose a Mac folder" : "Mac files")
         .task(id: directory) { error = nil; await browser.open(directory, request: request) }
         .sheet(isPresented: Binding(get: { browser.preview != nil }, set: { if !$0 { browser.preview = nil } })) {
-            if let preview = browser.preview { FilePreviewView(preview: preview) }
+            if let preview = browser.preview { FilePreviewView(preview: preview, request: request, attach: attach) }
         }
     }
 }
@@ -93,7 +94,9 @@ struct DirectoryBrowser: View {
 struct FilePreviewView: View {
     let preview: FilePreview
     var request: ((SessionAction) async throws -> AppResult)? = nil
+    var attach: ((FilePreview) throws -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @State private var error: String?
     var body: some View {
         NavigationStack {
             ScrollView([.horizontal, .vertical]) {
@@ -105,7 +108,28 @@ struct FilePreviewView: View {
                 }.padding()
             }
             .navigationTitle(preview.name)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .safeAreaInset(edge: .bottom) {
+                VStack {
+                    if let error { Text(error).font(.callout).padding(.horizontal) }
+                    HStack {
+                        if let attach {
+                            Button {
+                                do { try attach(preview); dismiss() }
+                                catch {
+                                    self.error = error as? RemoteFault == .tooLarge
+                                        ? "This attachment does not fit the 256 KiB prompt budget. Shorten the draft or copy a smaller selection."
+                                        : (error as? RemoteFault ?? .unavailable).explanation
+                                }
+                            } label: { Text(preview.truncated ? "Attach shown text" : "Attach text").frame(maxWidth: .infinity, minHeight: 44) }
+                                .buttonStyle(.borderedProminent).foregroundStyle(.background)
+                        }
+                        Button { dismiss() } label: { Text("Done").frame(minWidth: 44, minHeight: 44) }.buttonStyle(.bordered)
+                    }.padding()
+                }.background(.background)
+            }
         }
     }
 }

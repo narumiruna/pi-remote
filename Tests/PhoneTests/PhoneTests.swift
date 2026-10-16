@@ -6,11 +6,11 @@ import XCTest
 
 @MainActor
 final class PhoneTests: XCTestCase {
-    private func withPreferences(_ body: (UserDefaults) -> Void) {
+    private func withPreferences(_ body: (UserDefaults) throws -> Void) rethrows {
         let name = "PiRemoteTests-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
-        body(defaults)
+        try body(defaults)
     }
 
     func testLaunchIsLockedAndBackgroundClearsRemoteState() {
@@ -52,6 +52,28 @@ final class PhoneTests: XCTestCase {
             model.reviewedFault(); state.epoch = UUID(); model.applyState(state)
             XCTAssertEqual(model.visibleFault, .permissionDenied)
             model.lock()
+        }
+    }
+
+    func testMacTextAttachmentPreservesDraftAndRejectsStaleOrLockedActions() throws {
+        try withPreferences { defaults in
+            let model = PhoneModel(defaults: defaults), host = UUID()
+            model.chooseMac(host); model.locked = false; model.covered = false
+            var state = HostSnapshot(host: host, epoch: UUID()); state.selected = UUID()
+            model.applyState(state); model.text = "Existing draft"
+            let preview = FilePreview(name: "Mac.swift", text: "let attached = 42", truncated: false)
+            try model.attachText(preview, context: state.context)
+            let attached = model.text
+            XCTAssertTrue(attached.hasPrefix("Existing draft\n\nFile: Mac.swift"))
+            XCTAssertFalse(model.sending)
+            let reloaded = PhoneModel(defaults: defaults)
+            XCTAssertEqual(reloaded.text, attached)
+            var stale = state.context; stale.session = UUID()
+            XCTAssertThrowsError(try model.attachText(preview, context: stale)) { XCTAssertEqual($0 as? RemoteFault, .conflict) }
+            XCTAssertEqual(model.text, attached)
+            model.lock()
+            XCTAssertThrowsError(try model.attachText(preview, context: state.context)) { XCTAssertEqual($0 as? RemoteFault, .unauthorized) }
+            XCTAssertEqual(model.text, attached)
         }
     }
 

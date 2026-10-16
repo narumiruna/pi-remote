@@ -158,6 +158,13 @@ done
             _ = try await model.request(.createSession(directory: directory))
             try await waitUntil { model.state.selected != nil }
             let first = try XCTUnwrap(model.state.selected)
+            model.text = "Kept draft"
+            try model.attachText(FilePreview(name: "fixture.swift", text: "let attached = 42", truncated: false), context: model.state.context)
+            XCTAssertTrue(model.text.hasPrefix("Kept draft\n\nFile: fixture.swift"))
+            let attached = model.text
+            var wrongAttachmentScope = model.state.context; wrongAttachmentScope.session = UUID()
+            XCTAssertThrowsError(try model.attachText(FilePreview(name: "stale", text: "stale", truncated: false), context: wrongAttachmentScope))
+            XCTAssertEqual(model.text, attached)
             model.text = "Local prompt"
             model.send(context: model.state.context)
             try await waitUntil { !model.sending && model.state.working && model.state.messages.last?.text == "Shared state" }

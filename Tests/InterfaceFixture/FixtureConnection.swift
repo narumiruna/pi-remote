@@ -9,7 +9,7 @@ import PiRemoteCore
 actor FixtureConnection: PhoneConnection {
     static let host = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     private static let imageID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
-    private let home = UUID(), project = UUID(), nested = UUID(), root = UUID()
+    private let home = UUID(), project = UUID(), nested = UUID(), root = UUID(), file = UUID()
     private var snapshot: HostSnapshot
     private let unavailable: Bool
     private let streaming: Bool
@@ -102,10 +102,13 @@ actor FixtureConnection: PhoneConnection {
             switch id {
             case root: return .directories(DirectoryPage(id: root, path: "/", parent: nil, items: [DirectoryItem(id: home, name: "fixture home", isDirectory: true)], next: nil))
             case home: return .directories(DirectoryPage(id: home, path: "/Users/fixture", parent: root, items: [DirectoryItem(id: project, name: "project", isDirectory: true)], next: nil))
-            case project: return .directories(DirectoryPage(id: project, path: "/Users/fixture/project", parent: home, items: [DirectoryItem(id: nested, name: "nested", isDirectory: true)], next: nil))
+            case project: return .directories(DirectoryPage(id: project, path: "/Users/fixture/project", parent: home, items: [DirectoryItem(id: nested, name: "nested", isDirectory: true), DirectoryItem(id: file, name: "fixture.swift", isDirectory: false)], next: nil))
             case nested: return .directories(DirectoryPage(id: nested, path: "/Users/fixture/project/nested", parent: project, items: [], next: nil))
             default: throw RemoteFault.staleDirectory
             }
+        case .preview(let id):
+            guard id == file else { throw RemoteFault.staleDirectory }
+            return .preview(FilePreview(name: "fixture.swift", text: "let attached = 42", truncated: false))
         case .createSession(let directory):
             guard !snapshot.working else { throw RemoteFault.busy }
             let path = directory == nested ? "/Users/fixture/project/nested" : "/Users/fixture/project"

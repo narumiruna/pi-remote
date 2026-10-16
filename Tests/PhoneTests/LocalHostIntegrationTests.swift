@@ -146,6 +146,15 @@ private final class IntegrationSecrets: SecretStore, @unchecked Sendable {
             let result = try await child("result.swift", in: files, client: client)
             guard case .preview(let preview) = try await client.request(.preview(id: result.id)) else { throw RemoteFault.invalidRequest }
             XCTAssertEqual(preview.text, "let simulatorResult = 42\n")
+            for _ in 0..<100 where !model.connected { try await Task.sleep(for: .milliseconds(20)) }
+            model.text = "Keep this draft"
+            try model.attachText(preview, context: completed.context)
+            XCTAssertTrue(model.text.hasPrefix("Keep this draft\n\nFile: result.swift"))
+            XCTAssertTrue(model.text.contains("let simulatorResult = 42"))
+            XCTAssertFalse(model.sending)
+            let afterAttachment = try await state(client)
+            XCTAssertEqual(afterAttachment.messages, completed.messages)
+            model.text = ""
             _ = try await client.request(.prompt(text: "List integers 1 through 10000, one per line. Do not use tools.", delivery: .prompt, image: nil))
             _ = try await client.request(.prompt(text: "Reply STEERING.", delivery: .steer, image: nil))
             _ = try await client.request(.prompt(text: "Reply FOLLOWUP.", delivery: .followUp, image: nil))
