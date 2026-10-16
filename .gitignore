@@ -32,6 +32,7 @@ playground.xcworkspace
 .build/
 .transport-fixture/
 Spikes/TransportDevice/TransportDeviceSpike.xcodeproj/
+PiRemote.xcodeproj/
 
 # CocoaPods
 #

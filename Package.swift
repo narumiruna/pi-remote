@@ -3,13 +3,18 @@ import PackageDescription
 
 let package = Package(
     name: "PiRemoteSpikes",
-    platforms: [.macOS(.v15)],
+    platforms: [.iOS(.v18), .macOS(.v15)],
+    products: [
+        .library(name: "PiRemoteHost", targets: ["PiRemoteHost"]),
+        .library(name: "PiRemoteClient", targets: ["PiRemoteClient"]),
+        .library(name: "PiRemoteConnection", targets: ["PiRemoteConnection"])
+    ],
     dependencies: [.package(path: "Packages/PiRemoteCore")],
     targets: [
         .target(
             name: "PiRPC",
             dependencies: [.product(name: "PiRemoteCore", package: "PiRemoteCore")],
-            path: "Spikes/PiRPC"
+            path: "Packages/PiRPC/Sources/PiRPC"
         ),
         .executableTarget(
             name: "PiRPCSpike",
@@ -27,6 +32,11 @@ let package = Package(
             dependencies: ["PiRemoteTransport"],
             path: "Spikes/TransportServerSpike"
         ),
-        .testTarget(name: "SecureTransportTests", dependencies: ["PiRemoteTransport"])
+        .testTarget(name: "SecureTransportTests", dependencies: ["PiRemoteTransport"]),
+        .target(name: "PiRemoteSecurity", dependencies: [.product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteSecurity/Sources/PiRemoteSecurity"),
+        .target(name: "PiRemoteConnection", dependencies: [.product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteConnection/Sources/PiRemoteConnection"),
+        .target(name: "PiRemoteHost", dependencies: ["PiRPC", "PiRemoteSecurity", .product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteHost/Sources/PiRemoteHost"),
+        .target(name: "PiRemoteClient", dependencies: ["PiRemoteConnection", "PiRemoteSecurity", .product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteClient/Sources/PiRemoteClient"),
+        .testTarget(name: "HostTests", dependencies: ["PiRemoteHost", "PiRemoteClient"])
     ]
 )

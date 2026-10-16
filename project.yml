@@ -1,0 +1,75 @@
+name: PiRemote
+options:
+  bundleIdPrefix: dev.narumi
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+packages:
+  PiRemoteSpikes:
+    path: .
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  PiRemote:
+    type: application
+    platform: iOS
+    sources:
+      - Apps/iOS
+      - Apps/Shared
+    dependencies:
+      - package: PiRemoteSpikes
+        product: PiRemoteClient
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect securely to Pi Remote for Mac on your local network.
+        INFOPLIST_KEY_NSFaceIDUsageDescription: Unlock Pi Remote before viewing sessions or controlling your Mac.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+  PiRemoteMac:
+    type: application
+    platform: macOS
+    sources:
+      - Apps/macOS
+      - Apps/Shared
+    dependencies:
+      - package: PiRemoteSpikes
+        product: PiRemoteHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.Mac
+        PRODUCT_NAME: PiRemoteMac
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        INFOPLIST_KEY_LSUIElement: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Accept authenticated connections from your paired iPhone.
+  PiRemoteTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/PhoneTests
+    dependencies:
+      - target: PiRemote
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.Tests
+schemes:
+  PiRemote:
+    build:
+      targets:
+        PiRemote: all
+        PiRemoteTests: [test]
+    test:
+      targets:
+        - PiRemoteTests
+  PiRemoteMac:
+    build:
+      targets:
+        PiRemoteMac: all

@@ -124,6 +124,15 @@ done
     await child.shutdown()
 }
 
+@Test func providerAuthenticationFailureDoesNotExposeCredentialText() async throws {
+    let child = try fake(readCommand + #"""
+    printf '{"id":"%s","type":"response","command":"%s","success":false,"error":"No API key found: private diagnostic"}\n' "$id" "$command"
+done
+"""#)
+    await #expect(throws: RPCFailure.providerAuthenticationRequired) { try await child.request("prompt") }
+    await child.shutdown()
+}
+
 @Test func correlatesReversedResponses() async throws {
     let child = try fake(readCommand + #"""
     if [ -z "$first_id" ]; then

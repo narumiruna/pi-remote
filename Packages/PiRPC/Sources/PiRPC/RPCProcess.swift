@@ -6,12 +6,13 @@ public enum RPCFailure: Error, Sendable, Equatable {
     case invalidCommand
     case invalidResponse
     case rejected(String)
+    case providerAuthenticationRequired
     case unknownOutcome
     case eventOverflow
     case tooManyRequests
 }
 
-/// Local discovery transport only; never expose this interface to a remote client.
+/// Local subprocess transport only; never expose this interface to a remote client.
 public final class RPCProcess: @unchecked Sendable {
     public let events: AsyncThrowingStream<JSONValue, any Error>
     private let eventContinuation: AsyncThrowingStream<JSONValue, any Error>.Continuation
@@ -34,7 +35,8 @@ public final class RPCProcess: @unchecked Sendable {
         arguments: [String],
         workingDirectory: URL,
         eventCapacity: Int = 256,
-        maximumRecordBytes: Int = 8 * 1_024 * 1_024
+        maximumRecordBytes: Int = 8 * 1_024 * 1_024,
+        environment: [String: String]? = nil
     ) throws {
         precondition(eventCapacity > 0)
         let stream = AsyncThrowingStream<JSONValue, any Error>.makeStream(
@@ -51,6 +53,7 @@ public final class RPCProcess: @unchecked Sendable {
         child.executableURL = executable
         child.arguments = arguments
         child.currentDirectoryURL = workingDirectory
+        child.environment = environment
         child.standardInput = stdin
         child.standardOutput = stdout
         child.standardError = stderr
@@ -91,6 +94,19 @@ public final class RPCProcess: @unchecked Sendable {
         fields: [String: JSONValue] = [:],
         timeout: TimeInterval = 30
     ) async throws -> JSONValue {
+        try await enqueue(command, fields: fields, wireID: nil, expectsResponse: true, timeout: timeout)
+    }
+
+    public func answerDialog(id: String, value: String?, confirmed: Bool?, cancelled: Bool) async throws {
+        var fields: [String: JSONValue] = ["cancelled": .bool(cancelled)]
+        if let value { fields["value"] = .string(value) }
+        if let confirmed { fields["confirmed"] = .bool(confirmed) }
+        _ = try await enqueue("extension_ui_response", fields: fields, wireID: id, expectsResponse: false, timeout: 10)
+    }
+
+    private func enqueue(
+        _ command: String, fields: [String: JSONValue], wireID: String?, expectsResponse: Bool, timeout: TimeInterval
+    ) async throws -> JSONValue {
         guard !command.isEmpty, fields["type"] == nil, fields["id"] == nil,
               timeout.isFinite, timeout > 0, timeout <= 300 else {
             throw RPCFailure.invalidCommand
@@ -98,9 +114,9 @@ public final class RPCProcess: @unchecked Sendable {
         let id = UUID().uuidString
         var record = fields
         record["type"] = .string(command)
-        record["id"] = .string(id)
+        record["id"] = .string(wireID ?? id)
         var data = try JSONEncoder().encode(JSONValue.object(record))
-        guard data.count <= 65_536 else { throw RPCFailure.invalidCommand }
+        guard data.count <= 4 * 1_024 * 1_024 else { throw RPCFailure.invalidCommand }
         data.append(0x0A)
         let bytes = data
         return try await withTaskCancellationHandler {
@@ -122,7 +138,13 @@ public final class RPCProcess: @unchecked Sendable {
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
                 writer.async { [weak self] in
                     guard let self, self.lock.withLock({ self.pending[id] != nil && !self.stopping }) else { return }
-                    do { try self.input.write(contentsOf: bytes) }
+                    do {
+                        try self.input.write(contentsOf: bytes)
+                        if !expectsResponse, let entry = self.lock.withLock({ self.pending.removeValue(forKey: id) }) {
+                            entry.deadline.cancel()
+                            entry.continuation.resume(returning: .null)
+                        }
+                    }
                     catch { self.failRequest(id, error: RPCFailure.unknownOutcome) }
                 }
             }
@@ -181,7 +203,11 @@ public final class RPCProcess: @unchecked Sendable {
                 throw RPCFailure.invalidResponse
             }
             if success { entry.continuation.resume(returning: record["data"] ?? .null) }
-            else { entry.continuation.resume(throwing: RPCFailure.rejected(entry.command)) }
+            else {
+                let reason = record["error"]?.string?.lowercased() ?? ""
+                let authentication = ["api key", "credential", "authentication", "not logged in"].contains(where: reason.contains)
+                entry.continuation.resume(throwing: authentication ? RPCFailure.providerAuthenticationRequired : RPCFailure.rejected(entry.command))
+            }
         } else {
             if case .dropped = eventContinuation.yield(record) {
                 // Keep reading stdout and resolving commands after a slow consumer fails.

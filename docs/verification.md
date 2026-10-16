@@ -2,7 +2,7 @@
 
 ## Status
 
-The local Pi RPC spike passes its focused checks. The complete app plan is **blocked and incomplete**. A separate [secure transport spike](secure-transport-spike.md) now includes a restricted TLS listener and an iOS diagnostic test host, not the Pi Remote product apps or production pairing service.
+The local Pi RPC spike passes its focused checks. The complete app plan is **blocked and incomplete**. This document records the spike checkpoint and initial compatibility review. Native apps and an authenticated host have since been added; see [native app verification](native-apps.md) for current implementation and test evidence. The separate [secure transport spike](secure-transport-spike.md) remains diagnostic-only.
 
 ## Environment evidence
 
@@ -64,11 +64,11 @@ The installed Pi exercise passed with:
 - A second run confirmed active before `clear_queue`, `abort`, and an idle-state check.
 - Process shutdown and resumption of the same session ID with nonempty saved history.
 
-The spike does not print raw transcripts, provider errors, credentials, or tool output. A timeout or cancellation has an unknown outcome; the spike never automatically resends a prompt. Event-buffer overflow ends the local subscription while stdout continues to drain. Remote snapshot recovery is not implemented.
+The spike does not print raw transcripts, provider errors, credentials, or tool output. A timeout or cancellation has an unknown outcome; the spike never automatically resends a prompt. Event-buffer overflow ends the local subscription while stdout continues to drain. The spike does not implement remote snapshot recovery; the native host now provides it.
 
 ## Preliminary workflow compatibility review
 
-Evidence comes from the installed Pi 1.3.0 documentation and the exercise above. Documentation support is not runtime validation or a completed native implementation.
+Evidence comes from the installed Pi 1.3.0 documentation and the exercise above. The table records remaining work at the spike checkpoint, not current implementation status. See [native app verification](native-apps.md) for implemented controls and remaining validation. Documentation support is not runtime validation or a completed compatibility review.
 
 | Workflow | Installed interface and evidence | Remaining work |
 | --- | --- | --- |

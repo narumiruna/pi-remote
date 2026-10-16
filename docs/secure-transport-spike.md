@@ -4,7 +4,7 @@
 
 The restricted Network.framework TLS WebSocket server interoperates with the URLSession WebSocket client on macOS, an iOS 26.5 simulator, and a physical iPhone 16 Pro running iOS 26.7.1. The local physical transport test **passed: one test, zero failures**. The local transport task in `PLAN.md` is complete; off-site Tailscale and product-app work remain open.
 
-This spike cannot start Pi, read Mac directories, or forward arbitrary RPC commands. The diagnostic iOS app is not the Pi Remote product interface.
+This spike cannot start Pi, read Mac directories, or forward arbitrary RPC commands. The diagnostic iOS app is not the Pi Remote product interface. Native apps and a separate authenticated host have since been added; see [native app verification](native-apps.md). Counts and limits below describe the diagnostic checkpoint.
 
 ## Verified behavior
 
@@ -35,7 +35,7 @@ The physical iPhone is connected, and `devicectl device info ddiServices` report
 
 The test fixture contains private keys and a bootstrap grant. Its directory has private permissions and is ignored by Git. The bootstrap grant is copied into the diagnostic test bundle, so generated build artifacts must also remain private. This is test provisioning, not a production pairing interface or a secret suitable for a shipped app.
 
-Host credentials are intentionally ephemeral; restarting the test server discards them and starts a new locally approved test window. Durable host Keychain storage, user-facing identity confirmation, Face ID gating, app restart recovery, and production credential rotation remain unimplemented. The iOS diagnostic credential uses `WhenUnlockedThisDeviceOnly`, is not synchronized, and is removed after the test; this does not prove the planned Face ID policy.
+Host credentials are intentionally ephemeral; restarting the test server discards them and starts a new locally approved test window. The diagnostic does not implement durable host Keychain storage, user-facing identity confirmation, Face ID gating, app restart recovery or production credential rotation; these belong to the separate native implementation and its checks. The iOS diagnostic credential uses `WhenUnlockedThisDeviceOnly`, is not synchronized, and is removed after the test; this does not prove the planned Face ID policy.
 
 ## Reproduce the local checks
 

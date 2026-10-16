@@ -10,11 +10,11 @@ Provide the Pi workflow through native screens and controls, not an embedded ter
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: local RPC and secure WebSocket spikes pass focused tests, including the physical iPhone 16 Pro secure transport test on iOS 26.7.1; the overall plan remains incomplete. Off-site Tailscale validation, both product apps, and release checks remain open. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
+Status: native iOS and macOS apps now build without signing. Host/client integration, shared-package and iOS simulator app tests pass. The overall plan remains incomplete: signed product-device tests, off-site Tailscale, full workflow compatibility, accessibility and release checks remain open. See [native app verification](docs/native-apps.md), [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
 
 ## Context
 
-- This repository contains a shared Swift package, local macOS RPC and secure WebSocket spikes, and an iOS diagnostic test host; it does not contain the Pi Remote product apps.
+- This repository contains native SwiftUI apps, shared protocol code, an authenticated Mac host, a phone client, local RPC and secure WebSocket spikes, and an iOS diagnostic test host.
 - Swift is the implementation language for the first version, including both apps and shared code.
 - Pi already provides a bidirectional JSON RPC interface over a subprocess's stdin and stdout. A TypeScript backend is not required.
 - Pi, project files, tools, model credentials, and command execution stay on the Mac. Pi still sends model requests to its configured provider; this is not an offline AI system.
@@ -222,17 +222,17 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### 2. Establish the Swift workspace and contract
 
-- [ ] Create the two app targets and shared Swift package; prove both targets build and shared package tests pass with documented noninteractive commands.
-- [ ] Define versioned app messages, capability negotiation, errors, and session state; prove round-trip decoding and rejection of unsupported versions with fixtures.
-- [ ] Implement the Pi JSONL adapter and process supervisor; test partial UTF-8 records, Unicode separators inside JSON, malformed output, stderr load, startup failure, backpressure, and unexpected exit.
+- [x] Create the two app targets and shared Swift package; both unsigned targets build and shared package tests pass with the commands in [native app verification](docs/native-apps.md#automated-checks). Personal signing remains a separate open check.
+- [x] Define versioned app messages, capability negotiation, errors, and session state; protocol tests verify typed round trips and rejection of unsupported versions. Version 1 is required; authenticated state reports the Pi version and implemented capabilities.
+- [x] Implement the Pi JSONL adapter and process supervisor; shared framing and root RPC tests pass for partial UTF-8, Unicode separators, malformed records, stderr load, startup failure, backpressure and unexpected exit. The adapter now lives in `Packages/PiRPC/`.
 
 ### 3. Build the Mac host
 
 - [ ] Implement Pi selection, directory listing and validation, and companion-owned session storage; prove the selected working directory is used for creation and resumption without changing unrelated Pi sessions.
 - [ ] Test directory-access enforcement with unauthenticated requests, stale IDs, inaccessible folders, symbolic links, traversal attempts, and a folder removed between selection and launch; prove rejected requests do not start Pi.
-- [ ] Implement pairing, credential storage, authentication, and revocation; prove an unpaired or revoked device cannot read transcripts or issue commands.
+- [x] Implement pairing, credential storage, authentication, and revocation; production TLS integration tests pass local approval, certificate/hostname rejection, unauthenticated request rejection and revoked reconnection rejection. Registry tests verify persistent credentials and fail-closed secret-deletion failure. Physical product Keychain checks remain open.
 - [ ] Implement prompt, steering, follow-up, Stop, model selection, and thinking-level controls; validate their state transitions against the installed Pi.
-- [ ] Implement snapshot synchronization, event replay, request deduplication, and bounded buffers; prove reconnection does not lose completed messages or resend accepted prompts.
+- [x] Implement snapshot synchronization, event replay, request deduplication, and bounded buffers; tests pass active-run reconnection with identical final messages and one dispatch, contiguous state replay, expired-cursor/epoch fallback, unknown outcomes and UTF-8 output limits. Physical network transitions remain open.
 - [ ] Implement menu-bar status and local session controls; prove local and remote actions share the same serialized session state.
 
 ### 4. Build the iOS client
@@ -262,7 +262,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - The physical local-network test now passes after the user confirmed network setup; the earlier `NSURLErrorDomain -1009` failure is retained in the verification record, not treated as a certificate failure.
 - Mac Tailscale is running, but the iPhone peer is offline; off-site access still needs an active iPhone Tailscale connection from a different network.
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
-- A restricted TLS listener and diagnostic iOS test host now exist; they cannot start Pi or read Mac files. Local simulator and physical-device transport checks pass, so the local transport gate is satisfied; no product screens have been added.
+- Both native apps and the production authenticated host now exist. The older diagnostic remains separate and cannot start Pi or read Mac files. Passing diagnostic device tests do not satisfy product-app acceptance checks.
+- The native controls still need real-Pi comparisons for model changes, compaction, branching, attachments and extension workflows. Full history navigation, thinking display and Markdown support remain incomplete; no reduced scope has been accepted.
+- GitHub CLI authentication returns HTTP 401. Branch push uses SSH, but PR creation requires restored GitHub API authentication.
+- `AGENTS.md` still says that no app build/test configuration exists. `project.yml` now provides it; the instruction file needs a separate reviewed maintenance change.
 
 ## Risks and Recovery
 
@@ -278,7 +281,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ## Completion Checklist
 
-- [ ] Both apps and all app-owned service code are written in Swift; no TypeScript backend is required.
+- [x] Both apps and all app-owned service code are written in Swift; no TypeScript backend is required. See `Apps/`, `Packages/`, root `Package.swift` and `project.yml`.
 - [ ] The interface review accepts the minimal conversation layout, directory picker, and secondary controls; physical-device checks confirm readable content and reachable actions with large text and the keyboard open.
 - [ ] A physical iPhone can securely connect to a MacBook or Mac mini, browse permitted Mac directories, and start Pi in the selected directory.
 - [ ] Session details show the correct working directory, and session restoration preserves it without a silent fallback.
