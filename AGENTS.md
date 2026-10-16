@@ -31,7 +31,7 @@ These instructions apply to all files in this repository.
 ## Boundaries
 
 - Keep changes within the requested scope and preserve unrelated work.
-- Ask before destructive actions, external writes, or major scope changes.
+- Ask before destructive actions, external writes other than the Git operations authorized below, or major scope changes.
 - Treat `PLAN.md` as a proposed design, not as evidence that a feature works.
 - Do not mark a plan item complete until its stated checks pass.
 
@@ -47,3 +47,7 @@ These instructions apply to all files in this repository.
 - Run `git diff --check` after edits.
 - Verify referenced local paths and keep documentation consistent with the repository.
 - Verify build and test commands from project configuration before using or documenting them; no app build or test configuration exists yet.
+
+## Git and commits
+
+- During the current rapid-development phase, you may commit and push verified, in-scope changes directly to `main` without separate approval; branches and pull requests are optional unless the user explicitly requests them.
