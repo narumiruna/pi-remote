@@ -32,6 +32,8 @@ final class PhoneModel {
     struct ContentScope: Equatable { var host: UUID?; var session: UUID?; var epoch: UUID }
     var contentScope: ContentScope { ContentScope(host: selectedMac, session: state?.selected, epoch: generation) }
     var device: UUID
+    typealias Authenticate = @MainActor (LAContext) async throws -> Bool
+    @ObservationIgnored private let authenticate: Authenticate
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let secrets: ProtectedSecrets
     @ObservationIgnored private let client: RemoteClient
@@ -48,8 +50,11 @@ final class PhoneModel {
     @ObservationIgnored private var draftKey: String?
     @ObservationIgnored private var drafts: [String: String] = [:]
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, authenticate: @escaping Authenticate = { context in
+        try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Pi Remote to view sessions and control your Mac.")
+    }) {
         self.defaults = defaults
+        self.authenticate = authenticate
         let secrets = ProtectedSecrets()
         self.secrets = secrets; client = RemoteClient(secrets: secrets)
         device = defaults.string(forKey: "deviceID").flatMap(UUID.init(uuidString:)) ?? UUID()
@@ -74,7 +79,7 @@ final class PhoneModel {
         }
     }
     func unlock() {
-        guard !unlocking else { return }
+        guard locked, !unlocking else { return }
         unlocking = true; authError = nil
         let token = generation
         let context = LAContext()
@@ -82,8 +87,12 @@ final class PhoneModel {
         unlockTask = Task {
             defer { if generation == token { unlocking = false } }
             do {
-                guard try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Pi Remote to view sessions and control your Mac.") else { return }
+                let approved = try await authenticate(context)
                 guard generation == token, !Task.isCancelled else { return }
+                guard approved else {
+                    authError = "Authentication was not completed. Use Face ID or your device passcode to unlock."
+                    return
+                }
                 secrets.authorize(context); locked = false
                 observe(); connect()
             } catch {

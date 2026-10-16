@@ -1,5 +1,4 @@
 import Foundation
-import Network
 import PiRemoteCore
 import Security
 
@@ -19,7 +18,7 @@ public struct PendingPair: Sendable, Identifiable, Equatable {
 public actor AppServer {
     private enum Phase { case challenge, pending, authenticated(UUID) }
     private struct Peer {
-        var connection: NWConnection
+        var connection: SecurePeer
         var nonce: Data
         var phase: Phase = .challenge
         var deadline = ProcessInfo.processInfo.systemUptime + 10
@@ -32,16 +31,14 @@ public actor AppServer {
     }
     private let coordinator: HostCoordinator
     private let registry: DeviceRegistry
-    private let queue = DispatchQueue(label: "PiRemote.network")
-    private var listener: NWListener?
-    private var startup: CheckedContinuation<UInt16, any Error>?
+    private var listener: SecureListener?
     private var peers: [UUID: Peer] = [:]
     private var pending: PendingPair?
     private var pairingObservers: [UUID: AsyncStream<PendingPair?>.Continuation] = [:]
     private var timer: Task<Void, Never>?
     private var observation: Task<Void, Never>?
-    private var startupTimeout: Task<Void, Never>?
     private var running = false
+    private var stopping = false
 
     public init(coordinator: HostCoordinator, registry: DeviceRegistry) {
         self.coordinator = coordinator; self.registry = registry
@@ -64,37 +61,25 @@ public actor AppServer {
     }
 
     public func start(identity: ServerIdentity, address: String, port: UInt16 = 7443) async throws -> UInt16 {
-        guard !running, ListenAddress.allowed(address), identity.addresses.contains(address), let host = IPv4Address(address) else {
+        guard !running, !stopping, ListenAddress.allowed(address), identity.addresses.contains(address) else {
             throw RemoteFault.invalidRequest
         }
-        let tls = NWProtocolTLS.Options()
-        guard let localIdentity = sec_identity_create(identity.identity) else { throw RemoteFault.storageFailure }
-        sec_protocol_options_set_local_identity(tls.securityProtocolOptions, localIdentity)
-        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
-        let webSocket = NWProtocolWebSocket.Options()
-        webSocket.maximumMessageSize = 4 * 1_024 * 1_024; webSocket.autoReplyPing = true
-        let parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
-        parameters.defaultProtocolStack.applicationProtocols.insert(webSocket, at: 0)
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(host), port: NWEndpoint.Port(rawValue: port) ?? .any)
-        let listener = try NWListener(using: parameters)
+        let listener = try SecureListener(identity: identity)
         self.listener = listener; running = true
-        let actualPort = try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                startup = continuation
-                listener.stateUpdateHandler = { [weak self] state in Task { await self?.listenerState(state) } }
-                listener.newConnectionHandler = { [weak self] connection in
-                    Task {
-                        guard let self else { connection.cancel(); return }
-                        await self.accept(connection)
-                    }
-                }
-                listener.start(queue: queue)
-                startupTimeout = Task { [weak self] in
-                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
-                    await self?.failStartup()
+        let actualPort: UInt16
+        do {
+            actualPort = try await listener.start(address: address, port: port) { [weak self] connection in
+                Task {
+                    guard let self else { connection.cancel(); return }
+                    await self.accept(connection)
                 }
             }
-        } onCancel: { [weak self] in Task { await self?.stop() } }
+            guard running, self.listener === listener, !Task.isCancelled else { throw RemoteFault.cancelled }
+        } catch {
+            await listener.stop()
+            if self.listener === listener { self.listener = nil; running = false }
+            throw error
+        }
         timer = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
@@ -111,16 +96,6 @@ public actor AppServer {
         }
         return actualPort
     }
-
-    private func listenerState(_ state: NWListener.State) async {
-        switch state {
-        case .ready:
-            if let port = listener?.port { startup?.resume(returning: port.rawValue); startup = nil; startupTimeout?.cancel() }
-        case .failed, .cancelled: await stop()
-        default: break
-        }
-    }
-    private func failStartup() async { startup?.resume(throwing: RemoteFault.unavailable); startup = nil; await stop() }
 
     public func openPairing() async throws -> Data {
         guard running else { throw RemoteFault.unavailable }
@@ -152,34 +127,21 @@ public actor AppServer {
         catch { await stop(); throw error }
     }
 
-    private func accept(_ connection: NWConnection) {
+    private func accept(_ connection: SecurePeer) {
         guard running, peers.count < 16, let nonce = try? PairingProof.randomSecret() else { connection.cancel(); return }
         let id = UUID()
         peers[id] = Peer(connection: connection, nonce: nonce)
-        connection.stateUpdateHandler = { [weak self] state in Task { await self?.connectionState(state, id: id) } }
-        connection.start(queue: queue)
-    }
-    private func connectionState(_ state: NWConnection.State, id: UUID) {
-        switch state {
-        case .ready:
-            guard let peer = peers[id] else { return }
-            send(.challenge(nonce: peer.nonce), to: id); receive(id)
-        case .failed, .cancelled: remove(id)
-        default: break
-        }
+        send(.challenge(nonce: nonce), to: id); receive(id)
     }
     private func receive(_ id: UUID) {
         guard let peer = peers[id] else { return }
-        peer.connection.receiveMessage { [weak self] data, context, complete, error in
-            let opcode = (context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata)?.opcode
-            Task { await self?.received(id, data: data, opcode: opcode, complete: complete, error: error) }
+        peer.connection.receive { [weak self] data, error in
+            Task { await self?.received(id, data: data, error: error) }
         }
     }
-    private func received(_ id: UUID, data: Data?, opcode: NWProtocolWebSocket.Opcode?, complete: Bool, error: NWError?) async {
-        guard let peer = peers[id], peer.deadline > ProcessInfo.processInfo.systemUptime, error == nil, complete else { remove(id); return }
-        if opcode == .ping || opcode == .pong { receive(id); return }
-        guard opcode == .text || opcode == .binary, let data,
-              let packet = try? AppPacket<ClientMessage>.decode(data) else { remove(id); return }
+    private func received(_ id: UUID, data: Data?, error: (any Error)?) async {
+        guard let peer = peers[id], peer.deadline > ProcessInfo.processInfo.systemUptime, error == nil else { remove(id); return }
+        guard let data, let packet = try? AppPacket<ClientMessage>.decode(data) else { remove(id); return }
         switch (peer.phase, packet.payload) {
         case (.challenge, .pair(let device, let name, let grant)):
             peers[id]?.phase = .pending; peers[id]?.deadline = ProcessInfo.processInfo.systemUptime + 120
@@ -248,12 +210,11 @@ public actor AppServer {
         else if let state = peer.latestState { data = state; peer.latestState = nil }
         else { if peer.closing { remove(id) }; return }
         peer.sending = true; peers[id] = peer
-        let context = NWConnection.ContentContext(identifier: "pi-remote", metadata: [NWProtocolWebSocket.Metadata(opcode: .binary)])
-        peer.connection.send(content: data, contentContext: context, isComplete: true, completion: .contentProcessed { [weak self] error in
+        peer.connection.send(data) { [weak self] error in
             Task { await self?.sent(id, error: error) }
-        })
+        }
     }
-    private func sent(_ id: UUID, error: NWError?) {
+    private func sent(_ id: UUID, error: (any Error)?) {
         guard error == nil, peers[id] != nil else { remove(id); return }
         peers[id]?.sending = false
         pump(id)
@@ -283,16 +244,18 @@ public actor AppServer {
         guard let peer = peers.removeValue(forKey: id) else { return }
         peer.lease.revoke()
         for task in peer.requests.values { task.cancel() }
-        peer.connection.stateUpdateHandler = nil; peer.connection.cancel()
+        peer.connection.cancel()
         if pending?.id == id { publishPair(nil) }
     }
     public func stop() async {
+        guard !stopping else { return }
+        stopping = true
+        defer { stopping = false }
         running = false
-        startup?.resume(throwing: RemoteFault.unavailable); startup = nil
-        startupTimeout?.cancel(); startupTimeout = nil
-        listener?.stateUpdateHandler = nil; listener?.cancel(); listener = nil
+        let old = listener; listener = nil
         timer?.cancel(); timer = nil; observation?.cancel(); observation = nil
         for id in Array(peers.keys) { remove(id) }
+        await old?.stop()
         await registry.closeWindow(); publishPair(nil)
     }
 }

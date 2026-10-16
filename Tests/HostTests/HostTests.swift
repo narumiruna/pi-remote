@@ -27,6 +27,17 @@ private func temporaryDirectory() throws -> URL {
     return url
 }
 
+@Test func directoryParentNavigationStopsAtRoot() async throws {
+    let registry = DirectoryRegistry()
+    var page = try await registry.list(id: nil, cursor: nil)
+    for _ in 0..<32 {
+        guard let parent = page.parent else { break }
+        page = try await registry.list(id: parent, cursor: nil)
+    }
+    #expect(page.path == "/")
+    #expect(page.parent == nil)
+}
+
 @Test func directoryIDsRejectReplacementAndUnknownPaths() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -305,10 +316,95 @@ done
         var wrongHost = settled; wrongHost.host = UUID()
         #expect(await !client.apply(wrongHost))
         await #expect(throws: RemoteFault.unavailable) { try await client.request(.snapshot) }
+        try await client.connect(mac)
+        _ = try await client.request(.prompt(text: "Continue independently of device access", delivery: .prompt, image: nil))
+        #expect(await host.state().working)
         try await server.revoke(mac.device)
+        await #expect(throws: (any Error).self) { try await client.request(.snapshot) }
+        await #expect(throws: (any Error).self) { try await client.connect(mac) }
+        #expect(await host.state().working)
+        let localStop = AppRequest(epoch: host.epoch, session: await host.state().selected, action: .stop)
+        #expect(await host.handle(localStop, device: UUID()) == .ok)
+        #expect(await !host.state().working)
+    } catch { await client.disconnect(); await server.stop(); await host.shutdown(); throw error }
+    await client.disconnect(); await server.stop(); await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ListenAddress.all().map(\.address))
+func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = MemorySecrets()
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root, hold: true))
+    let registry = try DeviceRegistry(secrets: store, metadata: root.appendingPathComponent("devices.json"))
+    let identity = try await ServerIdentity.load(secrets: store, support: root)
+    let server = AppServer(coordinator: host, registry: registry)
+    let client = RemoteClient(secrets: store)
+    do {
+        #expect(identity.addresses.contains(address))
+        let port = try await server.start(identity: identity, address: address, port: 0)
+        // A listener selected for another interface must not also accept loopback traffic.
+        if !address.hasPrefix("127.") {
+            let other = try PinnedChannel(url: URL(string: "wss://127.0.0.1:\(port)/")!, certificate: identity.certificate)
+            await #expect(throws: (any Error).self) { try await other.receive(timeout: 2) }
+            other.close()
+        }
+        let grant = try await server.openPairing()
+        let code = PairingCode(host: host.hostID, name: "Local fixture", url: URL(string: "wss://\(address):\(port)/")!, certificate: identity.certificate, grant: grant, expires: Date().addingTimeInterval(120))
+        let updates = await server.pairingUpdates()
+        let approval = Task {
+            for await candidate in updates {
+                if let candidate { try await server.approve(candidate.id); return }
+            }
+        }
+        defer { approval.cancel() }
+        let mac = try await RemoteClient.pair(code: code, device: UUID(), name: "Local client", secrets: store)
+        try await approval.value
+        try await client.connect(mac)
+        let folder = try await host.directories.register(root)
+        _ = try await client.request(.createSession(directory: folder))
+        _ = try await client.request(.prompt(text: "Interface fixture", delivery: .prompt, image: nil))
+        let before = await host.state()
+        #expect(before.working)
+        await client.disconnect()
+        #expect(await host.state().working)
+        try await client.connect(mac)
+        guard case .snapshot(let restored) = try await client.request(.snapshot) else { throw RemoteFault.invalidRequest }
+        #expect(restored.selected == before.selected && restored.working)
+        let accepted = root.appendingPathComponent("support/pi-sessions/" + restored.selected!.uuidString + "/accepted")
+        #expect(try Data(contentsOf: accepted).count == 1)
+        _ = try await client.request(.stop)
+        #expect(await !host.state().working)
+        try await server.revoke(mac.device)
+        await #expect(throws: (any Error).self) { try await client.request(.snapshot) }
         await #expect(throws: (any Error).self) { try await client.connect(mac) }
     } catch { await client.disconnect(); await server.stop(); await host.shutdown(); throw error }
     await client.disconnect(); await server.stop(); await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1))) func productionClientCancellationClosesPendingReceive() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let identity = try await ServerIdentity.load(secrets: MemorySecrets(), support: root)
+    let listener = try SecureListener(identity: identity)
+    do {
+        let port = try await listener.start(address: "127.0.0.1", port: 0) { _ in }
+        let client = try PinnedChannel(url: URL(string: "wss://127.0.0.1:\(port)/")!, certificate: identity.certificate)
+        defer { client.close() }
+        let pending = Task { try await client.receive(timeout: 10) }
+        try await Task.sleep(for: .milliseconds(100))
+        let start = ContinuousClock.now
+        pending.cancel()
+        await #expect(throws: (any Error).self) { try await pending.value }
+        #expect(ContinuousClock.now - start < .seconds(2))
+    } catch { await listener.stop(); throw error }
+    await listener.stop()
+    await listener.stop()
+}
+
+@Test(arguments: ["0.0.0.0", "8.8.8.8", "169.254.1.1", "100.63.255.255", "100.128.0.1", "172.15.0.1", "172.32.0.1", "::1", "localhost"])
+func unintendedListenerAddressesAreRejected(address: String) {
+    #expect(!ListenAddress.allowed(address))
 }
 
 @Test func concurrentSubmissionResultsPreserveUncertainty() {

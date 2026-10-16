@@ -115,7 +115,7 @@ public actor DirectoryRegistry {
         if failure.occurred { cursors.removeValue(forKey: token); throw RemoteFault.permissionDenied }
         if ended { cursors.removeValue(forKey: token) }
         let parentURL = path.url.deletingLastPathComponent()
-        let parent = parentURL == path.url ? nil : try register(parentURL)
+        let parent = path.url.path == "/" ? nil : try register(parentURL)
         // Touch the selected directory last so pagination does not evict it first.
         nodes[id]?.touched = Date()
         return DirectoryPage(

@@ -2,16 +2,68 @@
 
 ## Result
 
-The native workflow implementation has advanced, but `PLAN.md` is not complete. Signed product-device tests, off-site Tailscale, normal installed-extension compatibility and several real-provider paths remain open.
+The native workflow implementation has advanced, but `PLAN.md` is not complete. Normal installed-extension compatibility, accessibility review and several workflow checks remain open. Plan completion requires simulator and laptop evidence, not physical-device installation or off-site testing.
 
 Verified on this Mac with Pi 1.3.0, Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
-- 51 root package tests pass; the root and shared suites also pass with Thread Sanitizer.
+- 59 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
 - 18 shared-package tests pass.
-- Nineteen iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips.
+- Twenty-three iOS app tests pass with the explicit provider fixture on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips; see the local audit below.
 - Both unsigned app builds pass. The unsigned iOS device-SDK build is a compile check, not an installed personal build.
 - An isolated check using the installed Pi passes model and thinking changes, input/editor dialogs, editor prefill, idle Stop, directory launch and idle session restoration. It sends no inference prompt.
 - An explicit provider check through the native host passes synthetic image input, observed live text, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart. Tools and installed resources are disabled.
+
+## Local plan audit
+
+The current completion scope is simulator and laptop verification, as defined in `PLAN.md`. Historical physical-device and off-site gates below are not required for plan completion. They remain limits on hardware and distribution claims.
+
+The latest local run verifies:
+
+- Unsigned Mac, iOS simulator and iOS device-SDK builds. `project.yml` sets automatic signing, iOS 18 and macOS 15 deployment floors. The installed SDKs are version 26.5. These checks do not establish minimum-version compatibility or signed installation.
+- All 59 root tests, also with Thread Sanitizer, and 18 shared-package tests.
+- Twenty-three iOS simulator tests with the explicit provider fixture, with zero failures or skips. The full suite passed on both the Mac's LAN and Tailscale interfaces. Xcode result summaries confirm the counts. Without the fixture, the provider integration test skips; normal app tests make no provider requests.
+- The isolated `NativeWorkflowCheck` with Pi 1.3.0. Directory launch, models, thinking, dialogs, Stop and idle restoration pass without inference or global-settings changes.
+
+### Transport correction
+
+The Network.framework listener prototype could bind the local Tailscale address, but accepted self-connections failed with `EADDRINUSE`. Separate-process and simulator clients reproduced the failure. Plain BSD TCP self-connection passed. Endpoint reuse and local-only mode did not fix it; those experiments were removed.
+
+The production listener now uses SwiftNIO 2.104.0 and NIOSSL 2.37.5 with socket-based TLS and WebSockets. This follows the plan's maintained-library fallback. The old diagnostic remains unchanged. The URLSession client then failed TLS on the simulator's Tailscale path. The production client now uses Network.framework with an explicit Security trust evaluation. It requires the approved leaf, the URL hostname and valid certificate dates. No broad ATS exception, trust-all callback, VPN change or routing change was added.
+
+Production integration tests now pass exact-interface binding, rejection of loopback access to a non-loopback listener, approval, authentication, active-run reconnection with one dispatch, Stop and revocation on all three local interfaces. Public, wildcard, link-local, IPv6 and hostname listener selections are rejected. Additional tests pass fragmented messages with interleaved ping, invalid masking/reserved bits/fragmentation, frame and receive-queue limits, pending-receive cancellation, expired certificates and future-dated certificates. Invalid-date fixtures verify their own dates before connecting. The initial `openssl req -days -1` fixture silently produced a valid 30-day certificate; it was replaced with explicit `openssl ca` dates and was not treated as expiry evidence.
+
+### Local unlock and revocation
+
+The selected iOS Keychain policy remains `WhenPasscodeSetThisDeviceOnly` with `userPresence` and an authenticated `LAContext`. Locked secret operations fail closed. The app's default evaluator uses `deviceOwnerAuthentication`, which permits Face ID or the device passcode. A test-only initializer dependency supplies authentication results without changing Keychain protection or adding a runtime bypass flag.
+
+Three simulator tests pass denial and authentication-error handling, inactive privacy covering, fresh authentication after background return, and a delayed success from before simulated lock. The delayed result cannot unlock the app or clear a newer attempt's progress. Denial leaves transcripts absent and browsing/Send unavailable. A false authentication result now shows an actionable message instead of silently returning. The production TLS test also revokes a device during active Pi work, verifies that access closes while work continues, then stops it with the local coordinator. This is simulator/injected-policy and local transport evidence, not hardware-biometric or passcode-removal evidence.
+
+### Simulator coding and recovery
+
+`SimulatorHostFixture` runs the production host with the installed Pi, tools limited to read/write, and extensions, MCP and project resources disabled. This is test isolation, not a tools security sandbox. It uses a new mode-0700 temporary directory, memory-only test credentials and a short-lived pairing grant. Only the named simulator test receives injected local approval. No production authentication bypass was added.
+
+The simulator pairs, authenticates, browses from the Mac home directory through `/` into a new nested directory, and starts Pi without project registration. Pi writes the requested Swift file. The test disconnects during active work, reconnects, checks one user-message dispatch and exact file contents, and reads the file through authenticated preview. It then sends steering/follow-up, stops work, restarts the host, authenticates again and restores the same session and working directory. A second restart interrupts active work: the saved session is marked interrupted, requires no automatic prompt dispatch, and remains idle with unchanged messages after explicit restoration. The fixture confirms that agent settings remain unchanged and removes its private data after shutdown.
+
+The first simulator run found that parent navigation at `/` could loop because Foundation represented the parent as `/../`. The host now detects the canonical root path. A root-navigation regression and the simulator flow pass after the fix.
+
+Run the fixture deliberately: it sends synthetic prompts to the configured provider and can incur usage. Build the apps with the commands in [native app verification](native-apps.md#automated-checks), then run from the repository root:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+swift build --product SimulatorHostFixture
+.build/debug/SimulatorHostFixture "$(command -v pi)" "$(tailscale ip -4)" --exercise-model &
+fixture=$!
+xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemote \
+  -destination 'platform=iOS Simulator,id=6622EB8D-23E3-4E92-9262-21CF896CD300' \
+  -derivedDataPath /tmp/pi-remote-apps-ios CODE_SIGNING_ALLOWED=NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 160 \
+  -maximum-test-execution-time-allowance 180 test
+wait "$fixture"
+```
+
+Wait for `READY` before starting Xcode tests. For the LAN check on this Mac, use `$(ipconfig getifaddr en0)` instead of `$(tailscale ip -4)`. Resolve an eligible address and simulator ID on other hosts. The fixture refuses an existing `/tmp/pi-remote-simulator-fixture`; do not remove a directory owned by another running check. It stops after the integration test or a 15-minute safety deadline. These checks do not establish off-site reliability, physical-device behavior, normal installed-extension compatibility or complete UI accessibility.
+
+Latest local logs are `/tmp/pi-remote-network-final.log`, `/tmp/pi-remote-network-final-tsan.log`, `/tmp/pi-remote-network-final-mac.log`, `/tmp/pi-remote-network-final-device.log`, `/tmp/pi-remote-final-simulator.log`, `/tmp/pi-remote-final-simulator-host.log` and `/tmp/pi-remote-final-simulator-summary.json`. They are temporary evidence, not release artifacts.
 
 ## QR-code pairing
 

@@ -7,10 +7,10 @@ The repository now contains SwiftUI iOS and macOS apps and an authenticated Mac 
 Verified on macOS 26.6.2 with Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
 - The macOS app and iOS app build without signing, including the physical iOS SDK build.
-- All 51 root package tests pass, including production TLS pairing and fake-Pi integration tests.
+- All 59 root package tests pass, including production TLS pairing, LAN/Tailscale binding and fake-Pi integration tests.
 - All 18 shared package tests pass.
-- All 51 root tests pass with Thread Sanitizer.
-- Nineteen iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5. They check QR encode/decode, invalid and stale pairing scans, bounded directory paging, stale/cancelled browse responses, launch/background protection, denied secret access, draft retention, editor offers, context boundaries and hosted UIKit rendering in light/dark appearance with large text. Captures do not prove physical accessibility or keyboard behavior.
+- All 59 root tests pass with Thread Sanitizer.
+- Twenty-three iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with the explicit provider fixture on both LAN and Tailscale. The integration flow checks coding, reconnect, Stop and idle/active host restart. Without the fixture, that one test skips. The other twenty-two tests check QR encode/decode, invalid and stale pairing scans, bounded directory paging, stale/cancelled browse responses, launch/background protection, denied/failed and stale unlock results, denied secret access, draft retention, editor offers, context boundaries and hosted UIKit rendering in light/dark appearance with large text. Captures do not prove physical accessibility or keyboard behavior.
 - The installed Pi passes an isolated native-host metadata/dialog check without inference. A separate explicit provider check passes synthetic image input, live streaming, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart; see [workflow evidence](workflow-verification.md#native-provider-check).
 
 See the commands below for repeatable checks. Physical product-app signing, Face ID/passcode behavior, folder permissions, accessibility, and off-site Tailscale operation remain unverified. The provisional deployment floors are iOS 18 and macOS 15; these are build settings, not tested support claims.
@@ -26,7 +26,7 @@ See the commands below for repeatable checks. Physical product-app signing, Face
 | `Packages/PiRPC/` | Local JSONL subprocess transport, promoted from the RPC spike |
 | `Packages/PiRemoteHost/` | Directory capabilities, sessions, Pi supervision, TLS server and pairing authority |
 | `Packages/PiRemoteClient/` | Pairing, authenticated connection, state recovery and request correlation |
-| `Packages/PiRemoteConnection/` | Certificate-pinned URLSession WebSocket |
+| `Packages/PiRemoteConnection/` | Certificate-pinned Network.framework WebSocket |
 | `Packages/PiRemoteSecurity/` | Keychain storage and private metadata files |
 | `project.yml` | XcodeGen source for both apps and the iOS app test target |
 
@@ -52,9 +52,9 @@ The phone pins the certificate in that code before sending the pairing grant. Th
 
 Connections require a fresh nonce and a per-device HMAC proof. The host rejects unauthenticated browsing and commands. Revocation closes active authorization leases before deleting credentials. If persistence fails, the listener stops and the UI reports an error; do not treat a failed revocation as durable success.
 
-TLS checks both the exact approved leaf certificate and its hostname and validity. There are no broad ATS exceptions or trust-all callbacks. The listener binds one selected loopback, private IPv4, or Tailscale IPv4 address, normally on port 7443. IPv6, public listeners and router port forwarding are not implemented.
+SwiftNIO and NIOSSL provide the production listener. The Network.framework client checks the exact approved leaf certificate, its URL hostname and explicit validity dates. This replaces the prototype listener and URLSession client after local Tailscale failures; see [transport correction](workflow-verification.md#transport-correction). There are no broad ATS exceptions or trust-all callbacks. The listener binds one selected loopback, private IPv4, or Tailscale IPv4 address, normally on port 7443. IPv6, public listeners and router port forwarding are not implemented.
 
-The server identity and device secrets use Keychain. The phone uses `WhenPasscodeSetThisDeviceOnly` with `userPresence` and an authenticated `LAContext`; it has no unauthenticated fallback. The app covers inactive content and invalidates the context on background entry. Hardware denial, device-lock and passcode-removal behavior still need physical tests. Saved public connection metadata and drafts use the phone's app storage, not the credential Keychain.
+The server identity and device secrets use Keychain. The phone uses `WhenPasscodeSetThisDeviceOnly` with `userPresence` and an authenticated `LAContext`; it has no unauthenticated fallback. The app covers inactive content and invalidates the context on background entry. Three simulator tests inject authentication results: denial and errors retain the lock, background return requires a new decision, and an old success cannot unlock the app or finish a newer attempt. The default evaluator still uses `deviceOwnerAuthentication`; no runtime bypass flag was added. Production TLS tests also prove that revocation closes phone access while Pi keeps working and the Mac can still Stop it. Hardware denial, device-lock and passcode-removal behavior still need physical tests. Saved public connection metadata and drafts use the phone's app storage, not the credential Keychain.
 
 A paired phone has Pi control with the Mac user's permissions. Folder selection is not a tools sandbox. The companion does not bypass macOS permissions and does not expose arbitrary RPC forwarding or a shell endpoint. Provider credentials remain on the Mac. Routine diagnostics do not record prompts, tool output, pairing codes or secrets.
 
@@ -62,7 +62,7 @@ A paired phone has Pi control with the Mac user's permissions. Folder selection 
 
 - App frames are limited to 4 MiB; Pi JSONL records are limited to 8 MiB. Oversized live state falls back to a bounded error snapshot that retains Stop. A Pi record beyond the adapter limit interrupts the process; large-history recovery still needs validation.
 - The directory picker displays one 100-entry page and retains at most eight other pages for back/forward navigation. Forward navigation reuses cached pages instead of consuming the host cursor twice. Folder changes clear the cache and preview; stale or cancelled replies cannot replace the selected directory, preview, error or loading state.
-- There are at most eight in-flight requests per connection, 16 queued replies, 16 connections, eight folder cursors, and 4,096 registered path IDs. Cursors expire after 60 seconds. Browse again if an ID expires or a folder moves.
+- There are at most eight in-flight requests per connection, 16 queued replies, 16 connections, eight folder cursors, and 4,096 registered path IDs. Each connection retains at most eight unread messages and 8 MiB; overflow closes access instead of blocking Pi. TLS/WebSocket setup has a ten-second deadline. Cursors expire after 60 seconds. Browse again if an ID expires or a folder moves.
 - Text prompts are limited to 256 KiB. One image is limited to 2 MiB. The phone downsizes selected photos. Text previews and diffs are limited to 256 KiB. Paged history returns 100 entries with 512-byte summaries and bounded entry previews. Older clients retain the 1,000-entry history operation. Native Markdown blocks and thinking display are implemented, but custom terminal renderers, full image output and in-place branch navigation remain open. See [history limits](workflow-verification.md#history).
 - Dialogs are retained on the Mac during a disconnection. Expired answers are rejected. Oversized dialogs offer cancellation only; truncated choices are never approved. Up to eight dialogs can remain pending.
 - The request journal accepts at most 10,000 mutations in one host epoch. It fails closed at capacity instead of discarding deduplication records. Restart creates a new epoch; old requests remain invalid.
@@ -103,7 +103,7 @@ The host tests exercise a controlled fake Pi. They verify local approval, certif
 - An incremental SwiftPM build did not discover a new source file. A clean package build discovered it and passed the tests.
 - The second iOS test run failed before launch with simulator `Busy` preflight errors. After simulator boot completed, the retry passed all three tests with no skips. Local result bundles are `/tmp/pi-remote-phone-tests-1`, `/tmp/pi-remote-phone-tests-2` and `/tmp/pi-remote-phone-tests-3`. The initial native-app checkpoint also passed three tests in `/tmp/pi-remote-phone-tests-reviewed`, with zero failures and zero skips. Current 14-test evidence is in [workflow verification](workflow-verification.md). These bundles are temporary, not committed artifacts.
 - A fresh product signing retry still fails with `errSecInternalComponent` in the Background session. The older signed diagnostic app is not a signed build of these product apps; see [current gates](workflow-verification.md#failures-and-external-gates).
-- The off-site phone Tailscale test remains open. A Mac-side connection alone does not satisfy it.
+- LAN and Tailscale authenticated transport and simulator coding checks now pass locally. Off-site operation remains unverified; it is not a plan-completion gate.
 - Pi's terminal-only extension UI has no equivalent transport in the inspected RPC interface. Accounts, btw, usage, progress and sync need further integration work. No feature deferral has been accepted. See `docs/verification.md` for the installed-package inventory.
 - Physical UI review, VoiceOver, keyboard/dictation, large-text reachability, protected-folder/TCC cases, missing provider credentials, Mac sleep/wake and real-Pi product-app recovery remain open. A render test does not satisfy these gates.
 - The first pull-request creation attempt failed with HTTP 401. The user restored GitHub CLI authentication; `gh auth status` now passes. SSH Git access alone did not authorize pull-request creation.

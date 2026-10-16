@@ -126,7 +126,7 @@ Include session branching, history navigation, attachments, and file or diff vie
 
 | Component | Technology | Responsibility |
 | --- | --- | --- |
-| iOS client | Swift, SwiftUI, URLSession | Connection management, transcript, input, and native controls |
+| iOS client | Swift, SwiftUI, Network.framework | Connection management, transcript, input, and native controls |
 | macOS companion | Swift, SwiftUI, Foundation Process | Pairing, project access, session ownership, and Pi process supervision |
 | Shared package | Swift Package Manager, Codable | Versioned transport messages, client state, and test fixtures |
 | Pi runtime | Existing installed Pi CLI | Agent execution, tools, provider access, and persistent Pi sessions |
@@ -222,13 +222,13 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### 1. Resolve implementation blockers
 
-- [ ] Check iOS/macOS deployment settings and personal-build configuration against the local SDKs; record build evidence without treating the development host version as a compatibility guarantee.
+- [x] Check iOS/macOS deployment settings and personal-build configuration against the local SDKs; unsigned macOS, iOS simulator and iOS device-SDK builds pass with automatic signing configured and provisional iOS 18/macOS 15 deployment floors. No team or installation is required for this local configuration check. See [local audit](docs/workflow-verification.md#local-plan-audit).
 - [ ] Inspect this laptop's Pi version, executable, authentication setup, and extensions; complete the native-workflow compatibility review with evidence and explicit decisions for each gap.
-- [ ] Validate directory access on this laptop, including symbolic-link targets and permission-denial fixtures; record expected denials without requiring approved roots or changes to macOS privacy grants.
-- [ ] Select Keychain protection settings for the Face ID or device-passcode unlock policy; test denied unlock, background return, simulated lock and credential revocation in the simulator and local tests.
+- [x] Validate directory access on this laptop, including symbolic-link targets and permission-denial fixtures; local filesystem tests pass read/search denial, broken links, loops, removed/replaced selections and canonical alias launch. No approved roots or privacy-grant changes were added. See [directory evidence](docs/workflow-verification.md#directory-browsing-and-launch-protection).
+- [x] Select Keychain protection settings for the Face ID or device-passcode unlock policy; `WhenPasscodeSetThisDeviceOnly` plus `userPresence` remains selected. Three simulator tests pass denied/failed unlock, background return and delayed success after simulated lock; locked secret tests fail closed. Production TLS revocation closes access without cancelling Pi, which local Stop still controls. See [local unlock evidence](docs/workflow-verification.md#local-unlock-and-revocation).
 - [x] Build a Swift command-line spike that launches Pi, sends a prompt, streams output, stops work, and resumes a persisted session; Pi 1.3.0 passed streaming, settlement, active-run Stop, working-directory, and saved-session assertions, with 15 RPC tests and seven shared-package tests; see [verification evidence](docs/verification.md).
 - [x] Build a secure WebSocket implementation with server-identity verification; local production TLS tests pass certificate/hostname rejection, pairing, authenticated reconnection and revoked-access rejection; see [local integration evidence](docs/native-apps.md#automated-checks).
-- [ ] Test Tailscale address selection and listener binding with a local client on this laptop; record authenticated control and reconnection results without requiring a remote peer.
+- [x] Test Tailscale address selection and listener binding with a local client on this laptop; production tests pass exact loopback, LAN and Tailscale binding, authenticated control, one-dispatch reconnection, Stop and revocation. Twenty-three simulator tests also pass with the provider fixture on LAN and Tailscale. See [transport correction and simulator evidence](docs/workflow-verification.md#local-plan-audit).
 
 ### 2. Establish the Swift workspace and contract
 
@@ -238,7 +238,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### 3. Build the Mac host
 
-- [ ] Implement Pi selection, directory listing and validation, and companion-owned session storage; prove the selected working directory is used for creation and resumption without changing unrelated Pi sessions.
+- [x] Implement Pi selection, directory listing and validation, and companion-owned session storage; the installed-Pi checks and simulator coding fixture pass creation and restoration in the selected canonical directory. The fixture uses private session storage and confirms unchanged agent settings; see [simulator coding and recovery](docs/workflow-verification.md#simulator-coding-and-recovery).
   - Verified: private-catalog tests cover creation, restart, header IDs and directory aliases. Installed-Pi checks pass creation, idle restoration and nonempty provider-history restoration after coordinator restart in the selected directory, without changing agent settings.
 - [x] Test directory-access enforcement with unauthenticated requests, stale IDs, inaccessible folders, symbolic links, traversal attempts, and a folder removed between selection and launch; production TLS and filesystem tests pass. Rejected creation requests start no process or session; lost read/search permissions reject resume before replacing Pi. Local permission-denial coverage remains in step 1; see [directory evidence](docs/workflow-verification.md#directory-browsing-and-launch-protection).
 - [x] Implement pairing, credential storage, authentication, and revocation; production TLS integration tests pass local approval, certificate/hostname rejection, unauthenticated request rejection and revoked reconnection rejection. Registry tests verify persistent credentials and fail-closed secret-deletion failure.
@@ -261,14 +261,15 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### 5. Validate and prepare the first release
 
-- [x] Add automated protocol and integration tests with a fake Pi process; 51 root tests and 18 shared-package tests pass. Coverage includes rejected commands, unknown outcomes, directly injected stale/wrong-identity client states, epoch/cursor fallback, invalid credentials, bounded output and active-run TLS reconnection without duplicate dispatch. All 51 root tests also pass with Thread Sanitizer.
-- [ ] Run a simulator-to-local-host coding flow through pairing, a coding task, client disconnection, reconnection, Stop and session restoration; record the result and remaining defects.
+- [x] Add automated protocol and integration tests with a fake Pi process; 59 root tests and 18 shared-package tests pass. Coverage includes rejected commands, unknown outcomes, directly injected stale/wrong-identity client states, epoch/cursor fallback, invalid credentials, bounded output, malformed WebSocket frames, invalid certificate dates and active-run TLS reconnection without duplicate dispatch on LAN and Tailscale. All 59 root tests also pass with Thread Sanitizer.
+- [x] Run a simulator-to-local-host coding flow through pairing, a coding task, client disconnection, reconnection, Stop and session restoration; the production client/host fixture passes on LAN and Tailscale with Pi 1.3.0. It verifies exact tool-written file contents, one user-prompt delivery, preserved working directory, idle restoration and explicitly marked interruption after active host restart. It does not claim full UI or installed-extension acceptance. See [simulator evidence](docs/workflow-verification.md#simulator-coding-and-recovery).
 - [ ] Test simulated host unavailability, lost project access, missing model credentials and Pi crashes on this laptop; verify actionable errors and no automatic re-execution of interrupted work.
 - [ ] Document supported Pi versions, setup, security limits, network requirements, session ownership, and recovery in README.md; validate the instructions with a clean simulator setup and local companion storage on this laptop.
 
 ## Execution blockers
 
 - Xcode 26.6 is installed, but the global developer directory selects Command Line Tools; verified package checks use a command-local `DEVELOPER_DIR` override without changing the user's settings.
+- Local Tailscale failures required replacing the prototype listener with SwiftNIO/NIOSSL and the URLSession client with a certificate-pinned Network.framework client. Current loopback, LAN, Tailscale and simulator checks pass without ATS exceptions or routing changes; see [local audit](docs/workflow-verification.md#local-plan-audit).
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
 - Both native apps and the production authenticated host now exist. The older diagnostic remains separate and cannot start Pi or read Mac files. Passing diagnostic tests does not replace simulator and local product-app checks.
 - Installed Pi 1.3.0 passes isolated native-host model/thinking changes, input/editor dialogs, prefill and directory launch without inference. The explicit provider exercise also passes live text, steering/follow-up delivery, active Stop, fork/clone, synthetic image input and nonempty restoration after coordinator restart. Real compaction and normal installed-extension checks on this laptop remain open.
@@ -291,14 +292,14 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 - [x] Both apps and all app-owned service code are written in Swift; no TypeScript backend is required. See `Apps/`, `Packages/`, root `Package.swift` and `project.yml`.
 - [ ] Simulator interface review confirms the minimal conversation layout, directory picker and secondary controls remain readable and reachable with large text and the keyboard open.
-- [ ] The iOS simulator securely connects to the companion on this laptop, browses permitted directories and starts Pi in the selected directory.
-- [ ] Session details show the correct working directory, and session restoration preserves it without a silent fallback.
-- [ ] Any companion-accessible folder can be selected without prior project registration; access-denial, stale-selection, and symbolic-link tests pass without bypassing macOS permissions.
-- [ ] Simulator and local tests verify that the unlock policy protects transcripts, directory browsing and remote controls, and that device revocation closes access without cancelling Mac-side work.
+- [x] The iOS simulator securely connects to the production host on this laptop, browses permitted directories and starts Pi in the selected directory; the explicit provider fixture passes on LAN and Tailscale.
+- [x] Session details use the session's canonical directory. Installed-Pi, package and simulator restart checks verify that restoration preserves it without a silent fallback; changed or inaccessible directories are rejected.
+- [x] Any companion-accessible folder can be selected without prior project registration; access-denial, stale-selection, and symbolic-link tests pass without bypassing macOS permissions. The simulator browses from home through `/` into a new nested fixture directory.
+- [x] Simulator and local tests verify that the unlock policy protects transcripts, directory browsing and remote controls, and that device revocation closes access without cancelling Mac-side work; injected denial/background/stale-success cases and active-run TLS revocation pass. Hardware claims remain excluded.
 - [ ] The native-workflow compatibility review is complete, accepted workflows pass their checks, and remaining gaps are documented without claiming full terminal parity.
 - [ ] Text streaming, tool activity, steering, follow-up, Stop, and supported extension dialogs pass the recorded test cases.
-- [ ] A simulated client disconnect does not stop Pi; reconnection restores the correct state without duplicate prompts.
-- [ ] Session restoration works after a companion restart, with interrupted work clearly identified.
-- [ ] Unpaired and revoked devices cannot access the host; certificate changes fail closed.
+- [x] A simulated client disconnect does not stop Pi; production fake-Pi tests verify one dispatch and restored active state, and the simulator provider flow verifies one prompt and the completed coding result after reconnection.
+- [x] Session restoration works after a host restart. Simulator checks pass idle and active restart, retained working directories, an interrupted-session flag and unchanged idle messages after explicit restoration, without resending a prompt.
+- [x] Unpaired and revoked devices cannot access the host; production TLS tests pass unauthenticated browsing rejection, active revocation, revoked reconnection, changed-certificate rejection, hostname rejection and expired/future certificate rejection.
 - [ ] Build commands, automated tests, simulator execution and local setup instructions have recorded passing results.
 - [ ] Local tests pass for LAN and Tailscale address selection, listener binding and authenticated transport; network limits, simulated host unavailability, tested Pi versions and user-approved feature gaps are documented without claiming off-site or hardware validation.

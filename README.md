@@ -6,9 +6,9 @@ Choose a Mac directory from your phone, start a managed session, watch output an
 
 ## Status
 
-**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Nineteen iOS simulator app tests pass. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
+**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Twenty-three iOS simulator app tests pass with the explicit local provider fixture on both LAN and Tailscale, including coding, reconnection and host restart. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
 
-The product apps have not passed a signed physical-device coding task, off-site Tailscale testing, hardware unlock testing or the full Pi workflow review. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
+The full Pi workflow and simulator accessibility reviews remain open. Signed physical-device coding, off-site Tailscale and hardware unlock are unverified limits, not completion gates for the current local plan. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
 
 ## Implemented foundation
 
@@ -31,7 +31,7 @@ These are implemented controls, not proof of complete terminal parity. Real-Pi a
 - Pairing requires a short-lived code scanned or copied from the Mac and explicit approval on the Mac. TLS checks the pinned certificate, hostname and validity. Each connection requires device authentication.
 - Credentials use Keychain. The phone requires Face ID or its device passcode before access after launch or background return. Hardware behavior remains unverified.
 - The listener binds one selected private IPv4, loopback or Tailscale IPv4 address. No public listener, router port forwarding, hosted relay or account service is included.
-- LAN and off-site Tailscale are required for the first personal build. Only the older diagnostic has passed a physical LAN test; off-site access remains unverified.
+- LAN and off-site Tailscale are required for the first personal build. Authenticated local LAN and Tailscale tests pass, including a simulator coding flow. Only the older diagnostic has passed a physical LAN test; off-site access remains unverified.
 - The companion owns separate Pi session files. It cannot attach to an existing terminal Pi session. Do not open its managed files for writing in another Pi process.
 - Companion exit stops its child. A sleeping Mac is unavailable. Interrupted work is not automatically repeated; inspect uncertain outcomes before retrying.
 - Routine diagnostics exclude credentials, pairing codes, prompts and tool output. Output and history views have explicit size limits; see [limits and recovery](docs/native-apps.md#resource-and-recovery-limits).
