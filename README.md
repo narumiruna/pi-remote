@@ -8,7 +8,7 @@ Start a coding task from your iPhone, watch streamed output and tool activity, s
 
 **Early implementation; the complete plan is blocked.** Local Swift RPC and secure WebSocket spikes, shared-package tests, and an iOS diagnostic test host are available. There are no Pi Remote product apps or production pairing service yet.
 
-The RPC spike passed against Pi 1.3.0. The secure transport spike passes local and iOS simulator tests; the signed physical-device build is blocked by signing-key access. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md) for commands, limits, and remaining checks; this is not a supported app release.
+The RPC spike passed against Pi 1.3.0. The secure transport spike passes local and iOS simulator tests; an Xcode-signed build now launches on the physical iPhone, but its network connection fails before TLS verification. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md) for commands, limits, and remaining checks; this is not a supported app release.
 
 See [PLAN.md](PLAN.md) for the proposed architecture, implementation steps, validation checks, and open decisions.
 

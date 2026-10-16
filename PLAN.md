@@ -10,7 +10,7 @@ Provide the Pi workflow through native screens and controls, not an embedded ter
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: local RPC and secure WebSocket spikes pass focused tests, including an iOS simulator handshake test; the overall plan remains incomplete. Physical secure transport is waiting on development signing, not DDI compatibility; both product apps and release checks remain open. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
+Status: local RPC and secure WebSocket spikes pass focused tests, including an iOS simulator handshake test; the overall plan remains incomplete. A verified Xcode-signed build now launches tests on the iPhone, but its connection fails with `NSURLErrorDomain -1009` before TLS verification; both product apps and release checks remain open. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
 
 ## Context
 
@@ -258,7 +258,8 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 - Xcode 26.6 is installed, but the global developer directory selects Command Line Tools; verified package checks use a command-local `DEVELOPER_DIR` override without changing the user's settings.
 - The iPhone is connected and DDI services are usable; the earlier mount failure returned `kAMDMobileImageMounterDeviceLocked`, not a proven Xcode/iOS version incompatibility.
-- The signed device test build fails with `errSecInternalComponent`; querying the login Keychain returns `User interaction is not allowed`. Resolve signing-key access through the user's normal Mac session before installing and running the device test; do not change key ACLs or request the user's password.
+- Background-session signing remains unavailable, but an Xcode-signed `dev.narumi` build passes signature verification and launches the physical test through `test-without-building`; no key ACLs or passwords were changed.
+- The physical test currently fails with `NSURLErrorDomain -1009` before TLS verification; confirm the iPhone's Wi-Fi route to the Mac and local-network permission, then rerun while the phone remains unlocked.
 - Mac Tailscale is running, but the iPhone peer is offline; off-site access still needs an active iPhone Tailscale connection from a different network.
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
 - A restricted TLS listener and diagnostic iOS test host now exist; they cannot start Pi or read Mac files. The local iOS simulator test passes, but the physical transport gate remains open and no product screens were added.

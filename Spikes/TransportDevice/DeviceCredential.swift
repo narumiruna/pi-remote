@@ -7,7 +7,7 @@ enum DeviceCredential {
     private static func query(_ device: UUID) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "dev.narumiruna.PiRemote.TransportSpike",
+            kSecAttrService as String: "dev.narumi.PiRemote.TransportSpike",
             kSecAttrAccount as String: device.uuidString,
             kSecAttrSynchronizable as String: false
         ]

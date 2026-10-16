@@ -109,7 +109,7 @@ None of these packages has passed a remote native-client compatibility test. Sta
 
 ## Blockers and next evidence
 
-1. Resolve development-signing access: the device build returns `errSecInternalComponent`, and the login Keychain query returns `User interaction is not allowed`; DDI mounting is no longer blocked.
+1. Resolve the physical phone's network access: a verified Xcode-signed build launches tests, but the connection returns `NSURLErrorDomain -1009` before TLS verification; confirm Wi-Fi reachability and local-network permission. Background signing remains unavailable, so reuse the matching foreground-signed test artifacts without rebuilding.
 2. Bring the iPhone online in Tailscale and make it available on a different network for the off-site test; Mac Tailscale is already running.
 3. Validate the Face ID or device-passcode unlock policy and matching Keychain access behavior on the physical phone.
 4. Build the secure WebSocket spike and prove pairing, server-identity rejection, credential revocation, and reconnection on the physical phone over local and Tailscale connections.

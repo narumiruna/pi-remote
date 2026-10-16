@@ -2,7 +2,7 @@
 
 ## Status
 
-The restricted Network.framework TLS WebSocket server interoperates with the URLSession WebSocket client on macOS and an iOS 26.5 simulator. The physical iPhone test has **not passed**: development signing is blocked by signing-key access. Keep the physical transport task in `PLAN.md` open.
+The restricted Network.framework TLS WebSocket server interoperates with the URLSession WebSocket client on macOS and an iOS 26.5 simulator. The physical iPhone test has **not passed**: a verified Xcode-signed build launches the test, but the phone returns `NSURLErrorDomain -1009` before TLS verification. Keep the physical transport task in `PLAN.md` open.
 
 This spike cannot start Pi, read Mac directories, or forward arbitrary RPC commands. The diagnostic iOS app is not the Pi Remote product interface.
 
@@ -11,7 +11,9 @@ This spike cannot start Pi, read Mac directories, or forward arbitrary RPC comma
 - Eleven shared-package test functions pass, including four handshake tests for typed messages, unsupported versions, message limits, pairing expiration, attempt limits, consumed grants, unpaired devices, nonce replay, and revocation.
 - Twenty root test functions pass, including the existing 15 RPC tests and five secure transport tests; the root tests also pass with Thread Sanitizer.
 - The secure transport tests verify pairing, authenticated reconnection, refusal of unauthenticated requests, rejection of changed certificates and hostname mismatches, immediate closure of a revoked active connection, rejection of revoked credentials, explicit-port binding, and cancellation of a pending client receive.
-- The iOS diagnostic app and test bundle compile for physical iOS with `CODE_SIGNING_ALLOWED=NO`; this is not an installed or signed device build.
+- The iOS diagnostic app and test bundle compile for physical iOS with `CODE_SIGNING_ALLOWED=NO`.
+- A separately Xcode-signed build with bundle IDs `dev.narumi.PiRemote.TransportSpike` and `dev.narumi.PiRemote.TransportSpikeTests` passes deep signature verification; its bundled private fixture matches the server fixture, and its test binary is newer than the test sources.
+- The first physical execution waited for device unlock and timed out before running a test. After unlocking, the iPhone 16 Pro on iOS 26.7.1 ran the test, which failed with network error `-1009`; neither certificate rejection nor pairing has passed on the phone.
 - The iPhone 16 Pro simulator on iOS 26.5 passes one end-to-end test covering certificate rejection, unauthorized requests, pairing, consumed-grant rejection, device Keychain storage and retrieval, two authenticated connections, correlated ping responses, and replay rejection.
 - The initial simulator run failed because the listener supplied a concrete port twice and returned POSIX error 22; the listener initialization was fixed, an explicit-port regression test was added, and the simulator rerun passed.
 
@@ -70,6 +72,17 @@ xcodebuild -project Spikes/TransportDevice/TransportDeviceSpike.xcodeproj \
 
 A physical destination uses `platform=iOS,id=<device-udid>`. Simulator builds use `platform=iOS Simulator,id=<simulator-id>` and `CODE_SIGN_IDENTITY=-` instead of the development team and provisioning flags. The simulator test was run on a dedicated iPhone 16 Pro simulator with iOS 26.5.
 
+If background signing fails but Xcode can build in the user's normal session, reuse that signed build rather than changing key access rules. Verify its signature, bundle IDs, source freshness, and private fixture before running its test manifest:
+
+```sh
+codesign --verify --deep --strict '<signed-app-path>'
+xcodebuild -xctestrun '<signed-products-path>/<test-manifest>.xctestrun' \
+  -destination 'platform=iOS,arch=arm64,id=<device-udid>' \
+  -parallel-testing-enabled NO test-without-building
+```
+
+Start the restricted server before the test command, and do not regenerate the Xcode project while the user is configuring signing in it. Keep the iPhone unlocked and awake; allow local-network access and connect it to the Mac's Wi-Fi for the local test.
+
 Then start the restricted server in one terminal:
 
 ```sh
@@ -89,7 +102,7 @@ Use the same build/signing settings as the build step. Allow the diagnostic app'
 
 ## Remaining blockers
 
-1. The signed device build returned `errSecInternalComponent` while signing XCTest frameworks; querying the login Keychain returned `User interaction is not allowed`. A valid development identity is present, but this does not prove its private key is available to `codesign`. Resolve access through the user's normal Mac session; do not request passwords, export the signing key, or change its access rules.
+1. The physical phone returns `NSURLErrorDomain -1009` before TLS verification. The signed app includes its local-network usage description, but Wi-Fi reachability and the user's local-network permission still need confirmation; the failure does not establish a certificate problem. Background signing remains unavailable, but the verified foreground-signed build is usable through `test-without-building`.
 2. Mac Tailscale is running, but the iPhone peer is offline. A physical off-site test still needs the iPhone online through Tailscale from a different network, with a new fixture pinned to the selected Tailscale address.
 3. GitHub authentication still returns HTTP 401, so pull request creation remains blocked even though Git-over-SSH push works.
 
