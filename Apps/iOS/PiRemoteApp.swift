@@ -200,17 +200,48 @@ struct ConnectionsView: View {
 
 struct PairingView: View {
     @Bindable var model: PhoneModel
+    @State private var scanning = false
+    @State private var scanScope: PhoneModel.ContentScope?
+
     var body: some View {
         Form {
-            Text("On your Mac, start the listener and open a two-minute pairing window. Copy the pairing code, then paste it here.")
-            TextEditor(text: $model.pairingText).frame(minHeight: 100).font(.caption.monospaced()).autocorrectionDisabled()
-            Text("Trust only a code copied from your own Mac. Pairing gives this device Pi control with the Mac user's file and command permissions.")
+            Text("On your Mac, start the listener and select Pair a device to show a two-minute pairing QR code.")
+            Button("Scan QR code", systemImage: "qrcode.viewfinder") {
+                scanScope = model.contentScope
+                scanning = true
+            }.frame(minHeight: 44).disabled(model.pairing)
+            DisclosureGroup("Paste pairing code instead") {
+                TextEditor(text: $model.pairingText).frame(minHeight: 100).font(.caption.monospaced()).autocorrectionDisabled()
+            }
+            if let code = try? PairingCode.decode(model.pairingText) {
+                Section("Mac to pair") {
+                    Text(code.name)
+                    Text(code.url.absoluteString).font(.caption.monospaced())
+                    Text("Check that this is your Mac before requesting pairing.").font(.caption)
+                }
+            }
+            Text("Trust only a code scanned or copied from your own Mac. Pairing gives this device Pi control with the Mac user's file and command permissions.")
                 .font(.caption).foregroundStyle(.secondary)
             Text("Device ID: " + model.device.uuidString).font(.caption.monospaced()).textSelection(.enabled)
             if let info = model.pairingInfo { Text(info) }
             if let fault = model.fault { Text(fault.explanation).foregroundStyle(.red) }
             Button(model.pairing ? "Waiting for Mac approval…" : "Request pairing") { model.pair() }
                 .disabled(model.pairing || model.pairingText.isEmpty).frame(minHeight: 44)
-        }.navigationTitle("Pair with Mac")
+        }
+        .navigationTitle("Pair with Mac")
+        .fullScreenCover(isPresented: $scanning) {
+            PairingScanner { text in
+                guard scanning, let scanScope else { return }
+                _ = model.acceptPairingScan(text, scope: scanScope)
+                scanning = false
+                self.scanScope = nil
+            }
+        }
+        .onChange(of: model.locked) { _, locked in
+            if locked { scanning = false; scanScope = nil }
+        }
+        .onChange(of: model.panel) { _, panel in
+            if panel != "pair" { scanning = false; scanScope = nil }
+        }
     }
 }

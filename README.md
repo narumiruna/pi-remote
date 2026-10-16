@@ -6,7 +6,7 @@ Choose a Mac directory from your phone, start a managed session, watch output an
 
 ## Status
 
-**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Fourteen iOS simulator app tests pass. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
+**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Nineteen iOS simulator app tests pass. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
 
 The product apps have not passed a signed physical-device coding task, off-site Tailscale testing, hardware unlock testing or the full Pi workflow review. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
 
@@ -18,7 +18,7 @@ The product apps have not passed a signed physical-device coding task, off-site 
 - Streamed text and thinking, native Markdown blocks, fenced code and expandable tool output.
 - Native prompts, steering, follow-up, Stop, model/thinking controls, command discovery and supported extension dialogs.
 - Paged session history and entry inspection, fork/clone controls, compaction, image/text input, bounded file previews and working-tree diff.
-- Saved Mac connections, explicit local pairing approval, per-device credentials and revocation.
+- Saved Mac connections, QR-code or pasted-code pairing, explicit local approval, per-device credentials and revocation.
 - Bounded state replay and snapshot recovery, request deduplication, retained drafts and explicit unknown outcomes. Accepted prompts are not automatically resent.
 - Session-bound UI actions and attachments. Editor text replaces a nonempty draft only after an explicit decision.
 - Local Mac session controls and menu-bar status. Disconnecting the phone does not stop accepted work.
@@ -28,7 +28,7 @@ These are implemented controls, not proof of complete terminal parity. Real-Pi a
 ## Security and network limits
 
 - A paired phone is a trusted Pi controller. Pi can change files and run commands with the Mac user's permissions. Folder selection is not a tools sandbox.
-- Pairing requires a short-lived code copied from the Mac and explicit approval on the Mac. TLS checks the pinned certificate, hostname and validity. Each connection requires device authentication.
+- Pairing requires a short-lived code scanned or copied from the Mac and explicit approval on the Mac. TLS checks the pinned certificate, hostname and validity. Each connection requires device authentication.
 - Credentials use Keychain. The phone requires Face ID or its device passcode before access after launch or background return. Hardware behavior remains unverified.
 - The listener binds one selected private IPv4, loopback or Tailscale IPv4 address. No public listener, router port forwarding, hosted relay or account service is included.
 - LAN and off-site Tailscale are required for the first personal build. Only the older diagnostic has passed a physical LAN test; off-site access remains unverified.

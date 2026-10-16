@@ -30,6 +30,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect securely to Pi Remote for Mac on your local network.
         INFOPLIST_KEY_NSFaceIDUsageDescription: Unlock Pi Remote before viewing sessions or controlling your Mac.
+        INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing QR code shown by Pi Remote for Mac.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
   PiRemoteMac:

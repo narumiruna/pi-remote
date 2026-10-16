@@ -10,7 +10,7 @@ Verified on macOS 26.6.2 with Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 - All 51 root package tests pass, including production TLS pairing and fake-Pi integration tests.
 - All 18 shared package tests pass.
 - All 51 root tests pass with Thread Sanitizer.
-- Fourteen iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5. They check bounded directory paging, stale/cancelled browse responses, launch/background protection, denied secret access, draft retention, editor offers, context boundaries and hosted UIKit rendering in light/dark appearance with large text. Captures do not prove physical accessibility or keyboard behavior.
+- Nineteen iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5. They check QR encode/decode, invalid and stale pairing scans, bounded directory paging, stale/cancelled browse responses, launch/background protection, denied secret access, draft retention, editor offers, context boundaries and hosted UIKit rendering in light/dark appearance with large text. Captures do not prove physical accessibility or keyboard behavior.
 - The installed Pi passes an isolated native-host metadata/dialog check without inference. A separate explicit provider check passes synthetic image input, live streaming, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart; see [workflow evidence](workflow-verification.md#native-provider-check).
 
 See the commands below for repeatable checks. Physical product-app signing, Face ID/passcode behavior, folder permissions, accessibility, and off-site Tailscale operation remain unverified. The provisional deployment floors are iOS 18 and macOS 15; these are build settings, not tested support claims.
@@ -46,7 +46,9 @@ The generated `PiRemote.xcodeproj` is ignored. No TypeScript backend, terminal, 
 
 ## Security
 
-Pairing uses a two-minute high-entropy code copied from the Mac. The phone pins the certificate in that code before sending the pairing grant. The Mac user must approve the displayed device ID. Codes permit at most five attempts, and the host accepts at most 16 paired devices. A code is sensitive: do not put it in logs or share it through an untrusted channel.
+Pairing uses a two-minute high-entropy code scanned or copied from the Mac. Select **Pair a device** on the Mac to display its QR code. On the phone, use **Connections → Pair a Mac → Scan QR code**, review the Mac name and address, then select **Request pairing**. The in-app scanner requires camera permission; it does not use the system Camera app or a web service. Copy and paste remain available if scanning is unavailable or the code exceeds QR capacity. This interaction is implemented and simulator-tested, but physical camera scanning remains unverified.
+
+The phone pins the certificate in that code before sending the pairing grant. The Mac user must approve the displayed device ID. Codes permit at most five attempts, and the host accepts at most 16 paired devices. A code is sensitive: do not put it in logs or share it through an untrusted channel.
 
 Connections require a fresh nonce and a per-device HMAC proof. The host rejects unauthenticated browsing and commands. Revocation closes active authorization leases before deleting credentials. If persistence fails, the listener stops and the UI reports an error; do not treat a failed revocation as durable success.
 

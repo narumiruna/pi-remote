@@ -8,10 +8,20 @@ Verified on this Mac with Pi 1.3.0, Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
 - 51 root package tests pass; the root and shared suites also pass with Thread Sanitizer.
 - 18 shared-package tests pass.
-- Fourteen iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips.
+- Nineteen iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips.
 - Both unsigned app builds pass. The unsigned iOS device-SDK build is a compile check, not an installed personal build.
 - An isolated check using the installed Pi passes model and thinking changes, input/editor dialogs, editor prefill, idle Stop, directory launch and idle session restoration. It sends no inference prompt.
 - An explicit provider check through the native host passes synthetic image input, observed live text, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart. Tools and installed resources are disabled.
+
+## QR-code pairing
+
+The Mac now displays a QR code when a pairing window opens. The code contains the existing version-1 pairing text, including the pinned certificate, one-use grant, host identity, address and expiry. It disappears on approval, denial, expiry or listener shutdown. The QR sheet closes when a pairing request arrives so that the Mac approval controls are visible. Text copying remains available. Codes over 2,953 UTF-8 bytes use the paste fallback; no payload is truncated.
+
+The iPhone uses an in-app VisionKit QR scanner. It requests camera access only when selected. Unsupported hardware, denied access and camera failures offer the paste fallback. Scanning stops when inactive or dismissed. Scan results must pass the existing pairing-code validation and belong to the current unlocked pairing form. A valid scan fills the form; it does not contact the Mac until the user selects Request pairing. Mac approval, TLS certificate checks and device authentication remain unchanged. No pairing code or camera image is logged or saved by the scanner.
+
+Five new simulator tests pass for exact QR encode/decode, certificate and grant preservation, empty/oversized encoding, invalid/expired/unsupported inputs, oversized scans, form-only acceptance and lock/Mac/panel/pairing boundaries. All 19 iOS tests pass with zero failures or skips. Both unsigned platform builds and the unsigned physical-iOS-SDK build pass. The 51 root tests and 18 shared tests also pass; the 51 root tests pass again with Thread Sanitizer. Local build and test artifacts use `/tmp/pi-remote-qr-*` paths and are not committed.
+
+The first QR decode test used Vision, which could not create an inference context on the simulator. The test now uses the Core Image QR decoder and passes. This is image encode/decode evidence, not evidence of physical camera scanning. Physical checks remain open for camera permission approval/denial, cancellation, background return, expiry while scanning and scan-to-approved-pairing. The full first-version acceptance gates below remain open.
 
 ## History
 

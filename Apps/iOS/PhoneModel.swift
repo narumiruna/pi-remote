@@ -155,6 +155,19 @@ final class PhoneModel {
         defaults.set(id.uuidString, forKey: "selectedMac")
         connect()
     }
+    func acceptPairingScan(_ text: String, scope: ContentScope) -> Bool {
+        guard !locked, !covered, !pairing, panel == "pair", contentScope == scope else { return false }
+        do {
+            _ = try PairingCode.decode(text)
+            pairingText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            fault = nil
+            return true
+        } catch {
+            fault = error as? RemoteFault ?? .invalidRequest
+            return false
+        }
+    }
+
     func pair() {
         guard !locked, !pairing else { return }
         pairing = true
