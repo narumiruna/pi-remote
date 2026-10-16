@@ -16,6 +16,17 @@ let package = Package(
             dependencies: ["PiRPC"],
             path: "Spikes/PiRPCSpike"
         ),
-        .testTarget(name: "PiRPCTests", dependencies: ["PiRPC"])
+        .testTarget(name: "PiRPCTests", dependencies: ["PiRPC"]),
+        .target(
+            name: "PiRemoteTransport",
+            dependencies: [.product(name: "PiRemoteCore", package: "PiRemoteCore")],
+            path: "Spikes/SecureTransport"
+        ),
+        .executableTarget(
+            name: "TransportServerSpike",
+            dependencies: ["PiRemoteTransport"],
+            path: "Spikes/TransportServerSpike"
+        ),
+        .testTarget(name: "SecureTransportTests", dependencies: ["PiRemoteTransport"])
     ]
 )

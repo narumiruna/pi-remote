@@ -10,11 +10,11 @@ Provide the Pi workflow through native screens and controls, not an embedded ter
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: local RPC spike implemented and verified; the overall plan is blocked and incomplete. Physical secure transport, both apps, and release checks remain open; see [verification evidence](docs/verification.md).
+Status: local RPC and secure WebSocket spikes pass focused tests, including an iOS simulator handshake test; the overall plan remains incomplete. Physical secure transport is waiting on development signing, not DDI compatibility; both product apps and release checks remain open. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
 
 ## Context
 
-- This repository contains a shared Swift package and a local macOS RPC spike with tests, but no iOS or macOS app targets.
+- This repository contains a shared Swift package, local macOS RPC and secure WebSocket spikes, and an iOS diagnostic test host; it does not contain the Pi Remote product apps.
 - Swift is the implementation language for the first version, including both apps and shared code.
 - Pi already provides a bidirectional JSON RPC interface over a subprocess's stdin and stdout. A TypeScript backend is not required.
 - Pi, project files, tools, model credentials, and command execution stay on the Mac. Pi still sends model requests to its configured provider; this is not an offline AI system.
@@ -36,7 +36,7 @@ These references describe the current interface. Confirm behavior against the in
 - Allow selection of any folder accessible to the Mac companion; do not require approved roots or per-project registration, and do not bypass macOS permissions.
 - Target the complete Pi workflow through native controls, including all commands and installed extensions; technical gaps require investigation and explicit user agreement before reducing scope.
 - Require both local-network access and access away from home through Tailscale for the first personal build.
-- Use iPhone 16 Pro as the first physical test device; `devicectl` reports iOS 26.7.1, build 23H30, but cannot mount its developer disk image with the current Xcode setup; minimum deployment versions remain unverified.
+- Use iPhone 16 Pro as the first physical test device; `devicectl` reports iOS 26.7.1, build 23H30, and now mounts DDI 17F113 successfully after connection and unlock; minimum deployment versions remain unverified.
 - Use this Mac as the initial development host: `sw_vers` reports macOS 26.6.2, build 25G83; this is an observed environment, not a tested support claim or minimum deployment version.
 - Deliver a personal build first and prepare TestFlight distribution later; signing and provisioning still require validation.
 - Add accounts and a public connection server in a later phase so users can connect their iPhones to their own Macs without requiring Tailscale; do not implement that service in the first version.
@@ -257,10 +257,11 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ## Execution blockers
 
 - Xcode 26.6 is installed, but the global developer directory selects Command Line Tools; verified package checks use a command-local `DEVELOPER_DIR` override without changing the user's settings.
-- The paired iPhone is visible, but its developer disk image cannot be mounted; physical installation, secure pairing, accessibility, and lifecycle checks cannot pass until device support works.
-- Tailscale reports stopped and offline; off-site access cannot pass until the user's private-network setup is running and the iPhone is on a different network.
+- The iPhone is connected and DDI services are usable; the earlier mount failure returned `kAMDMobileImageMounterDeviceLocked`, not a proven Xcode/iOS version incompatibility.
+- The signed device test build fails with `errSecInternalComponent`; querying the login Keychain returns `User interaction is not allowed`. Resolve signing-key access through the user's normal Mac session before installing and running the device test; do not change key ACLs or request the user's password.
+- Mac Tailscale is running, but the iPhone peer is offline; off-site access still needs an active iPhone Tailscale connection from a different network.
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
-- No app screens or remote listener were added before the physical secure transport spike; all dependent plan items remain open.
+- A restricted TLS listener and diagnostic iOS test host now exist; they cannot start Pi or read Mac files. The local iOS simulator test passes, but the physical transport gate remains open and no product screens were added.
 
 ## Risks and Recovery
 

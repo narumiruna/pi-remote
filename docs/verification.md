@@ -2,7 +2,7 @@
 
 ## Status
 
-The local Pi RPC spike passes its focused checks. The complete app plan is **blocked and incomplete**. There are no iOS or macOS app targets, remote listener, pairing service, or production credentials in this change.
+The local Pi RPC spike passes its focused checks. The complete app plan is **blocked and incomplete**. A separate [secure transport spike](secure-transport-spike.md) now includes a restricted TLS listener and an iOS diagnostic test host, not the Pi Remote product apps or production pairing service.
 
 ## Environment evidence
 
@@ -12,8 +12,8 @@ The local Pi RPC spike passes its focused checks. The complete app plan is **blo
 - Swift: 6.4; package manifests use Swift tools 6.0.
 - `pi --version`: 1.3.0.
 - `pi auth check --provider openai-codex --model gpt-6.1-sol --json --no-refresh`: ready; no credentials were printed or copied.
-- `devicectl` found a paired iPhone 16 Pro running iOS 26.7.1, build 23H30, with Developer Mode enabled, but could not mount its developer disk image.
-- Tailscale 1.102.4 reported `BackendState: Stopped`, offline, and no peers; no Tailscale configuration was changed.
+- `devicectl` found an iPhone 16 Pro running iOS 26.7.1, build 23H30, with Developer Mode enabled; DDI 17F113 now mounts successfully after connection and unlock. The earlier mount error was `kAMDMobileImageMounterDeviceLocked`, not proof of a version mismatch.
+- Tailscale 1.102.4 is now running on the Mac, while the iPhone peer is offline; no Tailscale configuration was changed by the agent.
 
 The package deployment floors, iOS 18 and macOS 15, are provisional compiler settings, not tested OS support claims.
 
@@ -33,7 +33,7 @@ swift build --package-path Packages/PiRemoteCore \
 
 Passing results:
 
-- Seven shared-package test functions, including five invalid-record cases, cover UTF-8 split at every byte boundary, Unicode separators, CRLF, multiple records, invalid JSON and UTF-8, size limits, truncated EOF, and unknown fields.
+- Seven framing/value test functions, including five invalid-record cases, cover UTF-8 split at every byte boundary, Unicode separators, CRLF, multiple records, invalid JSON and UTF-8, size limits, truncated EOF, and unknown fields; four additional shared-package tests cover the transport handshake.
 - Fifteen RPC test functions cover concurrent and reversed responses, command rejection, response mismatch, missing executable, malformed stdout, stderr load, unknown outcomes, cancellation, queue clearing before abort, event overflow, reserved fields, blocked stdin, and a child that ignores termination.
 - The RPC tests also pass with Thread Sanitizer enabled.
 - The shared package compiles for the iOS simulator; this does not prove that an iOS app builds or runs.
@@ -109,8 +109,8 @@ None of these packages has passed a remote native-client compatibility test. Sta
 
 ## Blockers and next evidence
 
-1. Provide an Xcode/device-support combination that can mount the iPhone developer disk image; verify installation and launch on that phone.
-2. Start and authenticate Tailscale through the user's normal setup, then make the iPhone available on a different network for the off-site test.
+1. Resolve development-signing access: the device build returns `errSecInternalComponent`, and the login Keychain query returns `User interaction is not allowed`; DDI mounting is no longer blocked.
+2. Bring the iPhone online in Tailscale and make it available on a different network for the off-site test; Mac Tailscale is already running.
 3. Validate the Face ID or device-passcode unlock policy and matching Keychain access behavior on the physical phone.
 4. Build the secure WebSocket spike and prove pairing, server-identity rejection, credential revocation, and reconnection on the physical phone over local and Tailscale connections.
 5. Complete the installed-command and extension review, including adapters for missing RPC behavior, without silently reducing the complete-workflow requirement.
