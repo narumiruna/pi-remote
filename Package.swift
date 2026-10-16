@@ -37,6 +37,7 @@ let package = Package(
         .target(name: "PiRemoteConnection", dependencies: [.product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteConnection/Sources/PiRemoteConnection"),
         .target(name: "PiRemoteHost", dependencies: ["PiRPC", "PiRemoteSecurity", .product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteHost/Sources/PiRemoteHost"),
         .target(name: "PiRemoteClient", dependencies: ["PiRemoteConnection", "PiRemoteSecurity", .product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteClient/Sources/PiRemoteClient"),
-        .testTarget(name: "HostTests", dependencies: ["PiRemoteHost", "PiRemoteClient"])
+        .testTarget(name: "HostTests", dependencies: ["PiRemoteHost", "PiRemoteClient"]),
+        .executableTarget(name: "NativeWorkflowCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeWorkflowCheck")
     ]
 )

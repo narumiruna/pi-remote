@@ -22,6 +22,7 @@ public actor HostCoordinator {
     private var sessions: [ManagedSession]
     private var snapshot: HostSnapshot
     private var reducer = TranscriptReducer()
+    private let history = SessionHistory()
     private var rpc: RPCProcess?
     private var observer: Task<Void, Never>?
     private var generation = UUID()
@@ -225,6 +226,20 @@ public actor HostCoordinator {
                                    text: DisplayLimit.text(message?.text ?? raw["summary"]?.string ?? "Session entry", bytes: 512),
                                    canFork: raw["message"]?["role"]?.string == "user")
             })
+        case .historyPage(let cursor):
+            guard !snapshot.working, let index = selectedIndex else { throw RemoteFault.busy }
+            try await requireIdle()
+            let item = sessions[index]
+            var file = item.file
+            if let value = file {
+                try validateSessionFile(value)
+                if !FileManager.default.fileExists(atPath: value.path), item.hasHistory == false { file = nil }
+            }
+            return .historyPage(try await history.page(session: item.info.id, file: file, cursor: cursor))
+        case .historyEntry(let id):
+            guard !snapshot.working, let session = snapshot.selected else { throw RemoteFault.busy }
+            try await requireIdle()
+            return .preview(try await history.preview(session: session, id: id))
         case .fork(let entry):
             guard !snapshot.working, entry.utf8.count <= 128 else { throw RemoteFault.busy }
             try await requireIdle()
@@ -237,6 +252,7 @@ public actor HostCoordinator {
             try await requireIdle()
             let result = try await requireRPC().request("clone")
             guard result["cancelled"]?.bool != true else { throw RemoteFault.cancelled }
+            snapshot.draft = nil; snapshot.draftID = nil
             try await adoptBranch()
         case .command(let name, let arguments):
             guard !snapshot.working, snapshot.commands.contains(where: { $0.name == name }), arguments.utf8.count <= 16_384 else {
@@ -290,7 +306,9 @@ public actor HostCoordinator {
         generation = UUID()
         let activation = generation
         observer?.cancel(); rpc = nil
-        snapshot.phase = "starting"; snapshot.selected = id; snapshot.messages = []; snapshot.dialogs = []; dialogDeadlines = [:]; statuses = [:]; notifications = []; publish()
+        snapshot.phase = "starting"; snapshot.selected = id; snapshot.messages = []; snapshot.dialogs = []
+        snapshot.draft = nil; snapshot.draftID = nil
+        dialogDeadlines = [:]; statuses = [:]; notifications = []; publish()
         if let previous, !(await previous.shutdown()) { throw RemoteFault.unavailable }
         guard !closing, generation == activation else { throw RemoteFault.cancelled }
         let item = sessions[index]
@@ -391,8 +409,8 @@ public actor HostCoordinator {
             guard let end = bytes.firstIndex(of: 10),
                   let header = try? JSONDecoder().decode(JSONValue.self, from: bytes[..<end]),
                   header["type"]?.string == "session", header["id"]?.string == session.piID,
-                  let cwd = header["cwd"]?.string,
-                  URL(fileURLWithPath: cwd).standardizedFileURL == session.directory.url.standardizedFileURL else {
+                  let cwd = header["cwd"]?.string, cwd.hasPrefix("/"),
+                  (try? DirectoryRegistry.identify(URL(fileURLWithPath: cwd))) == session.directory else {
                 throw RemoteFault.incompatiblePi
             }
         } catch let fault as RemoteFault { throw fault }

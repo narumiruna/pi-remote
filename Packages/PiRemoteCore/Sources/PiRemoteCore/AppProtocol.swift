@@ -24,6 +24,8 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case compact(instructions: String)
     case rename(name: String)
     case history
+    case historyPage(cursor: UUID?)
+    case historyEntry(id: UUID)
     case fork(entry: String)
     case clone
     case command(name: String, arguments: String)
@@ -32,8 +34,15 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var mutates: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .history, .diff: false
+        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff: false
         default: true
+        }
+    }
+
+    public var changesSession: Bool {
+        switch self {
+        case .createSession, .resumeSession, .fork, .clone: true
+        default: false
         }
     }
 
@@ -74,6 +83,7 @@ public enum AppResult: Codable, Sendable, Equatable {
     case directories(DirectoryPage)
     case preview(FilePreview)
     case history([HistoryItem])
+    case historyPage(HistoryPage)
     case failure(RemoteFault)
 }
 

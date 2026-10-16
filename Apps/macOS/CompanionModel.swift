@@ -13,7 +13,9 @@ final class CompanionModel {
     var delivery = Delivery.prompt
     var sending = false
     var confirmResend = false
+    var editorOffer: EditorOffer?
     @ObservationIgnored private var approvedResend = false
+    @ObservationIgnored private var resendContext: SessionContext?
     @ObservationIgnored private var submissions = SubmissionState()
     var fault: RemoteFault?
     var startupError: String?
@@ -66,16 +68,19 @@ final class CompanionModel {
             let stream = await coordinator.updates()
             for await state in stream {
                 guard let self, !Task.isCancelled else { return }
+                if self.state.context != state.context {
+                    self.preview = nil; self.editorOffer = nil; self.confirmResend = false; self.resendContext = nil; self.approvedResend = false
+                }
                 if self.draftSession != state.selected {
                     if let old = self.draftSession { self.drafts[old] = self.text }
-                    self.draftSession = state.selected
+                    self.draftSession = state.selected; self.editorOffer = nil
                     self.text = state.selected.flatMap { self.drafts[$0] } ?? ""
                 }
                 self.state = state
                 if let draftID = state.draftID, draftID != self.lastDraft {
                     self.lastDraft = draftID
                     if self.text.isEmpty { self.text = state.draft ?? "" }
-                    else { self.fault = .conflict }
+                    else { self.editorOffer = EditorOffer(id: draftID, session: state.selected, text: state.draft ?? "") }
                 }
                 if state.dialogs.first != nil { self.panel = "dialog" }
                 else if self.panel == "dialog" { self.panel = nil }
@@ -84,6 +89,17 @@ final class CompanionModel {
         Task { [weak self, registry] in self?.devices = await registry?.list() ?? [] }
     }
 
+    func scopedRequest(for displayed: HostSnapshot) -> (SessionAction) async throws -> AppResult {
+        let context = displayed.context
+        return { [weak self] action in
+            guard let self else { throw RemoteFault.unavailable }
+            guard self.state.context == context else { self.fault = .conflict; throw RemoteFault.conflict }
+            let result = try await self.request(action, expectedSession: context.session)
+            guard self.state.host == context.host, self.state.epoch == context.epoch,
+                  action.changesSession || self.state.context == context else { throw RemoteFault.conflict }
+            return result
+        }
+    }
     func request(_ action: SessionAction) async throws -> AppResult {
         try await request(action, expectedSession: state.selected)
     }
@@ -100,9 +116,10 @@ final class CompanionModel {
         return result
     }
 
-    func send() {
+    func send(context: SessionContext? = nil) {
         guard !sending else { return }
-        if submissions.uncertain && !approvedResend { confirmResend = true; return }
+        guard context == nil || context == state.context else { fault = .conflict; return }
+        if submissions.uncertain && !approvedResend { resendContext = state.context; confirmResend = true; return }
         approvedResend = false
         sending = true
         let message = text, submittedSession = state.selected
@@ -116,9 +133,17 @@ final class CompanionModel {
             } catch { fault = error as? RemoteFault ?? .unavailable }
         }
     }
+    func acceptEditorOffer(_ offer: EditorOffer) {
+        guard offer.session == state.selected else { editorOffer = nil; return }
+        text = offer.text; editorOffer = nil
+        if let session = state.selected { drafts[session] = text }
+    }
     var needsActionReview: Bool { submissions.uncertain }
     func reviewedFault() { submissions.reviewed(); fault = nil; Task { _ = try? await request(.snapshot) } }
-    func resend() { approvedResend = true; submissions.reviewed(); send() }
+    func resend() {
+        guard let resendContext, state.context == resendContext else { fault = .conflict; return }
+        approvedResend = true; submissions.reviewed(); send(context: resendContext); self.resendContext = nil
+    }
     func stopWork() { Task { do { _ = try await request(.stop) } catch { fault = error as? RemoteFault ?? .unavailable } } }
 
     func startNetwork() {

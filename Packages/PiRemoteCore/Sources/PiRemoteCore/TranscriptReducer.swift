@@ -18,12 +18,14 @@ public struct TranscriptReducer: Sendable {
     public private(set) var omitted = false
     private var assistant: UUID?
     private var tools: [String: UUID] = [:]
+    private struct Block: Sendable { var kind: String; var text: String; var truncated = false }
+    private var blocks: [Int: Block] = [:]
 
     public init() {}
 
     public mutating func replaceHistory(_ values: [JSONValue]) {
         messages = values.compactMap(Self.message)
-        assistant = nil
+        assistant = nil; blocks.removeAll()
         tools.removeAll()
         omitted = false
         bound()
@@ -42,15 +44,10 @@ public struct TranscriptReducer: Sendable {
         case "message_start":
             if event["message"]?["role"]?.string == "assistant" {
                 let item = TranscriptMessage(role: "assistant", text: "", streaming: true)
-                assistant = item.id
+                assistant = item.id; blocks.removeAll()
                 messages.append(item)
             }
-        case "message_update":
-            let update = event["assistantMessageEvent"]
-            if update?["type"]?.string == "text_delta", let id = assistant,
-               let index = messages.firstIndex(where: { $0.id == id }) {
-                messages[index].text += update?["delta"]?.string ?? ""
-            }
+        case "message_update": updateBlocks(event["assistantMessageEvent"])
         case "message_end":
             guard let raw = event["message"] else { break }
             if raw["role"]?.string == "assistant", let id = assistant,
@@ -84,16 +81,22 @@ public struct TranscriptReducer: Sendable {
     }
 
     public static func message(_ value: JSONValue) -> TranscriptMessage? {
-        guard let role = value["role"]?.string, role != "system" else { return nil }
+        guard let role = value["role"]?.string, role != "system",
+              !(role == "custom" && value["display"]?.bool == false) else { return nil }
         let text = content(value["content"])
-        let fallback = value["summary"]?.string ?? value["output"]?.string ?? ""
+        let fallback = value["summary"]?.string ?? value["output"]?.string ?? value["errorMessage"]?.string ?? ""
         let body = text.isEmpty ? fallback : text
-        guard !body.isEmpty else { return nil }
+        let thinking = (value["content"]?.array ?? []).compactMap { block -> String? in
+            guard block["type"]?.string == "thinking", block["redacted"]?.bool != true else { return nil }
+            return block["thinking"]?.string
+        }.joined(separator: "\n")
+        guard !body.isEmpty || !thinking.isEmpty else { return nil }
         return TranscriptMessage(
             role: role == "toolResult" ? "tool" : role,
             text: DisplayLimit.text(body, bytes: 16_384),
+            thinking: thinking.isEmpty ? nil : DisplayLimit.text(thinking, bytes: max(0, 16_384 - min(body.utf8.count, 16_384))),
             isError: value["isError"]?.bool == true || value["stopReason"]?.string == "error",
-            truncated: body.utf8.count > 16_384
+            truncated: body.utf8.count + thinking.utf8.count > 16_384
         )
     }
 
@@ -108,6 +111,30 @@ public struct TranscriptReducer: Sendable {
         }.joined(separator: "\n")
     }
 
+    private mutating func updateBlocks(_ update: JSONValue?) {
+        guard let type = update?["type"]?.string,
+              ["text_start", "text_delta", "text_end", "thinking_start", "thinking_delta", "thinking_end"].contains(type),
+              let id = assistant, let row = messages.firstIndex(where: { $0.id == id }) else { return }
+        var index = 0
+        if case .number(let value) = update?["contentIndex"] {
+            guard value.isFinite, value >= 0, value <= 255, value.rounded() == value else { return }
+            index = Int(value)
+        }
+        guard blocks[index] != nil || blocks.count < 64 else { messages[row].truncated = true; return }
+        let kind = type.hasPrefix("thinking") ? "thinking" : "text"
+        var block = blocks[index] ?? Block(kind: kind, text: "")
+        if type.hasSuffix("_start") { block = Block(kind: kind, text: "") }
+        else if type.hasSuffix("_end") { block = Block(kind: kind, text: update?["content"]?.string ?? "") }
+        else { block.text += update?["delta"]?.string ?? "" }
+        if block.text.utf8.count > 16_384 { block.text = DisplayLimit.text(block.text, bytes: 16_384); block.truncated = true }
+        blocks[index] = block
+        let ordered = blocks.sorted { $0.key < $1.key }.map(\.value)
+        messages[row].text = ordered.filter { $0.kind == "text" }.map(\.text).joined(separator: "\n")
+        let thinking = ordered.filter { $0.kind == "thinking" }.map(\.text).joined(separator: "\n")
+        messages[row].thinking = thinking.isEmpty ? nil : thinking
+        messages[row].truncated = messages[row].truncated || ordered.contains { $0.truncated }
+    }
+
     private mutating func bound() {
         // Keep even maximally escaped UTF-8 display text below the wire-frame budget.
         var remaining = 256 * 1_024
@@ -119,7 +146,11 @@ public struct TranscriptReducer: Sendable {
             if message.text.utf8.count > limit {
                 message.text = DisplayLimit.text(message.text, bytes: limit); message.truncated = true
             }
-            remaining -= message.text.utf8.count
+            let thoughtLimit = max(0, limit - message.text.utf8.count)
+            if let thinking = message.thinking, thinking.utf8.count > thoughtLimit {
+                message.thinking = DisplayLimit.text(thinking, bytes: thoughtLimit); message.truncated = true
+            }
+            remaining -= message.text.utf8.count + (message.thinking?.utf8.count ?? 0)
             retained.append(message)
         }
         if retained.count < messages.count { omitted = true }

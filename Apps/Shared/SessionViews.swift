@@ -102,18 +102,34 @@ struct SessionControls: View {
 
 struct HistoryView: View {
     let request: (SessionAction) async throws -> AppResult
+    var paged = false
     let forked: () -> Void
-    @State private var items: [HistoryItem] = []
+    @State private var page = HistoryPage(items: [], next: nil)
+    @State private var newer: [HistoryPage] = []
     @State private var error: String?
+    @State private var loading = false
+    @State private var preview: FilePreview?
     var body: some View {
         List {
             if let error { Text(error).foregroundStyle(.red) }
-            Text("Raw session entries include compacted history and abandoned branches. At most 1,000 recent entries are displayed.")
+            Text("Includes compacted history and abandoned branches. Fork is available only for user messages on the active branch; it does not switch an abandoned branch.")
                 .font(.caption).foregroundStyle(.secondary)
-            ForEach(items.reversed()) { item in
+            if loading { ProgressView("Loading history") }
+            if !newer.isEmpty { Button("Newer entries") { page = newer.removeLast() }.frame(minHeight: 44).disabled(loading) }
+            Button("Reload newest entries") { Task { newer = []; await load(nil) } }.frame(minHeight: 44).disabled(loading)
+            ForEach(page.items) { item in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.kind + " · " + item.id).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    if let parent = item.parent { Text("Parent: " + parent).font(.caption2.monospaced()).foregroundStyle(.secondary) }
                     Text(item.text).textSelection(.enabled)
+                    if let id = item.preview {
+                        Button("Read entry") {
+                            Task {
+                                do { if case .preview(let value) = try await request(.historyEntry(id: id)) { preview = value } }
+                                catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                            }
+                        }.frame(minHeight: 44)
+                    }
                     if item.canFork {
                         Button("Fork from this message") {
                             Task {
@@ -124,11 +140,25 @@ struct HistoryView: View {
                     }
                 }.padding(.vertical, 4)
             }
+            if let next = page.next { Button("Older entries") { Task { await load(next) } }.frame(minHeight: 44).disabled(loading) }
         }
         .navigationTitle("History")
-        .task {
-            do { if case .history(let values) = try await request(.history) { items = values } }
-            catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+        .task { await load(nil) }
+        .sheet(isPresented: Binding(get: { preview != nil }, set: { if !$0 { preview = nil } })) {
+            if let preview { FilePreviewView(preview: preview) }
         }
+    }
+    @MainActor private func load(_ cursor: UUID?) async {
+        guard !loading else { return }
+        loading = true; error = nil
+        defer { loading = false }
+        do {
+            if paged, case .historyPage(let value) = try await request(.historyPage(cursor: cursor)) {
+                if cursor != nil { newer.append(page); newer = Array(newer.suffix(8)) }
+                page = value
+            } else if !paged, case .history(let values) = try await request(.history) {
+                page = HistoryPage(items: values.reversed(), next: nil)
+            }
+        } catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
     }
 }

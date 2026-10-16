@@ -10,6 +10,7 @@ struct ConversationView<Extras: View>: View {
     var stop: () -> Void
     @ViewBuilder var extras: () -> Extras
     @State private var atBottom = true
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,6 +40,9 @@ struct ConversationView<Extras: View>: View {
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(message.role == "user" ? "You" : "Pi")
                                         .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                    if let thinking = message.thinking, !thinking.isEmpty {
+                                        DisclosureGroup("Thinking") { MarkdownContent(text: thinking) }.font(.callout)
+                                    }
                                     MarkdownContent(text: message.text)
                                     if message.truncated { Text("Display truncated; inspect History or the source file.").font(.caption).foregroundStyle(.secondary) }
                                     if message.isError { Label("Pi reported an error", systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.caption) }
@@ -50,6 +54,9 @@ struct ConversationView<Extras: View>: View {
                     }
                     .padding(20)
                 }
+                .clipped()
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .onChange(of: state.selected) { _, _ in proxy.scrollTo("latest", anchor: .bottom) }
                 .onScrollGeometryChange(for: Bool.self) { geometry in
                     geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
                 } action: { _, value in atBottom = value }
@@ -57,7 +64,7 @@ struct ConversationView<Extras: View>: View {
                 .overlay(alignment: .bottomTrailing) {
                     if !atBottom {
                         Button("Latest", systemImage: "arrow.down") { proxy.scrollTo("latest", anchor: .bottom) }
-                            .buttonStyle(.borderedProminent).padding()
+                            .font(.caption).buttonStyle(.borderedProminent).padding()
                     }
                 }
             }
@@ -79,7 +86,7 @@ struct ConversationView<Extras: View>: View {
                 HStack(alignment: .bottom, spacing: 10) {
                     extras()
                     TextField("Message Pi", text: $text, axis: .vertical)
-                        .lineLimit(1...6).textFieldStyle(.plain)
+                        .lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 2 : 6)).textFieldStyle(.plain)
                         .accessibilityLabel("Instruction")
                     if state.working {
                         Button("Stop", systemImage: "stop.fill", action: stop)
@@ -100,36 +107,6 @@ struct ConversationView<Extras: View>: View {
     }
 }
 
-struct MarkdownContent: View {
-    let text: String
-    private struct Part: Identifiable { let id: Int; let content: String; let code: Bool }
-    private var parts: [Part] {
-        var result: [Part] = [], lines: [String] = [], code = false
-        for line in text.components(separatedBy: "\n") {
-            if line.hasPrefix("```") {
-                if !lines.isEmpty { result.append(Part(id: result.count, content: lines.joined(separator: "\n"), code: code)) }
-                lines = []; code.toggle()
-            } else { lines.append(line) }
-        }
-        if !lines.isEmpty { result.append(Part(id: result.count, content: lines.joined(separator: "\n"), code: code)) }
-        return result
-    }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(parts) { part in
-                if part.code {
-                    ScrollView(.horizontal) {
-                        Text(part.content).font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12)
-                    }.background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                } else {
-                    Text((try? AttributedString(markdown: part.content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(part.content))
-                        .textSelection(.enabled)
-                }
-            }
-        }
-    }
-}
-
 extension RemoteFault {
     var explanation: String {
         switch self {
@@ -139,7 +116,7 @@ extension RemoteFault {
         case .permissionDenied: "The Mac companion cannot access this folder. Grant access on the Mac."
         case .staleDirectory: "This folder or file changed, moved, or became unavailable. Browse again."
         case .unsupportedFeature: "This feature is not available through the current Pi interface."
-        case .expired: "This pairing window or dialog expired. Request a new one."
+        case .expired: "This pairing window, dialog, or history link expired. Open it again."
         case .storageFailure: "Protected storage is unavailable. Unlock the device and check Keychain or disk access."
         case .tooLarge: "The input or output exceeds the app's size limit."
         case .conflict: "The session changed. Refresh it before trying this action."
