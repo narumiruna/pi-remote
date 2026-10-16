@@ -26,6 +26,7 @@ public actor HostCoordinator {
     private var rpc: RPCProcess?
     private var observer: Task<Void, Never>?
     private var generation = UUID()
+    private var runRevision: UInt64 = 0
     private var observers: [UUID: AsyncStream<HostSnapshot>.Continuation] = [:]
     private var journal: RequestJournal
     private var replay = StateReplay()
@@ -179,8 +180,24 @@ public actor HostCoordinator {
                 guard delivery != .prompt else { throw RemoteFault.busy }
                 fields["streamingBehavior"] = .string(delivery == .steer ? "steer" : "followUp")
             } else if delivery != .prompt { throw RemoteFault.invalidRequest }
+            let previous = selectedIndex.map { sessions[$0] }
+            let token = generation, revision = runRevision
             try markInterrupted(true)
-            let result = try await child.request("prompt", fields: fields)
+            let result: JSONValue
+            do { result = try await child.request("prompt", fields: fields) }
+            catch {
+                // A failed response rejects this prompt before acceptance. Do not undo
+                // run events or process-exit recovery that arrived while awaiting it.
+                if let failure = error as? RPCFailure,
+                   failure == .providerAuthenticationRequired || failure == .rejected("prompt"),
+                   token == generation, revision == runRevision,
+                   let previous, let index = selectedIndex, sessions[index].info.id == previous.info.id {
+                    sessions[index].info.interrupted = previous.info.interrupted
+                    sessions[index].hasHistory = previous.hasHistory
+                    try saveSessions()
+                }
+                throw error
+            }
             if result["disposition"]?.string == "handled", !snapshot.working { try markInterrupted(false) }
         case .stop:
             guard snapshot.phase != "starting" else { throw RemoteFault.busy }
@@ -444,11 +461,20 @@ public actor HostCoordinator {
         snapshot.messages = reducer.messages
         if snapshot.phase != "starting" && snapshot.phase != "stopping" { snapshot.phase = reducer.phase }
         snapshot.hasOlderMessages = reducer.omitted
-        if event["type"]?.string == "agent_start" { do { try markInterrupted(true) } catch { snapshot.error = .storageFailure } }
-        if event["type"]?.string == "agent_settled" { do { try markInterrupted(false) } catch { snapshot.error = .storageFailure } }
+        if event["type"]?.string == "agent_start" {
+            runRevision &+= 1
+            do { try markInterrupted(true) } catch { snapshot.error = .storageFailure }
+        }
+        if event["type"]?.string == "agent_settled" {
+            runRevision &+= 1
+            do { try markInterrupted(false) } catch { snapshot.error = .storageFailure }
+        }
         if event["type"]?.string == "extension_ui_request" { extensionEvent(event) }
         if event["type"]?.string == "extension_error" { snapshot.error = .unsupportedFeature }
-        if event["type"]?.string == "message_end", event["message"]?["stopReason"]?.string == "error" { snapshot.error = .unavailable }
+        if event["type"]?.string == "message_end", event["message"]?["stopReason"]?.string == "error" {
+            snapshot.error = RPCFailure.isProviderAuthenticationError(event["message"]?["errorMessage"]?.string ?? "")
+                ? .providerAuthenticationRequired : .unavailable
+        }
         if event["type"]?.string == "session_info_changed", let name = event["name"]?.string, let index = selectedIndex {
             sessions[index].info.title = DisplayLimit.text(name, bytes: 256); try? saveSessions()
         }
@@ -520,6 +546,7 @@ public actor HostCoordinator {
 
     private func processEnded(_ token: UUID) {
         guard token == generation else { return }
+        runRevision &+= 1
         rpc = nil; snapshot.phase = "interrupted"; snapshot.error = .unavailable
         snapshot.dialogs = []; dialogDeadlines = [:]
         do { try markInterrupted(true) } catch { snapshot.error = .storageFailure }

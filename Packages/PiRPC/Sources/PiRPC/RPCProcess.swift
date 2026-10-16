@@ -10,6 +10,11 @@ public enum RPCFailure: Error, Sendable, Equatable {
     case unknownOutcome
     case eventOverflow
     case tooManyRequests
+
+    public static func isProviderAuthenticationError(_ diagnostic: String) -> Bool {
+        let reason = diagnostic.lowercased()
+        return ["api key", "credential", "authentication", "not logged in"].contains(where: reason.contains)
+    }
 }
 
 /// Local subprocess transport only; never expose this interface to a remote client.
@@ -204,8 +209,7 @@ public final class RPCProcess: @unchecked Sendable {
             }
             if success { entry.continuation.resume(returning: record["data"] ?? .null) }
             else {
-                let reason = record["error"]?.string?.lowercased() ?? ""
-                let authentication = ["api key", "credential", "authentication", "not logged in"].contains(where: reason.contains)
+                let authentication = RPCFailure.isProviderAuthenticationError(record["error"]?.string ?? "")
                 entry.continuation.resume(throwing: authentication ? RPCFailure.providerAuthenticationRequired : RPCFailure.rejected(entry.command))
             }
         } else {

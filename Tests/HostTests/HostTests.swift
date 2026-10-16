@@ -178,6 +178,85 @@ done
     return url
 }
 
+@Test(.timeLimit(.minutes(1)), arguments: ["rejected", "authentication", "async-authentication", "crash-before", "crash-after"])
+func promptFailuresPreserveRecoveryAndNeverRedispatch(mode: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root)
+    var script = try String(contentsOf: executable, encoding: .utf8)
+    let disposition = "reply '{\"disposition\":\"started\"}'"
+    switch mode {
+    case "rejected", "authentication":
+        let reason = mode == "authentication" ? "No API key found" : "Invalid fixture request"
+        script = script.replacingOccurrences(of: disposition, with: "printf '{\"id\":\"%s\",\"type\":\"response\",\"command\":\"prompt\",\"success\":false,\"error\":\"" + reason + "\"}\\n' \"$id\"; continue")
+    case "async-authentication":
+        script = script.replacingOccurrences(of: "\"text\":\"Fixture complete\"", with: "\"text\":\"\"")
+            .replacingOccurrences(of: "\"role\":\"assistant\",\"content\"", with: "\"role\":\"assistant\",\"stopReason\":\"error\",\"errorMessage\":\"No API key found\",\"content\"")
+    case "crash-before":
+        script = script.replacingOccurrences(of: disposition, with: "exit 1")
+    default:
+        script = script.replacingOccurrences(of: disposition, with: disposition + "; printf '{\"type\":\"agent_start\"}\\n'; exit 1")
+    }
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: executable)
+    do {
+        let directory = try await host.directories.register(root)
+        let device = UUID()
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let selected = try #require(await host.state().selected)
+        let request = AppRequest(epoch: host.epoch, session: selected, action: .prompt(text: "Failure fixture", delivery: .prompt, image: nil))
+        let expected: AppResult
+        switch mode {
+        case "authentication": expected = .failure(.providerAuthenticationRequired)
+        case "rejected": expected = .failure(.invalidRequest)
+        case "crash-before": expected = .failure(.unknownOutcome)
+        default: expected = .ok
+        }
+        #expect(await host.handle(request, device: device) == expected)
+        for _ in 0..<200 {
+            let state = await host.state()
+            if mode.hasPrefix("crash") ? state.phase == "interrupted" : state.phase == "idle" && (mode != "async-authentication" || state.error != nil) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await host.handle(request, device: device) == expected)
+        let state = await host.state()
+        let interrupted = mode.hasPrefix("crash")
+        #expect(state.phase == (interrupted ? "interrupted" : "idle"))
+        #expect(state.sessions.first?.interrupted == interrupted)
+        if mode == "async-authentication" { #expect(state.error == .providerAuthenticationRequired) }
+        let folder = support.appendingPathComponent("pi-sessions/" + selected.uuidString)
+        #expect(try Data(contentsOf: folder.appendingPathComponent("accepted")).count == 1)
+        if mode == "rejected" || mode == "authentication" {
+            // An empty rejected session may have no on-disk Pi history. It must
+            // remain resumable rather than acquire a false populated-file gate.
+            for file in try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) where file.pathExtension == "jsonl" {
+                try FileManager.default.removeItem(at: file)
+            }
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: selected, action: .resumeSession(id: selected)), device: device) == .ok)
+            #expect(try Data(contentsOf: folder.appendingPathComponent("accepted")).count == 1)
+        }
+        await host.shutdown()
+        let saved = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: support.appendingPathComponent("sessions.json")))
+        #expect(saved.array?.first?["info"]?["interrupted"]?.bool == interrupted)
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func missingPiReportsFailureWithoutStartingAChild() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: root.appendingPathComponent("missing-pi"))
+    await host.inspectPi()
+    #expect(await host.state().piVersion == "Unavailable")
+    #expect(await host.state().error == .unavailable)
+    let directory = try await host.directories.register(root)
+    let request = AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory))
+    #expect(await host.handle(request, device: UUID()) == .failure(.unavailable))
+    #expect(await host.state().working == false)
+    await host.shutdown()
+}
+
 @Test(.timeLimit(.minutes(1))) func nativeHostDispatchIsDeduplicatedAndUsesSelectedDirectory() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -372,6 +451,17 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         guard case .snapshot(let restored) = try await client.request(.snapshot) else { throw RemoteFault.invalidRequest }
         #expect(restored.selected == before.selected && restored.working)
         let accepted = root.appendingPathComponent("support/pi-sessions/" + restored.selected!.uuidString + "/accepted")
+        #expect(try Data(contentsOf: accepted).count == 1)
+        // Simulate an unavailable host without suspending the laptop or Pi.
+        await server.stop()
+        await #expect(throws: (any Error).self) { try await client.request(.snapshot) }
+        await #expect(throws: (any Error).self) { try await client.connect(mac) }
+        #expect(await host.state().working)
+        #expect(try Data(contentsOf: accepted).count == 1)
+        #expect(try await server.start(identity: identity, address: address, port: port) == port)
+        try await client.connect(mac)
+        guard case .snapshot(let recovered) = try await client.request(.snapshot) else { throw RemoteFault.invalidRequest }
+        #expect(recovered.selected == before.selected && recovered.working)
         #expect(try Data(contentsOf: accepted).count == 1)
         _ = try await client.request(.stop)
         #expect(await !host.state().working)

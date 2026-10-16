@@ -6,7 +6,7 @@ The native workflow implementation has advanced, but `PLAN.md` is not complete. 
 
 Verified on this Mac with Pi 1.3.0, Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
-- 59 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
+- 61 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
 - 18 shared-package tests pass.
 - Twenty-five iOS app tests pass with the explicit provider fixture on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips; see the local audit below.
 - Both unsigned app builds pass. The unsigned iOS device-SDK build is a compile check, not an installed personal build.
@@ -20,7 +20,7 @@ The current completion scope is simulator and laptop verification, as defined in
 The latest local run verifies:
 
 - Unsigned Mac, iOS simulator and iOS device-SDK builds. `project.yml` sets automatic signing, iOS 18 and macOS 15 deployment floors. The installed SDKs are version 26.5. These checks do not establish minimum-version compatibility or signed installation.
-- All 59 root tests, also with Thread Sanitizer, and 18 shared-package tests.
+- All 61 root tests, also with Thread Sanitizer, and 18 shared-package tests.
 - Twenty-five iOS simulator tests with the explicit provider fixture, with zero failures or skips. The full suite passed on both the Mac's LAN and Tailscale interfaces. Xcode result summaries confirm the counts. Without the fixture, the provider integration test skips; normal app tests make no provider requests.
 - The isolated `NativeWorkflowCheck` with Pi 1.3.0. Directory launch, models, thinking, dialogs, Stop and idle restoration pass without inference or global-settings changes.
 
@@ -64,6 +64,31 @@ wait "$fixture"
 Wait for `READY` before starting Xcode tests. For the LAN check on this Mac, use `$(ipconfig getifaddr en0)` instead of `$(tailscale ip -4)`. Resolve an eligible address and simulator ID on other hosts. The fixture refuses an existing `/tmp/pi-remote-simulator-fixture`; do not remove a directory owned by another running check. It stops after the integration test or a 15-minute safety deadline. These checks do not establish off-site reliability, physical-device behavior, normal installed-extension compatibility or complete UI accessibility.
 
 Latest local logs are `/tmp/pi-remote-network-final.log`, `/tmp/pi-remote-network-final-tsan.log`, `/tmp/pi-remote-network-final-mac.log`, `/tmp/pi-remote-network-final-device.log`, `/tmp/pi-remote-final-simulator.log`, `/tmp/pi-remote-final-simulator-host.log` and `/tmp/pi-remote-final-simulator-summary.json`. They are temporary evidence, not release artifacts.
+
+## Host failure matrix
+
+The local failure checks pass. These tests do not suspend the laptop or require another network.
+
+| Failure | Evidence | Recovery and dispatch check |
+| --- | --- | --- |
+| Missing Pi executable | `missingPiReportsFailureWithoutStartingAChild` | Inspection reports unavailable; session launch fails without a child. The Mac retains executable-selection controls. |
+| Lost directory access | Directory creation, resume and activation-race tests | Read/search loss, deletion and replacement fail before launching a new child; no fallback directory is used. |
+| Missing provider credentials | `NativeFailureCheck` with installed Pi 1.3.0; parametrized host tests | Typed sign-in-on-Mac error, idle empty session, repeat request returns the same rejection, explicit resume succeeds. |
+| Provider error after acceptance | Streamed `message_end` fixture | Authentication failures retain the sign-in action; other provider failures report unavailable. No automatic resubmission occurs. |
+| Pi exits before acceptance reply | `promptFailuresPreserveRecoveryAndNeverRedispatch` | Unknown outcome, interrupted session, one dispatch even when the same request is repeated. |
+| Pi exits after acceptance | Same parametrized test | Accepted result remains deduplicated; process exit marks the persisted session interrupted. Work is not repeated. |
+| Host listener unavailable | Production TLS test on loopback, LAN and Tailscale | Requests and reconnection fail while stopped. Pi keeps working; listener restoration and authentication recover the same session with exactly one accepted prompt. |
+
+The missing-credential check creates a new mode-0700 temporary home and agent directory. `/usr/bin/env -i` removes all inherited credentials and session metadata. Only the executable search path, temporary paths and telemetry setting are supplied. Tools, extensions, MCP and project resources are disabled. Pi rejects the prompt before provider execution because no OpenAI key exists. No real credentials are read, copied or printed. The fixture removes its private files after shutdown. Run deliberately from the repository root:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+swift run NativeFailureCheck "$(command -v pi)"
+```
+
+This check found that pre-dispatch interruption recording made a rejected empty session look populated. The host now restores its prior interruption/history flags only after a definite rejection, and only if no run lifecycle or process-exit event arrived during the request. Unknown outcomes keep the crash-safety record. A regression removes the empty fixture's history file and verifies explicit restoration. Streamed authentication errors now use the same typed classification as rejected RPC responses.
+
+All 61 root tests pass normally and with Thread Sanitizer after this change. The installed-Pi missing-credential and metadata/dialog checks and unsigned Mac build pass. Logs are `/tmp/pi-remote-failure-full.log`, `/tmp/pi-remote-failure-tsan.log`, `/tmp/pi-remote-native-failure.log`, `/tmp/pi-remote-failure-workflow.log` and `/tmp/pi-remote-failure-mac.log`. The first isolated check could not find the Node.js runtime through a fixed search path. It now preserves the caller's executable search path, not its credential environment; the repeated check passes.
 
 ## QR-code pairing
 

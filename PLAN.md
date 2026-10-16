@@ -10,7 +10,7 @@ Provide the Pi workflow through native screens and controls, not an embedded ter
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: native iOS and macOS apps build without signing. Host/client integration, 59 root tests, 18 shared tests, 25 iOS app tests and six compact-interface UI tests pass. The overall plan remains incomplete: full workflow compatibility, the host failure matrix and clean product setup checks remain open. Verification is limited to the iOS simulator and this laptop. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
+Status: native iOS and macOS apps build without signing. Host/client integration, 61 root tests, 18 shared tests, 25 iOS app tests and six compact-interface UI tests pass. The overall plan remains incomplete: full workflow compatibility, local-control integration and clean product setup checks remain open. Verification is limited to the iOS simulator and this laptop. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
 
 ## Context
 
@@ -263,7 +263,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 - [x] Add automated protocol and integration tests with a fake Pi process; 59 root tests and 18 shared-package tests pass. Coverage includes rejected commands, unknown outcomes, directly injected stale/wrong-identity client states, epoch/cursor fallback, invalid credentials, bounded output, malformed WebSocket frames, invalid certificate dates and active-run TLS reconnection without duplicate dispatch on LAN and Tailscale. All 59 root tests also pass with Thread Sanitizer.
 - [x] Run a simulator-to-local-host coding flow through pairing, a coding task, client disconnection, reconnection, Stop and session restoration; the production client/host fixture passes on LAN and Tailscale with Pi 1.3.0. It verifies exact tool-written file contents, one user-prompt delivery, preserved working directory, idle restoration and explicitly marked interruption after active host restart. It does not claim full UI or installed-extension acceptance. See [simulator evidence](docs/workflow-verification.md#simulator-coding-and-recovery).
-- [ ] Test simulated host unavailability, lost project access, missing model credentials and Pi crashes on this laptop; verify actionable errors and no automatic re-execution of interrupted work.
+- [x] Test simulated host unavailability, lost project access, missing model credentials and Pi crashes on this laptop; verify actionable errors and no automatic re-execution of interrupted work. All 61 root tests pass normally and with Thread Sanitizer. The isolated installed-Pi `NativeFailureCheck` passes real missing-credential rejection and empty-session restoration; see [failure evidence](docs/workflow-verification.md#host-failure-matrix).
 - [ ] Document supported Pi versions, setup, security limits, network requirements, session ownership, and recovery in README.md; validate the instructions with a clean simulator setup and local companion storage on this laptop.
 
 ## Execution blockers
