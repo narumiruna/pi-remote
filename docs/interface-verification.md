@@ -2,9 +2,9 @@
 
 ## Result
 
-Six interface tests pass twice in sequence, with zero failures or skips. They run the production phone views in a separate test app on an iPhone SE (3rd generation) simulator, iOS 26.5, at 375 × 667 points with accessibility-extra-large text. Captures were inspected in light and dark appearance.
+Eight interface tests now pass, with zero failures or skips. The original six also passed twice in sequence before usage and image-output checks were added. They run the production phone views in a separate test app on an iPhone SE (3rd generation) simulator, iOS 26.5, at 375 × 667 points with accessibility-extra-large text. Captures were inspected in light and dark appearance.
 
-The product app suite also passes all 25 tests with the explicit provider fixture on this Mac's LAN and Tailscale interfaces. All 59 root tests and 18 shared tests pass. The unsigned Mac and iOS device-SDK builds pass. This is local evidence, not hardware or distribution evidence.
+The product app suite also passes all 27 tests with the explicit provider fixture on this Mac's LAN and Tailscale interfaces. All 69 root tests and 23 shared tests pass. The unsigned Mac and iOS device-SDK builds pass. This is local evidence, not hardware or distribution evidence.
 
 ## Test boundary
 
@@ -26,6 +26,7 @@ The separate [simulator coding flow](workflow-verification.md#simulator-coding-a
 - Critical icon controls have explicit accessibility labels. The saved server URL has a readable label and retains the exact address as its accessibility value.
 - Requested accessibility audits pass for touch regions and sufficient element descriptions. No requested findings were excluded. The final full runs contain no unrequested audit findings.
 - `ContrastTests` resolves app text, secondary text, tint and prominent-label color pairs against light/dark system backgrounds. Each tested pair meets a 4.5:1 ratio. Captures also verify the rendered colors. Native system materials and inactive controls are not exhaustively pixel-tested.
+- Native session usage opens and refreshes with large text. Image output opens a fit preview, enables the visible Full resolution switch, retains a 44-point Done action and removes the sheet after background return; see [image evidence](output-images.md).
 - Input remains a standard text control. The simulator keyboard shows its standard dictation control; no custom speech service or hardware dictation claim is included.
 
 ## Fixes found during review
@@ -68,4 +69,4 @@ Passing summaries: `/tmp/pi-remote-interface-verified-1-summary.json`, `/tmp/pi-
 
 Xcode result bundles are under `/tmp/pi-remote-interface/Logs/Test/`. Reviewed captures are exported to `/tmp/pi-remote-interface-final-reviewed-attachments/`. The failed layout sample is `/tmp/pi-remote-reading-hang-1.log`. These are temporary local artifacts. No screenshots, recordings, transcripts or binary test artifacts are committed.
 
-Installed-extension compatibility, the remaining real-Pi command checks and clean product setup remain separate open items in `PLAN.md`.
+Installed-extension compatibility and the remaining real-Pi command checks remain open in `PLAN.md`. Clean setup controls now have local model/transport and simulator evidence. The current eight-test image run is recorded in `/tmp/pi-remote-output-ui-verified-summary.json`, with reviewed captures in `/tmp/pi-remote-output-ui-verified-attachments/`.

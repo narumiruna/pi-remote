@@ -72,6 +72,8 @@ public struct TranscriptReducer: Sendable {
                let index = messages.firstIndex(where: { $0.id == item }) {
                 let result = event["result"] ?? event["partialResult"]
                 messages[index].text = (event["toolName"]?.string ?? "Tool") + "\n" + Self.content(result?["content"])
+                messages[index].images = Self.imageReferences(result?["content"])
+                if (result?["content"]?.array ?? []).filter({ $0["type"]?.string == "image" }).count > 16 { messages[index].truncated = true }
                 messages[index].streaming = event["type"]?.string != "tool_execution_end"
                 messages[index].isError = event["isError"]?.bool == true
             }
@@ -96,8 +98,17 @@ public struct TranscriptReducer: Sendable {
             text: DisplayLimit.text(body, bytes: 16_384),
             thinking: thinking.isEmpty ? nil : DisplayLimit.text(thinking, bytes: max(0, 16_384 - min(body.utf8.count, 16_384))),
             isError: value["isError"]?.bool == true || value["stopReason"]?.string == "error",
-            truncated: body.utf8.count + thinking.utf8.count > 16_384
+            truncated: body.utf8.count + thinking.utf8.count > 16_384 || (value["content"]?.array ?? []).filter({ $0["type"]?.string == "image" }).count > 16,
+            images: imageReferences(value["content"])
         )
+    }
+
+    public static func imageReferences(_ content: JSONValue?) -> [OutputImageReference]? {
+        let references = (content?.array ?? []).filter { $0["type"]?.string == "image" }.prefix(16).compactMap { block -> OutputImageReference? in
+            guard let text = block["remoteImageID"]?.string, let id = UUID(uuidString: text) else { return nil }
+            return OutputImageReference(id: id, fault: block["remoteImageFault"]?.string.flatMap(RemoteFault.init(rawValue:)))
+        }
+        return references.isEmpty ? nil : references
     }
 
     public static func content(_ value: JSONValue?) -> String {

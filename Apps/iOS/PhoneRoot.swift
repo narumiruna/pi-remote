@@ -46,7 +46,8 @@ struct PhoneRoot: View {
                             }
                             ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending,
                                              send: { model.send(context: state.context) },
-                                             stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } }) {
+                                             stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } },
+                                             request: model.scopedRequest(for: state)) {
                                 Menu {
                                     Button("Photo", systemImage: "photo") { attachmentScope = model.contentScope; pickingPhoto = true }
                                     Button("Text file") { attachmentScope = model.contentScope; importing = true }

@@ -124,7 +124,7 @@ private func temporaryDirectory() throws -> URL {
     #expect(state.phase == "idle")
 }
 
-private func fakePi(at root: URL, hold: Bool = false) throws -> URL {
+private func fakePi(at root: URL, hold: Bool = false, image: Data? = nil) throws -> URL {
     let url = root.appendingPathComponent("fake-pi")
     let script = #"""
 #!/bin/sh
@@ -171,9 +171,13 @@ while IFS= read -r line; do
     esac
 done
 """#
-    let contents = hold ? script
+    var contents = hold ? script
         .replacingOccurrences(of: "reply '{\"disposition\":\"started\"}'", with: "streaming=true; reply '{\"disposition\":\"started\"}'")
         .replacingOccurrences(of: "\\n{\"type\":\"agent_settled\"}", with: "") : script
+    if let image {
+        let output = #"printf '{"type":"tool_execution_start","toolCallId":"image-tool","toolName":"read"}\n{"type":"tool_execution_end","toolCallId":"image-tool","toolName":"read","result":{"content":[{"type":"image","mimeType":"image/png","data":""# + image.base64EncodedString() + #""}]}}\n'"#
+        contents = contents.replacingOccurrences(of: "                    printf '{\"type\":\"agent_start\"}\\n", with: "                    printf '{\"type\":\"agent_start\"}\\n'\n                    " + output + "\n                    printf '")
+    }
     try contents.write(to: url, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     return url
@@ -262,6 +266,39 @@ func invalidPiStatisticsFailClosed(payload: String) async throws {
         #expect(await host.state().phase == "idle")
         await host.shutdown()
     } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func outputImagesAreAvailableFromHistoryAndCannotCrossSessions() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let data = try outputImagePNG(seed: 50)
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: fakePi(at: root, image: data))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let session = try #require(await host.state().selected)
+        let raw: JSONValue = .object(["type": .string("message"), "id": .string("history-image"), "parentId": .null,
+            "message": .object(["role": .string("toolResult"), "content": .array([.object(["type": .string("image"), "mimeType": .string("image/png"), "data": .string(data.base64EncodedString())])])])])
+        let file = support.appendingPathComponent("pi-sessions/" + session.uuidString + "/" + session.uuidString + ".jsonl")
+        let writer = try FileHandle(forWritingTo: file)
+        try writer.seekToEnd(); try writer.write(contentsOf: JSONEncoder().encode(raw) + Data([10])); try writer.close()
+        let page = await host.handle(AppRequest(epoch: host.epoch, session: session, action: .historyPage(cursor: nil)), device: device)
+        guard case .historyPage(let entries) = page, let previewID = entries.items.first?.preview else { throw RemoteFault.invalidRequest }
+        let result = await host.handle(AppRequest(epoch: host.epoch, session: session, action: .historyEntry(id: previewID)), device: device)
+        guard case .preview(let preview) = result else { throw RemoteFault.invalidRequest }
+        let reference = try #require(preview.images?.first)
+        #expect(preview.text == "[Image]" && reference.fault == nil)
+        let request = AppRequest(epoch: host.epoch, session: session, action: .outputImage(id: reference.id))
+        #expect(await host.handle(request, device: device) == .image(ImageAttachment(data: data, mimeType: "image/png")))
+        #expect(!String(decoding: try JSONEncoder().encode(preview), as: UTF8.self).contains(data.base64EncodedString()))
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .createSession(directory: directory)), device: device) == .ok)
+        #expect(await host.handle(request, device: device) == .failure(.conflict))
+        let current = await host.state().selected
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: current, action: .outputImage(id: reference.id)), device: device) == .failure(.expired))
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: current, action: .historyEntry(id: previewID)), device: device) == .failure(.expired))
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
 }
 
 @Test(.timeLimit(.minutes(1))) func missingPiReportsFailureWithoutStartingAChild() async throws {
@@ -441,7 +478,8 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
     let store = MemorySecrets()
-    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root, hold: true))
+    let image = try outputImagePNG(seed: 100)
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root, hold: true, image: image))
     let registry = try DeviceRegistry(secrets: store, metadata: root.appendingPathComponent("devices.json"))
     let identity = try await ServerIdentity.load(secrets: store, support: root)
     let server = AppServer(coordinator: host, registry: registry)
@@ -470,7 +508,16 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         let folder = try await host.directories.register(root)
         _ = try await client.request(.createSession(directory: folder))
         _ = try await client.request(.prompt(text: "Interface fixture", delivery: .prompt, image: nil))
+        for _ in 0..<100 {
+            if await host.state().messages.contains(where: { $0.images?.isEmpty == false }) { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let before = await host.state()
+        let reference = try #require(before.messages.compactMap(\.images).flatMap { $0 }.first)
+        #expect(try await client.request(.outputImage(id: reference.id)) == .image(ImageAttachment(data: image, mimeType: "image/png")))
+        await #expect(throws: RemoteFault.expired) { try await client.request(.outputImage(id: UUID())) }
+        var wrongImageScope = before.context; wrongImageScope.session = UUID()
+        await #expect(throws: RemoteFault.conflict) { try await client.request(.outputImage(id: reference.id), context: wrongImageScope) }
         #expect(before.working)
         await client.disconnect()
         #expect(await host.state().working)
@@ -489,10 +536,12 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         try await client.connect(mac)
         guard case .snapshot(let recovered) = try await client.request(.snapshot) else { throw RemoteFault.invalidRequest }
         #expect(recovered.selected == before.selected && recovered.working)
+        #expect(try await client.request(.outputImage(id: reference.id)) == .image(ImageAttachment(data: image, mimeType: "image/png")))
         #expect(try Data(contentsOf: accepted).count == 1)
         _ = try await client.request(.stop)
         #expect(await !host.state().working)
         try await server.revoke(mac.device)
+        await #expect(throws: (any Error).self) { try await client.request(.outputImage(id: reference.id)) }
         await #expect(throws: (any Error).self) { try await client.request(.snapshot) }
         await #expect(throws: (any Error).self) { try await client.connect(mac) }
     } catch { await client.disconnect(); await server.stop(); await host.shutdown(); throw error }

@@ -8,6 +8,7 @@ struct ConversationView<Extras: View>: View {
     var sending: Bool
     var send: () -> Void
     var stop: () -> Void
+    var request: ((SessionAction) async throws -> AppResult)? = nil
     @ViewBuilder var extras: () -> Extras
     @State private var atBottom = true
     @State private var followingOutput = true
@@ -40,6 +41,10 @@ struct ConversationView<Extras: View>: View {
                                               systemImage: message.isError ? "exclamationmark.triangle" : "wrench.and.screwdriver")
                                             .font(.subheadline).frame(minHeight: 44)
                                     }
+                                    if let images = message.images {
+                                        OutputImageList(images: images, request: request)
+                                        if message.truncated { Text("Some output was omitted. Read History or inspect the source on the Mac.").font(.caption) }
+                                    }
                                     if message.isError {
                                         Text("Tool error: " + DisplayLimit.text(message.text, bytes: 1_024))
                                             .font(.callout).textSelection(.enabled)
@@ -55,6 +60,7 @@ struct ConversationView<Extras: View>: View {
                                         }.font(.callout)
                                     }
                                     MarkdownContent(text: message.text)
+                                    if let images = message.images { OutputImageList(images: images, request: request) }
                                     if message.truncated { Text("Display truncated; inspect History or the source file.").font(.caption).foregroundStyle(.primary.opacity(0.75)) }
                                     if message.isError { Label("Pi reported an error", systemImage: "exclamationmark.triangle").foregroundStyle(.primary).font(.caption) }
                                 }

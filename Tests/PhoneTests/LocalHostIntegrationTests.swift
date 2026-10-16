@@ -111,7 +111,7 @@ private final class IntegrationSecrets: SecretStore, @unchecked Sendable {
             XCTAssertEqual(model.state?.selected, created.selected)
             let session = try XCTUnwrap(created.selected)
             XCTAssertEqual(created.sessions.first(where: { $0.id == session })?.directory, expected)
-            let prompt = "Create a file named result.swift in the current directory containing exactly: let simulatorResult = 42 followed by a newline. Use the write tool. Then reply DONE."
+            let prompt = "First read image.png in the current directory with the read tool. Then create a file named result.swift containing exactly: let simulatorResult = 42 followed by a newline. Use the write tool. Then reply DONE."
             model.text = prompt
             model.send(context: created.context)
             for _ in 0..<300 where model.sending { try await Task.sleep(for: .milliseconds(20)) }
@@ -134,6 +134,12 @@ private final class IntegrationSecrets: SecretStore, @unchecked Sendable {
             XCTAssertEqual(completed.messages.filter { $0.role == "user" && $0.text == prompt }.count, 1)
             XCTAssertFalse(completed.messages.contains { $0.isError })
             XCTAssertTrue(completed.messages.contains { $0.role == "tool" })
+            let output = try XCTUnwrap(completed.messages.compactMap(\.images).flatMap { $0 }.first)
+            XCTAssertNil(output.fault)
+            guard case .image(let image) = try await client.request(.outputImage(id: output.id)) else { throw RemoteFault.invalidRequest }
+            XCTAssertEqual(image.data, try Data(contentsOf: URL(fileURLWithPath: expected).appendingPathComponent("image.png")))
+            let decoded = try OutputImageDecoder.decode(image, fullResolution: true)
+            XCTAssertEqual(decoded.width, 32); XCTAssertEqual(decoded.height, 32)
             XCTAssertEqual(try String(contentsOf: URL(fileURLWithPath: expected).appendingPathComponent("result.swift"), encoding: .utf8), "let simulatorResult = 42\n")
             try mark("coding task complete")
             let files = try await page(client, id: listing.id)
@@ -155,6 +161,9 @@ private final class IntegrationSecrets: SecretStore, @unchecked Sendable {
             XCTAssertEqual(restored.selected, session)
             XCTAssertEqual(restored.sessions.first(where: { $0.id == session })?.directory, expected)
             XCTAssertFalse(restored.working)
+            let restoredImage = try XCTUnwrap(restored.messages.compactMap(\.images).flatMap { $0 }.first)
+            guard case .image(let restoredAttachment) = try await client.request(.outputImage(id: restoredImage.id)) else { throw RemoteFault.invalidRequest }
+            XCTAssertEqual(restoredAttachment, image)
             XCTAssertEqual(restored.messages.filter { $0.role == "user" && $0.text == prompt }.count, 1)
             let interruption = "List integers 10001 through 20000, one per line. Do not use tools."
             _ = try await client.request(.prompt(text: interruption, delivery: .prompt, image: nil))

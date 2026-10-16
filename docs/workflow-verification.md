@@ -2,13 +2,13 @@
 
 ## Result
 
-The native workflow implementation has advanced, but `PLAN.md` is not complete. Normal installed-extension compatibility, clean product setup and several workflow checks remain open. Compact interface checks now pass; see [interface verification](interface-verification.md). Plan completion requires simulator and laptop evidence, not physical-device installation or off-site testing.
+The native workflow implementation has advanced, but `PLAN.md` is not complete. Normal installed-extension compatibility and several workflow checks remain open. Clean setup controls now have local model/transport and simulator evidence. Compact interface checks now pass; see [interface verification](interface-verification.md). Plan completion requires simulator and laptop evidence, not physical-device installation or off-site testing.
 
 Verified on this Mac with Pi 1.3.0, Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
-- 62 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
-- 21 shared-package tests pass.
-- Twenty-five iOS app tests pass with the explicit provider fixture on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips; see the local audit below.
+- 69 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
+- 23 shared-package tests pass.
+- Twenty-seven iOS app tests pass with the explicit provider fixture on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips; see the local audit below.
 - Both unsigned app builds pass. The unsigned iOS device-SDK build is a compile check, not an installed personal build.
 - An isolated check using the installed Pi passes model and thinking changes, all four supported dialog methods, dialog expiry, editor prefill, idle Stop, directory launch and idle session restoration. It sends no inference prompt.
 - An explicit provider check through the native host passes synthetic image input, observed live text, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart. Tools and installed resources are disabled.
@@ -20,8 +20,8 @@ The current completion scope is simulator and laptop verification, as defined in
 The latest local run verifies:
 
 - Unsigned Mac, iOS simulator and iOS device-SDK builds. `project.yml` sets automatic signing, iOS 18 and macOS 15 deployment floors. The installed SDKs are version 26.5. These checks do not establish minimum-version compatibility or signed installation.
-- All 62 root tests, also with Thread Sanitizer, and 21 shared-package tests.
-- Twenty-five iOS simulator tests with the explicit provider fixture, with zero failures or skips. The full suite passed on both the Mac's LAN and Tailscale interfaces. Xcode result summaries confirm the counts. Without the fixture, the provider integration test skips; normal app tests make no provider requests.
+- All 69 root tests, also with Thread Sanitizer, and 23 shared-package tests.
+- Twenty-seven iOS simulator tests with the explicit provider fixture, with zero failures or skips. The full suite passed on both the Mac's LAN and Tailscale interfaces. Xcode result summaries confirm the counts. Without the fixture, the provider integration test skips; normal app tests make no provider requests.
 - The isolated `NativeWorkflowCheck` with Pi 1.3.0. Directory launch, models, thinking, dialogs, Stop and idle restoration pass without inference or global-settings changes.
 
 ### Transport correction
@@ -64,6 +64,10 @@ wait "$fixture"
 Wait for `READY` before starting Xcode tests. For the LAN check on this Mac, use `$(ipconfig getifaddr en0)` instead of `$(tailscale ip -4)`. Resolve an eligible address and simulator ID on other hosts. The fixture refuses an existing `/tmp/pi-remote-simulator-fixture`; do not remove a directory owned by another running check. It stops after the integration test or a 15-minute safety deadline. These checks do not establish off-site reliability, physical-device behavior, normal installed-extension compatibility or complete UI accessibility.
 
 Latest local logs are `/tmp/pi-remote-network-final.log`, `/tmp/pi-remote-network-final-tsan.log`, `/tmp/pi-remote-network-final-mac.log`, `/tmp/pi-remote-network-final-device.log`, `/tmp/pi-remote-final-simulator.log`, `/tmp/pi-remote-final-simulator-host.log` and `/tmp/pi-remote-final-simulator-summary.json`. They are temporary evidence, not release artifacts.
+
+## Image output
+
+Authenticated original raster-image retrieval, bounded native preview/full-resolution viewing and image-history recovery now pass. The real-Pi simulator reads a PNG, checks exact bytes and native decoding, then retrieves it again after host restart. All 27 app tests pass on LAN and Tailscale, and all eight interface tests pass. Cache, format, dimension, session and revocation checks pass; see [image limits and evidence](output-images.md). This does not resolve terminal-only extension or complete native-command compatibility.
 
 ## Session usage
 

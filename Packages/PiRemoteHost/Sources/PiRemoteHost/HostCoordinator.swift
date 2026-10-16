@@ -22,6 +22,7 @@ public actor HostCoordinator {
     private var sessions: [ManagedSession]
     private var snapshot: HostSnapshot
     private var reducer = TranscriptReducer()
+    private var outputImages = OutputImages()
     private let history = SessionHistory()
     private var rpc: RPCProcess?
     private var observer: Task<Void, Never>?
@@ -139,6 +140,7 @@ public actor HostCoordinator {
         if action.mutates { snapshot.error = nil }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .outputImage(let id): return .image(try outputImages.image(id))
         case .statistics:
             let data = try await requireRPC().request("get_session_stats")
             let statistics: SessionStatistics
@@ -263,7 +265,14 @@ public actor HostCoordinator {
         case .historyEntry(let id):
             guard !snapshot.working, let session = snapshot.selected else { throw RemoteFault.busy }
             try await requireIdle()
-            return .preview(try await history.preview(session: session, id: id))
+            let entry = try await history.displayEntry(session: session, id: id)
+            var preview = entry.preview
+            if let message = entry.message {
+                let display = outputImages.message(message)
+                preview.images = TranscriptReducer.imageReferences(display["content"])
+                if (message["content"]?.array ?? []).filter({ $0["type"]?.string == "image" }).count > 16 { preview.truncated = true }
+            }
+            return .preview(preview)
         case .fork(let entry):
             guard !snapshot.working, entry.utf8.count <= 128 else { throw RemoteFault.busy }
             try await requireIdle()
@@ -331,7 +340,7 @@ public actor HostCoordinator {
         let activation = generation
         observer?.cancel(); rpc = nil
         snapshot.phase = "starting"; snapshot.selected = id; snapshot.messages = []; snapshot.dialogs = []
-        snapshot.draft = nil; snapshot.draftID = nil
+        snapshot.draft = nil; snapshot.draftID = nil; outputImages = OutputImages()
         dialogDeadlines = [:]; statuses = [:]; notifications = []; publish()
         if let previous, !(await previous.shutdown()) { throw RemoteFault.unavailable }
         guard !closing, generation == activation else { throw RemoteFault.cancelled }
@@ -410,7 +419,8 @@ public actor HostCoordinator {
     private func refreshHistory() async throws {
         let data = try await requireRPC().request("get_messages")
         reducer = TranscriptReducer()
-        reducer.replaceHistory(data["messages"]?.array ?? [])
+        let messages = (data["messages"]?.array ?? []).map { outputImages.message($0) }
+        reducer.replaceHistory(messages)
         snapshot.messages = reducer.messages; snapshot.hasOlderMessages = reducer.omitted
     }
 
@@ -421,7 +431,7 @@ public actor HostCoordinator {
         let url = URL(fileURLWithPath: file); try validateSessionFile(url)
         let info = SessionInfo(id: UUID(), title: "Branch — " + sessions[old].info.title, directory: sessions[old].info.directory)
         sessions.append(ManagedSession(info: info, directory: sessions[old].directory, piID: piID, folder: sessions[old].folder, file: url, hasHistory: true))
-        snapshot.selected = info.id; try saveSessions(); try await refreshHistory()
+        snapshot.selected = info.id; outputImages = OutputImages(); try saveSessions(); try await refreshHistory()
     }
 
     private func validateSessionFile(_ url: URL) throws {
@@ -464,7 +474,7 @@ public actor HostCoordinator {
 
     private func consume(_ event: JSONValue, generation token: UUID) {
         guard token == generation else { return }
-        reducer.consume(event)
+        reducer.consume(outputImages.event(event))
         snapshot.messages = reducer.messages
         if snapshot.phase != "starting" && snapshot.phase != "stopping" { snapshot.phase = reducer.phase }
         snapshot.hasOlderMessages = reducer.omitted

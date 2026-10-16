@@ -74,6 +74,10 @@ actor SessionHistory {
     }
 
     func preview(session: UUID, id: UUID) throws -> FilePreview {
+        try displayEntry(session: session, id: id).preview
+    }
+
+    func displayEntry(session: UUID, id: UUID) throws -> (preview: FilePreview, message: JSONValue?) {
         expire()
         guard let entry = entries[id], entry.file.session == session else { throw RemoteFault.expired }
         let handle = try openFile(entry.file.file)
@@ -92,7 +96,8 @@ actor SessionHistory {
         var body = visible ? TranscriptReducer.content(message?["content"]) : ""
         if body.isEmpty { body = raw["summary"]?.string ?? (visible ? message?["output"]?.string ?? message?["errorMessage"]?.string : nil) ?? "No display text for this entry." }
         if visible, !thinking.isEmpty { body = "Thinking\n" + thinking + "\n\n" + body }
-        return FilePreview(name: raw["type"]?.string ?? "History entry", text: DisplayLimit.text(body, bytes: 256 * 1_024), truncated: body.utf8.count > 256 * 1_024)
+        let preview = FilePreview(name: raw["type"]?.string ?? "History entry", text: DisplayLimit.text(body, bytes: 256 * 1_024), truncated: body.utf8.count > 256 * 1_024)
+        return (preview, visible ? message : nil)
     }
 
     private func openFile(_ file: URL) throws -> FileHandle {

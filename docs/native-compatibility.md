@@ -54,14 +54,14 @@ The installed `docs/slash-commands.md` lists built-in commands; `get_commands` i
 | Directory choice | Implemented; nested simulator navigation, canonical cwd and permission/replacement checks pass | None for the accepted accessible-folder policy. |
 | `/new`, `/resume`, `/name` | Implemented for companion-owned sessions; local and simulator checks pass | Manual import is separate; terminal-session attachment remains excluded. |
 | `/model`, `/thinking` | Implemented and checked against installed Pi | No tested runtime-version range beyond 1.3.0. |
-| Prompt, streaming, tools, steering, follow-up, Stop | Provider and simulator checks pass | Full output-image rendering and extension renderers remain separate gaps. |
+| Prompt, streaming, tools, steering, follow-up, Stop | Provider and simulator checks pass | Extension renderers remain a gap; bounded native raster-image viewing now passes separately. |
 | `/fork`, `/clone` | Implemented; real provider checks pass | Fork is limited by Pi to eligible active-branch user messages. |
 | `/tree` | Paged entry inspection only | In-place navigation is missing from RPC; extension command contexts expose `navigateTree`, but no app-owned adapter exists. Do not edit JSONL leaf state externally while Pi owns it. |
 | `/compact` | Real summarization, compacting state, persisted entry and restart restoration pass | Extension-specific compaction remains separate. |
 | `/session` | Native session-usage view shows validated token, cost, message and context statistics from `get_session_stats`; installed-Pi empty and post-compaction checks pass | Provider totals are estimates, not an invoice; unavailable post-compaction context is explicit. |
 | Commands, skills, templates | Discovery and named command dispatch implemented | Actual skill/template expansion and the normal loaded-resource set still need checks. |
 | Dialogs, notifications, text widgets/status | All four supported dialogs and expiry pass | Terminal custom components, terminal input and custom renderers are not transported. |
-| Attachments and files | Image input, text/file preview and Git diff implemented | Full output images and native text-file/context attachment remain incomplete. |
+| Attachments and files | Image input, original raster-image retrieval/viewing, text/file preview and Git diff implemented; [image checks](output-images.md) pass on LAN and Tailscale with restart restoration | Image format/size and first-frame limits remain explicit. Native Mac-file/context attachment remains incomplete; phone text-file input is already available. |
 | `/settings`, `/scoped-models` | Not implemented | Native settings/model-scope controls and a supported persistence interface are needed. |
 | `/login`, `/logout` | Missing-credential recovery directs the user to the Mac | This is not a native authentication-management workflow. Secrets must not move to the phone. |
 | `/llama` | Not implemented | Inspect configured router capabilities and design native management. |
@@ -79,7 +79,7 @@ Pi 1.3.0's RPC UI contract explicitly returns `undefined` for `custom()`. Termin
 The following alternatives require further work or approval; none is silently accepted:
 
 1. Add RPC-native workflows to the upstream extensions and expose missing core commands through a maintained Pi interface. Changes to installed packages or upstream repositories are external writes and require approval.
-2. Add a bundled Pi extension/SDK adapter and native Swift screens. That changes the current all-Swift app-owned-service boundary and requires an explicit architecture decision. It must not embed a terminal, forward arbitrary RPC, expose credentials or mutate session files behind Pi.
+2. Add a bundled Pi extension/SDK adapter and native Swift screens. That changes the current all-Swift app-owned-service boundary and requires an explicit architecture decision. It must not embed a terminal, forward arbitrary RPC, expose credentials or mutate session files behind Pi. Authorization for a bundled adapter was requested; no explicit decision has been received.
 3. Obtain explicit agreement to exclude the named terminal-only/configuration workflows. No such agreement exists; this would reduce the current objective and cannot be assumed.
 
-Independent Swift work can continue, including output attachments, copy/export controls and clean setup checks. Session statistics are now implemented and verified. These gaps are not a reason to mark the plan complete or to stop all implementation work.
+Independent Swift work can continue, including copy/export controls, native Mac-file attachment and other built-in workflows. Session statistics, bounded raster output and clean setup controls are now implemented and verified. These gaps are not a reason to mark the plan complete or to stop all implementation work.

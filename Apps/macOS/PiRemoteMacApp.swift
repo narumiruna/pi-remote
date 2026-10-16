@@ -78,7 +78,8 @@ struct CompanionWindow: View {
             }
             ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending,
                              send: { model.send(context: state.context) },
-                             stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } }) { EmptyView() }
+                             stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } },
+                             request: model.scopedRequest(for: state)) { EmptyView() }
         }
         .modifier(EditorOfferPrompt(offer: $model.editorOffer, replace: model.acceptEditorOffer))
         .confirmationDialog("Send this instruction again?", isPresented: $model.confirmResend) {

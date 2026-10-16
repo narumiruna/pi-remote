@@ -1,10 +1,14 @@
+import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import PiRemoteClient
 import PiRemoteCore
 
 /// In-memory UI fixtures only. This target is not a product app and opens no sockets.
 actor FixtureConnection: PhoneConnection {
     static let host = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+    private static let imageID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
     private let home = UUID(), project = UUID(), nested = UUID(), root = UUID()
     private var snapshot: HostSnapshot
     private let unavailable: Bool
@@ -31,6 +35,9 @@ actor FixtureConnection: PhoneConnection {
             TranscriptMessage(role: "tool", text: phase == "error" ? "Read file\nPermission denied for the fixture file." : "Read file\nFixture output", isError: phase == "error")
         ]
         if phase == "error" { state.error = .permissionDenied }
+        if phase == "images" {
+            state.messages = [TranscriptMessage(role: "tool", text: "Read image\n[Image]", images: [OutputImageReference(id: Self.imageID), OutputImageReference(id: UUID(), fault: .tooLarge)])]
+        }
         if phase == "large" {
             let text = String(repeating: "A bounded transcript paragraph. ", count: 60)
             state.messages = (0..<99).map { TranscriptMessage(role: $0.isMultiple(of: 2) ? "user" : "assistant", text: "Record \($0).\n\n" + text) }
@@ -76,6 +83,17 @@ actor FixtureConnection: PhoneConnection {
         defer { if action.mutates { publish() } }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .outputImage(let id):
+            guard id == Self.imageID else { throw RemoteFault.expired }
+            guard let context = CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 128,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw RemoteFault.unavailable }
+            context.setFillColor(CGColor(red: 0.1, green: 0.3, blue: 0.9, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 32, height: 32))
+            context.setFillColor(CGColor(red: 1, green: 0.8, blue: 0.1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+            let data = NSMutableData()
+            guard let image = context.makeImage(), let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else { throw RemoteFault.unavailable }
+            CGImageDestinationAddImage(destination, image, nil)
+            guard CGImageDestinationFinalize(destination) else { throw RemoteFault.unavailable }
+            return .image(ImageAttachment(data: data as Data, mimeType: "image/png"))
         case .statistics:
             let json = #"{"userMessages":3,"assistantMessages":3,"toolCalls":1,"toolResults":1,"totalMessages":8,"tokens":{"input":1000,"output":200,"cacheRead":500,"cacheWrite":0,"total":1700},"cost":0.0025,"contextUsage":{"tokens":1700,"contextWindow":200000,"percent":0.85}}"#
             return .statistics(try JSONDecoder().decode(SessionStatistics.self, from: Data(json.utf8)))

@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import PiRemoteCore
@@ -48,6 +49,19 @@ private enum FixtureFailure: Error { case usage, deadline, settingsChanged }
         let before = try settingsData(settings)
         let directory = root.appendingPathComponent("project/nested", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32,
+                                           bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                           colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let bytes = bitmap.bitmapData else { throw FixtureFailure.usage }
+        for y in 0..<32 {
+            for x in 0..<32 {
+                let offset = y * bitmap.bytesPerRow + x * 4
+                bytes[offset] = x < 16 ? 255 : 0; bytes[offset + 1] = y < 16 ? 255 : 0
+                bytes[offset + 2] = 80; bytes[offset + 3] = 255
+            }
+        }
+        guard let image = bitmap.representation(using: .png, properties: [:]) else { throw FixtureFailure.usage }
+        try image.write(to: directory.appendingPathComponent("image.png"), options: .atomic)
         let wrapper = root.appendingPathComponent("isolated-pi")
         let script = """
         #!/bin/sh

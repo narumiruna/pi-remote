@@ -95,6 +95,39 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(tool.waitForExistence(timeout: 5) && tool.isHittable)
     }
 
+    func testImageOutputOpensNativePreviewAndFullResolution() throws {
+        let app = launch(["images"])
+        let viewImage = app.buttons["View image 1"]
+        for _ in 0..<6 where !viewImage.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertTrue(viewImage.isHittable)
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Image 2:")).firstMatch.exists)
+        viewImage.tap()
+        XCTAssertTrue(app.navigationBars["Image output"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["32 × 32 pixels"].waitForExistence(timeout: 5))
+        let image = app.images["Pi image output"]
+        XCTAssertTrue(image.isHittable)
+        let full = app.switches["Full resolution"]
+        XCTAssertTrue(full.isHittable)
+        XCTAssertEqual(full.value as? String, "0")
+        // SwiftUI exposes the label and switch as one accessibility element.
+        // Activate the visible switch, not the noninteractive label center.
+        full.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '1'"), object: full)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        XCTAssertTrue(app.staticTexts["32 × 32 pixels"].waitForExistence(timeout: 5))
+        XCTAssertTrue(image.isHittable)
+        capture(app, "compact-native-output-image")
+        reachable(app.buttons["Done"], app: app)
+        app.buttons["Done"].tap()
+        XCTAssertTrue(viewImage.waitForExistence(timeout: 5))
+        viewImage.tap()
+        XCTAssertTrue(app.navigationBars["Image output"].waitForExistence(timeout: 5))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(viewImage.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["Image output"].exists, "Background protection must remove image output sheets")
+    }
+
     func testSessionUsageIsReadableAndRefreshable() throws {
         let app = launch(["idle"])
         controls(app)

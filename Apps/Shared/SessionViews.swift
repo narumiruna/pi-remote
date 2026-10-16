@@ -151,7 +151,7 @@ struct HistoryView: View {
         .navigationTitle("History")
         .task { await load(nil) }
         .sheet(isPresented: Binding(get: { preview != nil }, set: { if !$0 { preview = nil } })) {
-            if let preview { FilePreviewView(preview: preview) }
+            if let preview { FilePreviewView(preview: preview, request: request) }
         }
     }
     @MainActor private func load(_ cursor: UUID?) async {

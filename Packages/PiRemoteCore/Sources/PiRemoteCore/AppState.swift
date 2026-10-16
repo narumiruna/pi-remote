@@ -19,9 +19,10 @@ public struct TranscriptMessage: Codable, Sendable, Equatable, Identifiable {
     public var isError: Bool
     public var streaming: Bool
     public var truncated: Bool
-    public init(id: UUID = UUID(), role: String, text: String, thinking: String? = nil, isError: Bool = false, streaming: Bool = false, truncated: Bool = false) {
+    public var images: [OutputImageReference]?
+    public init(id: UUID = UUID(), role: String, text: String, thinking: String? = nil, isError: Bool = false, streaming: Bool = false, truncated: Bool = false, images: [OutputImageReference]? = nil) {
         self.id = id; self.role = role; self.text = text; self.thinking = thinking; self.isError = isError
-        self.streaming = streaming; self.truncated = truncated
+        self.streaming = streaming; self.truncated = truncated; self.images = images
     }
 }
 
@@ -64,7 +65,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var epoch: UUID
     public var sequence: UInt64 = 0
     public var piVersion = "Not running"
-    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics"]
+    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics", "output-images"]
     public var sessions: [SessionInfo] = []
     public var selected: UUID?
     public var phase = "idle"
@@ -120,7 +121,10 @@ public struct FilePreview: Codable, Sendable, Equatable {
     public var name: String
     public var text: String
     public var truncated: Bool
-    public init(name: String, text: String, truncated: Bool) { self.name = name; self.text = text; self.truncated = truncated }
+    public var images: [OutputImageReference]?
+    public init(name: String, text: String, truncated: Bool, images: [OutputImageReference]? = nil) {
+        self.name = name; self.text = text; self.truncated = truncated; self.images = images
+    }
 }
 
 public struct HistoryItem: Codable, Sendable, Equatable, Identifiable {

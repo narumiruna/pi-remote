@@ -92,12 +92,14 @@ struct DirectoryBrowser: View {
 
 struct FilePreviewView: View {
     let preview: FilePreview
+    var request: ((SessionAction) async throws -> AppResult)? = nil
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             ScrollView([.horizontal, .vertical]) {
                 VStack(alignment: .leading) {
                     if preview.truncated { Text("Preview truncated at the display limit.").foregroundStyle(.primary.opacity(0.75)) }
+                    if let images = preview.images { OutputImageList(images: images, request: request) }
                     Text(preview.text.isEmpty ? "No changes or content." : preview.text)
                         .font(.system(.body, design: .monospaced)).textSelection(.enabled)
                 }.padding()
