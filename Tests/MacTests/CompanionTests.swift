@@ -23,6 +23,67 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         throw RemoteFault.unavailable
     }
 
+    func testCleanConnectionSetupUsesModelApprovalPersistenceAndRevocation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("version-only-pi")
+        try "#!/bin/sh\nprintf '1.3.0\\n'\n".write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let suite = "PiRemote.SetupTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(executable.path, forKey: "piExecutable")
+        let store = MemorySecrets()
+        let support = root.appendingPathComponent("support")
+        let model = CompanionModel(support: support, secrets: store, defaults: defaults)
+        let client = RemoteClient(secrets: store)
+        model.address = "127.0.0.1"
+        model.observe()
+        do {
+            XCTAssertNil(model.startupError)
+            XCTAssertTrue(model.devices.isEmpty)
+            model.startNetwork()
+            try await waitUntil { model.listening && !model.starting }
+            XCTAssertEqual(model.state.piVersion, "1.3.0")
+            model.openPairing()
+            try await waitUntil { !model.code.isEmpty }
+            let code = try PairingCode.decode(model.code)
+            XCTAssertEqual(code.url.host, "127.0.0.1")
+            XCTAssertEqual(code.url.port, 7443)
+            let device = UUID()
+            let pairing = Task { try await client.pair(code: code, device: device, name: "Setup fixture") }
+            try await waitUntil { model.pending != nil }
+            XCTAssertEqual(model.pending?.device.id, device)
+            XCTAssertTrue(model.devices.isEmpty, "A request is not local approval")
+            model.approve(try XCTUnwrap(model.pending?.id))
+            let mac = try await pairing.value
+            try await waitUntil { model.devices.contains { $0.id == device } && model.code.isEmpty }
+            try await client.connect(mac)
+            guard case .snapshot(let state) = try await client.request(.snapshot) else { throw RemoteFault.invalidRequest }
+            XCTAssertEqual(state.host, code.host)
+            XCTAssertTrue(state.sessions.isEmpty)
+            let persisted = try DeviceRegistry(secrets: store, metadata: support.appendingPathComponent("devices.json"))
+            let savedDevices = await persisted.list()
+            XCTAssertEqual(savedDevices.map(\.id), [device])
+            model.stopNetwork()
+            try await waitUntil { !model.listening }
+            do { _ = try await client.request(.snapshot); XCTFail("Stopped listener must close access") }
+            catch {}
+            model.startNetwork()
+            try await waitUntil { model.listening && !model.starting }
+            try await client.connect(mac)
+            model.revoke(device)
+            try await waitUntil { model.devices.isEmpty }
+            do { _ = try await client.request(.snapshot); XCTFail("Revoked device must lose access") }
+            catch {}
+            let revoked = try DeviceRegistry(secrets: store, metadata: support.appendingPathComponent("devices.json"))
+            let remaining = await revoked.list()
+            XCTAssertTrue(remaining.isEmpty)
+        } catch { await client.disconnect(); await model.shutdown(); throw error }
+        await client.disconnect(); await model.shutdown()
+    }
+
     func testLocalAndPairedControlsShareStateAndSerialization() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])

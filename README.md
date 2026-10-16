@@ -36,11 +36,28 @@ These are implemented controls, not proof of complete terminal parity. Real-Pi a
 - Companion exit stops its child. A sleeping Mac is unavailable. Interrupted work is not automatically repeated; inspect uncertain outcomes before retrying.
 - Routine diagnostics exclude credentials, pairing codes, prompts and tool output. Output and history views have explicit size limits; see [limits and recovery](docs/native-apps.md#resource-and-recovery-limits).
 
+## Local development setup
+
+Pi **1.3.0** is the tested development runtime. Other Pi versions are unverified. Complete workflow compatibility is still pending; this is not a supported release.
+
+1. Install and configure Pi on the Mac before using the companion. Provider credentials stay in Pi's Mac configuration. Check `pi --version` and use a status-only authentication check for your provider. This laptop passes `pi auth check --provider openai-codex --model gpt-6.1-sol --json --no-refresh`. Do not use credential-printing commands or copy keys to the phone.
+2. Generate and build the apps with the [verified commands](docs/native-apps.md#automated-checks). Launching a signed personal build is separate and remains unverified. The simulator checks below use injected authentication results and memory credentials, not a production unlock bypass.
+3. In **Pi Remote for Mac**, select **Pi executable** if the detected path is wrong. Pi's Node.js runtime must also be on the companion process's `PATH`; selecting a script does not install its runtime. Use the same configured environment as the successful Pi command.
+4. Select a private LAN or Tailscale **Listen address**, then **Start listener**. Port 7443 must be reachable. Keep the Mac awake. For Tailscale, both peers must be connected and access policy must allow the connection. Local checks do not prove off-site operation.
+5. Select **Pair a device**. On the unlocked phone, open **Connections → Pair a Mac**, scan or paste the code, review the Mac address and select **Request pairing**. Compare the displayed device identity and select **Allow** on the Mac. A request alone does not grant access. Keep the code private; it expires after two minutes.
+6. Open **Sessions → New session**, browse the Mac folders, review the absolute path and select **Start Pi Here**. No project registration is required. Use **Session controls** for the complete path, model, thinking level, commands and usage.
+7. Send an instruction. While working, choose steering or follow-up explicitly before sending another instruction. **Stop** clears pending instructions and aborts work; it cannot undo file changes. Closing or locking the phone does not stop accepted work.
+8. After a disconnection, unlock and reconnect to recover state. After a host restart, select the saved session explicitly. Review interrupted work before sending anything again. Unknown outcomes are not safe to resend automatically.
+
+The companion catalog and managed sessions use `~/Library/Application Support/PiRemote/`. Do not open managed session files for writing in another Pi process. To remove access, select **Revoke** beside the device on the Mac. To change interfaces, stop the listener, select the new address and restart it; update the saved phone address without changing its certificate pin. If the certificate does not cover the new address, use **Replace connection identity** and pair again. Do not disable TLS checks.
+
+Clean setup evidence: two Mac-model tests pass with new private support storage and isolated preferences, including Start listener, local approval, persisted devices, listener restart and revocation. Twenty-five simulator tests pass with fresh phone preferences and a private local provider fixture, including product-model pairing, saved connections, nested directory selection and coding. These are local model/transport and simulator checks, not signed installation, hardware authentication, camera or off-site evidence. [Repeat the checks](docs/workflow-verification.md#clean-setup-controls).
+
 ## Development
 
 `project.yml` defines the SwiftUI app targets and iOS app tests. The root `Package.swift` defines the host, client and integration tests; `Packages/PiRemoteCore` holds the shared protocol. Platform-specific process and network code stays outside that package. There is no TypeScript backend.
 
-Verified unsigned build and test commands are in [native app verification](docs/native-apps.md#automated-checks). Compact-interface checks are recorded in [interface verification](docs/interface-verification.md). Personal signing and installation remain unverified; they are not current plan-completion requirements. The build settings use iOS 18 and macOS 15 as provisional floors, not tested supported versions. Pi 1.3.0 passed the earlier RPC spike; a supported-version matrix does not exist yet.
+Verified unsigned build and test commands are in [native app verification](docs/native-apps.md#automated-checks). Compact-interface checks are recorded in [interface verification](docs/interface-verification.md). Personal signing and installation remain unverified; they are not current plan-completion requirements. The build settings use iOS 18 and macOS 15 as provisional floors, not tested supported versions. Pi 1.3.0 passes the recorded development checks; no broader supported-version range or complete terminal-parity claim is established.
 
 Start with personal builds for iPhone 16 Pro and the current Mac. TestFlight comes later. A future phase can add accounts and a public connection service; its authentication, encryption and routing still require design.
 

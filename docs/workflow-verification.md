@@ -73,6 +73,18 @@ Shared tests verify Codable round-trip, omission of local file paths, null post-
 
 The current root suite has 62 passing tests, also with Thread Sanitizer, in `/tmp/pi-remote-stats-root-final.log` and `/tmp/pi-remote-stats-tsan-final.log`. All 25 product simulator tests pass again with the Tailscale provider fixture in `/tmp/pi-remote-stats-product.log` and `/tmp/pi-remote-stats-product-summary.json`. The current shared suite has 21 passing tests. Seven interface tests pass in `/tmp/pi-remote-stats-ui.log` and `/tmp/pi-remote-stats-ui-summary.json`; the focused usage test passes again after the contrast fix and stronger context assertions in `/tmp/pi-remote-stats-ui-final.log`. Unsigned device-SDK compilation passes in `/tmp/pi-remote-stats-device.log`. Mac-model and installed-Pi metadata/provider checks pass in `/tmp/pi-remote-stats-mac.log`, `/tmp/pi-remote-stats-workflow.log` and `/tmp/pi-remote-stats-provider.log`. This is not a full Pi compatibility claim; see the [current review](native-compatibility.md).
 
+## Clean setup controls
+
+The README control sequence has local model/transport and simulator evidence. It does not claim signed product installation or hardware authentication.
+
+`testCleanConnectionSetupUsesModelApprovalPersistenceAndRevocation` starts the production Mac model with a new private support directory, isolated preferences and memory test secrets. It invokes the same Start listener, Pair a device, Allow, Stop listener, Start listener and Revoke methods as the native controls. The pairing code names the selected loopback address and product port 7443. A request remains unapproved until the model's Allow action. Device metadata survives a fresh registry read; listener restart retains authentication, and revocation removes persisted access. This test uses a version-only Pi fixture and starts no session. The separate shared-control test exercises actual session actions with a fake RPC child.
+
+Both Mac-model tests pass with zero failures or skips in `/tmp/pi-remote-clean-model-setup.log` and `/tmp/pi-remote-clean-model-setup-summary.json`. Use the Mac scheme test command below with `-parallel-testing-enabled NO`; the clean setup test needs local port 7443 to be free. Do not stop another companion merely to free it.
+
+The product simulator integration uses fresh preferences, a new device identity and private host storage. It pairs through `PhoneModel`, verifies saved metadata reloading, navigates nested Mac directories, starts installed Pi in the selected folder and sends the coding task. The latest 25-test provider-fixture suite passes without skips in `/tmp/pi-remote-stats-product.log` and `/tmp/pi-remote-stats-product-summary.json`. Earlier full runs pass on both LAN and Tailscale. Local authentication is injected and credentials stay in memory for this fixture; separate policy tests verify fail-closed protection. Camera capture and real Keychain/biometric integration are not established by this setup check.
+
+Pi 1.3.0 is the tested development runtime. A status-only auth command with explicit provider/model reports ready. The attempted command without provider/model is invalid; the README therefore uses the verified explicit form. A selected Pi script still needs Node.js on the companion's process search path. No runtime installation, credential copying, global settings change, certificate exception or routing change was used.
+
 ## Mac local and remote controls
 
 The menu-bar status and Mac window use the same `CompanionModel`. Its local requests and authenticated phone requests reach one `HostCoordinator`. A new unhosted macOS test bundle compiles the production model directly, without launching the product app or opening its real support directory. Initializer dependencies supply a private support directory, isolated preferences and memory credentials; production defaults remain unchanged.
@@ -91,7 +103,7 @@ xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
   -maximum-test-execution-time-allowance 90 test
 ```
 
-Xcode reports one passed test, zero failures and zero skips. The unsigned Mac app also builds in this scheme. Evidence is `/tmp/pi-remote-mac-controls.log` and `/tmp/pi-remote-mac-controls-summary.json`. This is model and transport evidence, not an automated menu-bar interaction or signed installation check.
+The initial shared-control run reports one passed test, zero failures and zero skips. The later clean-setup run adds a second passing Mac-model test. The unsigned Mac app also builds in this scheme. Evidence is `/tmp/pi-remote-mac-controls.log` and `/tmp/pi-remote-mac-controls-summary.json`. This is model and transport evidence, not an automated menu-bar interaction or signed installation check.
 
 ## Host failure matrix
 
