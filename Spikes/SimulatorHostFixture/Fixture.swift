@@ -18,14 +18,19 @@ private struct Fixture: Codable {
 }
 private enum FixtureFailure: Error { case usage, deadline, settingsChanged }
 
-/// Test-only host. It accepts pairing only from the simulator test's named device.
+/// Test-only host. Pairing requires the UUID written by the local simulator test.
 /// Explicit invocation permits provider usage and temporary file changes by Pi.
 @main struct SimulatorHostFixture {
     private static func quoted(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
     static func main() async {
         do { try await run() }
-        catch { print("FAIL: simulator host fixture stopped without repeating work."); exit(1) }
+        catch {
+            if let fault = error as? RemoteFault { print("FAIL: simulator host fixture: \(fault).") }
+            else if let failure = error as? FixtureFailure { print("FAIL: simulator host fixture: \(failure).") }
+            else { print("FAIL: simulator host fixture stopped without repeating work.") }
+            exit(1)
+        }
     }
 
     private static func run() async throws {
@@ -81,7 +86,8 @@ private enum FixtureFailure: Error { case usage, deadline, settingsChanged }
                 for await pending in updates {
                     guard !Task.isCancelled else { return }
                     if let pending {
-                        if pending.device.name == "Simulator integration" { try await server.approve(pending.id) }
+                        let expected = try? PrivateFiles.read(UUID.self, from: root.appendingPathComponent("expected-device.json"))
+                        if pending.device.id == expected { try await server.approve(pending.id) }
                         else { await server.deny(pending.id) }
                     }
                 }

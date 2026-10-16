@@ -3,6 +3,7 @@ import PiRemoteClient
 import PiRemoteCore
 import PiRemoteSecurity
 import XCTest
+@testable import PiRemote
 
 private final class IntegrationSecrets: SecretStore, @unchecked Sendable {
     private let lock = NSLock()
@@ -12,7 +13,7 @@ private final class IntegrationSecrets: SecretStore, @unchecked Sendable {
     func remove(_ account: String) throws { _ = lock.withLock { values.removeValue(forKey: account) } }
 }
 
-final class LocalHostIntegrationTests: XCTestCase {
+@MainActor final class LocalHostIntegrationTests: XCTestCase {
     private struct Fixture: Decodable { var code: PairingCode; var directory: String }
     private let root = URL(fileURLWithPath: "/tmp/pi-remote-simulator-fixture", isDirectory: true)
 
@@ -62,11 +63,31 @@ final class LocalHostIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(fixture.code.expires.timeIntervalSinceNow, 0)
         try mark("pairing")
         let secrets = IntegrationSecrets()
-        let mac = try await RemoteClient.pair(code: fixture.code, device: UUID(), name: "Simulator integration", secrets: secrets)
-        try mark("paired")
         let client = RemoteClient(secrets: secrets)
+        let suite = "PiRemote.Integration." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = PhoneModel(defaults: defaults, connection: client, authenticate: { _ in true })
+        defer { model.lock() }
+        try JSONEncoder().encode(model.device).write(to: root.appendingPathComponent("expected-device.json"), options: .atomic)
+        model.scene(.active)
+        for _ in 0..<200 where model.locked { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(model.locked)
+        model.pairingText = try fixture.code.encoded()
+        model.pair()
+        for _ in 0..<300 where model.pairing || !model.connected { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(model.pairing)
+        XCTAssertTrue(model.connected)
+        XCTAssertNil(model.fault)
+        let mac = try XCTUnwrap(model.saved.first)
+        XCTAssertEqual(model.selectedMac, mac.id)
+        let restoredModel = PhoneModel(defaults: defaults, connection: client, authenticate: { _ in true })
+        XCTAssertEqual(restoredModel.saved, [mac])
+        XCTAssertEqual(restoredModel.selectedMac, mac.id)
+        XCTAssertEqual(restoredModel.device, model.device)
+        XCTAssertTrue(restoredModel.locked)
+        try mark("paired and saved through PhoneModel")
         do {
-            try await client.connect(mac)
             try mark("connected")
             var listing = try await page(client, id: nil)
             try mark("home listed")
@@ -84,13 +105,20 @@ final class LocalHostIntegrationTests: XCTestCase {
             }
             XCTAssertEqual(URL(fileURLWithPath: listing.path).resolvingSymlinksInPath().path, expected)
             try mark("nested directory selected")
-            _ = try await client.request(.createSession(directory: listing.id))
+            _ = try await model.request(.createSession(directory: listing.id))
             let created = try await state(client)
+            for _ in 0..<200 where model.state?.selected != created.selected { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertEqual(model.state?.selected, created.selected)
             let session = try XCTUnwrap(created.selected)
             XCTAssertEqual(created.sessions.first(where: { $0.id == session })?.directory, expected)
             let prompt = "Create a file named result.swift in the current directory containing exactly: let simulatorResult = 42 followed by a newline. Use the write tool. Then reply DONE."
-            _ = try await client.request(.prompt(text: prompt, delivery: .prompt, image: nil))
-            try mark("coding task accepted")
+            model.text = prompt
+            model.send(context: created.context)
+            for _ in 0..<300 where model.sending { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertFalse(model.sending)
+            XCTAssertEqual(model.text, "")
+            XCTAssertNil(model.fault)
+            try mark("coding task accepted through PhoneModel")
             let running = try await state(client)
             XCTAssertTrue(running.working)
             await client.disconnect()
