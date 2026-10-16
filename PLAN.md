@@ -264,7 +264,6 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
 - Both native apps and the production authenticated host now exist. The older diagnostic remains separate and cannot start Pi or read Mac files. Passing diagnostic device tests do not satisfy product-app acceptance checks.
 - The native controls still need real-Pi comparisons for model changes, compaction, branching, attachments and extension workflows. Full history navigation, thinking display and Markdown support remain incomplete; no reduced scope has been accepted.
-- GitHub CLI authentication returns HTTP 401. Branch push uses SSH, but PR creation requires restored GitHub API authentication.
 - `AGENTS.md` still says that no app build/test configuration exists. `project.yml` now provides it; the instruction file needs a separate reviewed maintenance change.
 
 ## Risks and Recovery

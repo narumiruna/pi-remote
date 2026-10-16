@@ -102,4 +102,4 @@ The host tests exercise a controlled fake Pi. They verify local approval, certif
 - The off-site phone Tailscale test remains open. A Mac-side connection alone does not satisfy it.
 - Pi's terminal-only extension UI has no equivalent transport in the inspected RPC interface. Accounts, btw, usage, progress and sync need further integration work. No feature deferral has been accepted. See `docs/verification.md` for the installed-package inventory.
 - Physical UI review, VoiceOver, keyboard/dictation, large-text reachability, protected-folder/TCC cases, missing provider credentials, Mac sleep/wake and real-Pi product-app recovery remain open. A render test does not satisfy these gates.
-- GitHub CLI authentication returns HTTP 401. SSH Git access does not authorize pull-request creation. Delivery must not claim that a PR exists until GitHub confirms it.
+- The first pull-request creation attempt failed with HTTP 401. The user restored GitHub CLI authentication; `gh auth status` now passes. SSH Git access alone did not authorize pull-request creation.
