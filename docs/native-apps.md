@@ -1,0 +1,105 @@
+# Native app implementation and verification
+
+## Status
+
+The repository now contains SwiftUI iOS and macOS apps and an authenticated Mac host. This is a development implementation, not a supported release. `PLAN.md` remains open. The physical transport spike is not evidence that the product apps pass a physical-device coding task.
+
+Verified on macOS 26.6.2 with Xcode 26.6 and the iOS/macOS 26.5 SDKs:
+
+- The macOS app and iOS app build without signing, including the physical iOS SDK build.
+- All 42 root package tests pass, including production TLS pairing and fake-Pi integration tests.
+- All 11 shared package tests pass.
+- All 42 root tests pass with Thread Sanitizer.
+- Three iOS app tests pass on the iPhone 17 Pro simulator, iOS 26.5. They check launch/background protection, denied secret access without an unlock context, and conversation rendering in light/dark appearance with large text. Rendering success does not prove layout quality or accessibility.
+
+See the commands below for repeatable checks. Physical product-app signing, Face ID/passcode behavior, folder permissions, accessibility, and off-site Tailscale operation remain unverified. The provisional deployment floors are iOS 18 and macOS 15; these are build settings, not tested support claims.
+
+## Source ownership
+
+| Path | Responsibility |
+| --- | --- |
+| `Apps/iOS/` | Local authentication, privacy cover, saved Macs, attachments, connection and draft state |
+| `Apps/macOS/` | Menu-bar controls, local pairing approval, listener settings, local session controls |
+| `Apps/Shared/` | Conversation, folder picker, native session controls and dialogs |
+| `Packages/PiRemoteCore/` | Versioned messages, bounded transcript state, replay and request journal |
+| `Packages/PiRPC/` | Local JSONL subprocess transport, promoted from the RPC spike |
+| `Packages/PiRemoteHost/` | Directory capabilities, sessions, Pi supervision, TLS server and pairing authority |
+| `Packages/PiRemoteClient/` | Pairing, authenticated connection, state recovery and request correlation |
+| `Packages/PiRemoteConnection/` | Certificate-pinned URLSession WebSocket |
+| `Packages/PiRemoteSecurity/` | Keychain storage and private metadata files |
+| `project.yml` | XcodeGen source for both apps and the iOS app test target |
+
+The generated `PiRemote.xcodeproj` is ignored. No TypeScript backend, terminal, hosted service, or release workflow was added.
+
+## Implemented behavior
+
+- The authenticated folder picker starts at the Mac home directory and can navigate to `/`. It has no approved-root list. Listings use opaque IDs, 100-entry pages, and canonical filesystem identities. Selection is checked again before launch. Inaccessible entries and broken links are reported. File previews are separate from folder selection.
+- The companion owns one Pi RPC process. Sessions use private storage under `~/Library/Application Support/PiRemote/`, not the user's terminal session directory. A process lock prevents two companions from writing the catalog. Resume checks the saved directory identity, session path, session header ID, and header working directory. Missing populated sessions fail instead of starting an empty replacement.
+- Local and remote controls use the same coordinator. Incompatible actions return a conflict or busy error. Stop clears queues, cancels pending dialogs, aborts work, and checks Pi's idle state. It cannot undo file changes.
+- The native controls include prompts, steering, follow-up, models, thinking levels, rename, compaction, command discovery, history, fork, clone, image input, text-file input, text previews and working-tree diff. These controls have not all passed a real-Pi product-app comparison.
+- Final messages replace deltas. Only `agent_settled` indicates completion of automatic work. Tool output is expandable. The display retains 100 messages and 256 KiB of UTF-8 text, with 16 KiB per message. Pi keeps the full managed session on the Mac.
+- Published state events are authoritative display snapshots with an epoch and sequence. Replay keeps a contiguous suffix of at most 32 events and 2 MiB. A stale cursor or changed epoch requires a fresh snapshot. Registration of a state observer and its initial snapshot occur in the same actor operation. Slow clients retain only the latest pending state; they do not block Pi stdout.
+- The request journal saves a payload fingerprint and unknown outcome before dispatch. It does not store prompt text. Duplicate accepted requests do not run again. A previous host epoch is rejected. Neither client nor host automatically retries an uncertain mutation.
+- Phone drafts are stored per Mac and session. Mac drafts are held per session during the app lifetime. A send is bound to the session shown when the user submits it. An extension prefill does not overwrite a nonempty draft; it currently reports a conflict.
+- Disconnecting or locking the phone does not stop accepted Mac-side work. Returning to the foreground requires local authentication before reconnection. Companion exit stops its owned child. Interrupted sessions require review; no prompt is resumed automatically.
+
+## Security
+
+Pairing uses a two-minute high-entropy code copied from the Mac. The phone pins the certificate in that code before sending the pairing grant. The Mac user must approve the displayed device ID. Codes permit at most five attempts, and the host accepts at most 16 paired devices. A code is sensitive: do not put it in logs or share it through an untrusted channel.
+
+Connections require a fresh nonce and a per-device HMAC proof. The host rejects unauthenticated browsing and commands. Revocation closes active authorization leases before deleting credentials. If persistence fails, the listener stops and the UI reports an error; do not treat a failed revocation as durable success.
+
+TLS checks both the exact approved leaf certificate and its hostname and validity. There are no broad ATS exceptions or trust-all callbacks. The listener binds one selected loopback, private IPv4, or Tailscale IPv4 address, normally on port 7443. IPv6, public listeners and router port forwarding are not implemented.
+
+The server identity and device secrets use Keychain. The phone uses `WhenPasscodeSetThisDeviceOnly` with `userPresence` and an authenticated `LAContext`; it has no unauthenticated fallback. The app covers inactive content and invalidates the context on background entry. Hardware denial, device-lock and passcode-removal behavior still need physical tests. Saved public connection metadata and drafts use the phone's app storage, not the credential Keychain.
+
+A paired phone has Pi control with the Mac user's permissions. Folder selection is not a tools sandbox. The companion does not bypass macOS permissions and does not expose arbitrary RPC forwarding or a shell endpoint. Provider credentials remain on the Mac. Routine diagnostics do not record prompts, tool output, pairing codes or secrets.
+
+## Resource and recovery limits
+
+- App frames are limited to 4 MiB; Pi JSONL records are limited to 8 MiB. Oversized live state falls back to a bounded error snapshot that retains Stop. A Pi record beyond the adapter limit interrupts the process; large-history recovery still needs validation.
+- There are at most eight in-flight requests per connection, 16 queued replies, 16 connections, eight folder cursors, and 4,096 registered path IDs. Cursors expire after 60 seconds. Browse again if an ID expires or a folder moves.
+- Text prompts are limited to 256 KiB. One image is limited to 2 MiB. The phone downsizes selected photos. Text previews and diffs are limited to 256 KiB; history shows at most 1,000 entries with 512-byte summaries. Full Markdown, full thinking output and full history navigation are not implemented.
+- Dialogs are retained on the Mac during a disconnection. Expired answers are rejected. Oversized dialogs offer cancellation only; truncated choices are never approved. Up to eight dialogs can remain pending.
+- The request journal accepts at most 10,000 mutations in one host epoch. It fails closed at capacity instead of discarding deduplication records. Restart creates a new epoch; old requests remain invalid.
+- Network requests time out after 150 seconds. A longer operation, such as compaction, can continue on the Mac with an unknown client outcome. Inspect the session before retrying.
+- Utility processes have a 15-second deadline and bounded output. Cancellation also bounds reads when descendants retain pipe descriptors. Pi shutdown uses an orderly attempt followed by termination and a kill deadline.
+- A certificate is valid for 365 days and includes addresses available when it was generated. After expiry or an address change, use **Replace connection identity** on the Mac. This stops the listener and revokes devices without stopping Pi or deleting sessions. Start the listener again and pair each phone with a new code. The recovery UI is compiled, but not physically tested.
+- To change from LAN to Tailscale, stop the listener, select the Mac's Tailscale address, and start it again. Edit the saved phone URL while retaining the certificate pin. The certificate must cover that address. This path still needs an off-site phone test.
+- A sleeping Mac is unavailable. There is no remote wake, login item, continuous phone background connection, public account service or TestFlight release.
+
+## Automated checks
+
+Run from the repository root. XcodeGen 2.46.0 generated the tested project. The `DEVELOPER_DIR` override leaves the global Command Line Tools selection unchanged.
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcodegen generate --spec project.yml
+swift test
+swift test --package-path Packages/PiRemoteCore
+swift test --sanitize=thread --scratch-path /tmp/pi-remote-native-tsan
+xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/pi-remote-apps-mac CODE_SIGNING_ALLOWED=NO build
+xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemote \
+  -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath /tmp/pi-remote-apps-ios CODE_SIGNING_ALLOWED=NO build
+xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemote \
+  -destination 'platform=iOS Simulator,id=6622EB8D-23E3-4E92-9262-21CF896CD300' \
+  -derivedDataPath /tmp/pi-remote-apps-ios CODE_SIGNING_ALLOWED=NO test
+```
+
+The simulator ID is local to this Mac. Use `xcrun simctl list devices available` to select an available simulator elsewhere. These commands do not install a signed personal build on an iPhone. An additional unsigned device-SDK build passed with destination `generic/platform=iOS` and derived-data path `/tmp/pi-remote-native-device`.
+
+The host tests exercise a controlled fake Pi. They verify local approval, certificate and hostname rejection, unauthenticated access rejection, authenticated control, a dialog while its command remains pending, active-run reconnection without duplicate dispatch, Stop, revocation, stale IDs, folder replacement/removal, symbolic links, permission denial, bounded output, unknown outcomes, replay fallback, session restoration, changed session headers, expired/oversized dialogs and bounded utility cancellation. The fake Pi does not prove real-provider behavior or complete saved-history restoration.
+
+## Failure record and remaining gates
+
+- The first native identity test used an EC PKCS#12 identity. The macOS Security importer raised an exception while importing it. The implementation now generates RSA-2048 identities; the production TLS integration test passes with this identity.
+- An incremental SwiftPM build did not discover a new source file. A clean package build discovered it and passed the tests.
+- The second iOS test run failed before launch with simulator `Busy` preflight errors. After simulator boot completed, the retry passed all three tests with no skips. Local result bundles are `/tmp/pi-remote-phone-tests-1`, `/tmp/pi-remote-phone-tests-2` and `/tmp/pi-remote-phone-tests-3`. The final source revision also passes all three tests in `/tmp/pi-remote-phone-tests-reviewed`, with zero failures and zero skips. These bundles are temporary, not committed artifacts.
+- Background signing remains blocked by Keychain access. The older signed diagnostic app is not a signed build of these product apps.
+- The off-site phone Tailscale test remains open. A Mac-side connection alone does not satisfy it.
+- Pi's terminal-only extension UI has no equivalent transport in the inspected RPC interface. Accounts, btw, usage, progress and sync need further integration work. No feature deferral has been accepted. See `docs/verification.md` for the installed-package inventory.
+- Physical UI review, VoiceOver, keyboard/dictation, large-text reachability, protected-folder/TCC cases, missing provider credentials, Mac sleep/wake and real-Pi product-app recovery remain open. A render test does not satisfy these gates.
+- The first pull-request creation attempt failed with HTTP 401. The user restored GitHub CLI authentication; `gh auth status` now passes. SSH Git access alone did not authorize pull-request creation.

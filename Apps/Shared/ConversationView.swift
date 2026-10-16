@@ -1,0 +1,154 @@
+import PiRemoteCore
+import SwiftUI
+
+struct ConversationView<Extras: View>: View {
+    let state: HostSnapshot
+    @Binding var text: String
+    @Binding var delivery: Delivery
+    var sending: Bool
+    var send: () -> Void
+    var stop: () -> Void
+    @ViewBuilder var extras: () -> Extras
+    @State private var atBottom = true
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        if state.messages.isEmpty {
+                            ContentUnavailableView("Ready for a task", systemImage: "bubble.left.and.text.bubble.right",
+                                                   description: Text("Choose a folder and start a session, then send an instruction."))
+                                .frame(maxWidth: .infinity)
+                        }
+                        if state.hasOlderMessages {
+                            Text("Earlier messages are saved on the Mac. Open History to inspect them.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        ForEach(state.messages) { message in
+                            if message.role == "tool" {
+                                DisclosureGroup {
+                                    Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                                    if message.truncated { Text("Output truncated at the display limit.").font(.caption).foregroundStyle(.secondary) }
+                                } label: {
+                                    Label(DisplayLimit.text(message.text.components(separatedBy: "\n").first ?? "Tool", bytes: 128),
+                                          systemImage: message.isError ? "exclamationmark.triangle" : "wrench.and.screwdriver")
+                                        .font(.subheadline).foregroundStyle(message.isError ? .red : .secondary)
+                                }
+                            } else {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(message.role == "user" ? "You" : "Pi")
+                                        .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                                    MarkdownContent(text: message.text)
+                                    if message.truncated { Text("Display truncated; inspect History or the source file.").font(.caption).foregroundStyle(.secondary) }
+                                    if message.isError { Label("Pi reported an error", systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.caption) }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        Color.clear.frame(height: 1).id("latest")
+                    }
+                    .padding(20)
+                }
+                .onScrollGeometryChange(for: Bool.self) { geometry in
+                    geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
+                } action: { _, value in atBottom = value }
+                .onChange(of: state.sequence) { _, _ in if atBottom { proxy.scrollTo("latest", anchor: .bottom) } }
+                .overlay(alignment: .bottomTrailing) {
+                    if !atBottom {
+                        Button("Latest", systemImage: "arrow.down") { proxy.scrollTo("latest", anchor: .bottom) }
+                            .buttonStyle(.borderedProminent).padding()
+                    }
+                }
+            }
+            if !state.notices.isEmpty {
+                DisclosureGroup("Extension status") {
+                    ForEach(Array(state.notices.enumerated()), id: \.offset) { _, line in
+                        Text(line).font(.caption).textSelection(.enabled)
+                    }
+                }.font(.caption).padding(.horizontal, 20).padding(.bottom, 8)
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                if state.working {
+                    Picker("Send as", selection: $delivery) {
+                        Text("Steer now").tag(Delivery.steer)
+                        Text("Follow up").tag(Delivery.followUp)
+                    }.pickerStyle(.segmented)
+                }
+                HStack(alignment: .bottom, spacing: 10) {
+                    extras()
+                    TextField("Message Pi", text: $text, axis: .vertical)
+                        .lineLimit(1...6).textFieldStyle(.plain)
+                        .accessibilityLabel("Instruction")
+                    if state.working {
+                        Button("Stop", systemImage: "stop.fill", action: stop)
+                            .labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                            .accessibilityHint("Clear queued instructions and stop current work. File changes are not undone.")
+                    }
+                    Button("Send", systemImage: "arrow.up", action: send)
+                        .labelStyle(.iconOnly).buttonStyle(.borderedProminent)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .disabled(sending || state.selected == nil)
+                        .keyboardShortcut(.return, modifiers: .command)
+                }
+            }
+            .padding(16)
+        }
+        .onChange(of: state.working) { _, working in delivery = working ? .steer : .prompt }
+        .onAppear { delivery = state.working ? .steer : .prompt }
+    }
+}
+
+struct MarkdownContent: View {
+    let text: String
+    private struct Part: Identifiable { let id: Int; let content: String; let code: Bool }
+    private var parts: [Part] {
+        var result: [Part] = [], lines: [String] = [], code = false
+        for line in text.components(separatedBy: "\n") {
+            if line.hasPrefix("```") {
+                if !lines.isEmpty { result.append(Part(id: result.count, content: lines.joined(separator: "\n"), code: code)) }
+                lines = []; code.toggle()
+            } else { lines.append(line) }
+        }
+        if !lines.isEmpty { result.append(Part(id: result.count, content: lines.joined(separator: "\n"), code: code)) }
+        return result
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(parts) { part in
+                if part.code {
+                    ScrollView(.horizontal) {
+                        Text(part.content).font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12)
+                    }.background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                } else {
+                    Text((try? AttributedString(markdown: part.content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(part.content))
+                        .textSelection(.enabled)
+                }
+            }
+        }
+    }
+}
+
+extension RemoteFault {
+    var explanation: String {
+        switch self {
+        case .unknownOutcome: "The Mac may have accepted this action. Check the session before sending it again."
+        case .unauthorized: "This device is not authorized. Pair again after checking access on the Mac."
+        case .busy: "Pi is busy, or another control is changing the session. Stop work or wait, then try again."
+        case .permissionDenied: "The Mac companion cannot access this folder. Grant access on the Mac."
+        case .staleDirectory: "This folder or file changed, moved, or became unavailable. Browse again."
+        case .unsupportedFeature: "This feature is not available through the current Pi interface."
+        case .expired: "This pairing window or dialog expired. Request a new one."
+        case .storageFailure: "Protected storage is unavailable. Unlock the device and check Keychain or disk access."
+        case .tooLarge: "The input or output exceeds the app's size limit."
+        case .conflict: "The session changed. Refresh it before trying this action."
+        case .incompatiblePi: "The selected Pi version returned an unsupported interface."
+        case .providerAuthenticationRequired: "Pi cannot authenticate with its provider. Sign in or configure credentials on the Mac, then retry."
+        case .unavailable: "The Mac, Pi process, or connection is unavailable. Check the Mac and reconnect."
+        case .capacity: "The request limit was reached. Wait for pending actions to finish."
+        case .cancelled: "The action was cancelled."
+        default: "The request was rejected. Check the input and connection."
+        }
+    }
+}

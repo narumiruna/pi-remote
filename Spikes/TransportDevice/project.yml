@@ -1,0 +1,50 @@
+name: TransportDeviceSpike
+options:
+  bundleIdPrefix: dev.narumi
+  deploymentTarget:
+    iOS: "18.0"
+packages:
+  PiRemoteCore:
+    path: ../../Packages/PiRemoteCore
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: YES
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  TransportDeviceSpike:
+    type: application
+    platform: iOS
+    sources:
+      - App.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.TransportSpike
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Verify the encrypted connection to your Mac.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+  TransportDeviceTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - DeviceTests.swift
+      - DeviceCredential.swift
+      - ../SecureTransport/PinnedWebSocket.swift
+      - path: ../../.transport-fixture/client.json
+        buildPhase: resources
+    dependencies:
+      - target: TransportDeviceSpike
+      - package: PiRemoteCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.TransportSpikeTests
+schemes:
+  TransportDeviceSpike:
+    build:
+      targets:
+        TransportDeviceSpike: all
+    test:
+      targets:
+        - TransportDeviceTests
+      parallelizeBuild: false
