@@ -6,7 +6,7 @@ Choose a Mac directory from your phone, start a managed session, watch output an
 
 ## Status
 
-**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Eight iOS simulator app tests pass. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
+**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Fourteen iOS simulator app tests pass. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
 
 The product apps have not passed a signed physical-device coding task, off-site Tailscale testing, hardware unlock testing or the full Pi workflow review. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
 

@@ -1,5 +1,5 @@
 import Foundation
-import PiRemoteClient
+@testable import PiRemoteClient
 import PiRemoteConnection
 import PiRemoteCore
 @testable import PiRemoteHost
@@ -176,7 +176,9 @@ done
     try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
     let host = try HostCoordinator(support: support, executable: executable)
     do {
-        let id = try await host.directories.register(project)
+        let alias = root.appendingPathComponent("selected-folder")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: project)
+        let id = try await host.directories.register(alias)
         let device = UUID()
         let initial = await host.state()
         let result = await host.handle(AppRequest(epoch: initial.epoch, session: nil, action: .createSession(directory: id)), device: device)
@@ -286,6 +288,23 @@ done
         let accepted = root.appendingPathComponent("support/pi-sessions/" + restored.selected!.uuidString + "/accepted")
         #expect(try Data(contentsOf: accepted).count == 1)
         _ = try await client.request(.stop)
+        let settled = await host.state()
+        var newest = settled; newest.sequence += 10
+        newest.messages = [TranscriptMessage(role: "assistant", text: "Authoritative fixture")]
+        #expect(await client.apply(newest))
+        var stale = settled; stale.messages = [TranscriptMessage(role: "assistant", text: "Stale fixture")]
+        #expect(await client.apply(stale))
+        let updatesAfterStale = await client.updates()
+        var iterator = updatesAfterStale.makeAsyncIterator()
+        guard case .state(let retained) = await iterator.next() else { throw RemoteFault.invalidRequest }
+        #expect(retained == newest)
+        var wrongEpoch = newest; wrongEpoch.epoch = UUID()
+        #expect(await !client.apply(wrongEpoch))
+        await #expect(throws: RemoteFault.unavailable) { try await client.request(.snapshot) }
+        try await client.connect(mac)
+        var wrongHost = settled; wrongHost.host = UUID()
+        #expect(await !client.apply(wrongHost))
+        await #expect(throws: RemoteFault.unavailable) { try await client.request(.snapshot) }
         try await server.revoke(mac.device)
         await #expect(throws: (any Error).self) { try await client.connect(mac) }
     } catch { await client.disconnect(); await server.stop(); await host.shutdown(); throw error }
@@ -365,8 +384,12 @@ done
     let registry = DirectoryRegistry()
     let id = try await registry.register(root)
     try FileManager.default.createSymbolicLink(at: root.appendingPathComponent("broken"), withDestinationURL: root.appendingPathComponent("missing"))
+    let loop = root.appendingPathComponent("loop")
+    try FileManager.default.createSymbolicLink(at: loop, withDestinationURL: loop)
     let page = try await registry.list(id: id, cursor: nil)
     #expect(page.items.first(where: { $0.name == "broken" })?.fault == .staleDirectory)
+    #expect(page.items.first(where: { $0.name == "loop" })?.fault == .staleDirectory)
+    await #expect(throws: RemoteFault.staleDirectory) { try await registry.register(loop) }
     try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root.path)
     await #expect(throws: RemoteFault.permissionDenied) { try await registry.list(id: id, cursor: nil) }
 }
@@ -401,6 +424,124 @@ done
     let result = await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: id)), device: UUID())
     #expect(result == .failure(.staleDirectory))
     #expect(await host.state().sessions.isEmpty)
+    await host.shutdown()
+}
+
+@Test(arguments: ["unknown", "file", "removed", "replaced", "unreadable", "unsearchable"])
+func rejectedDirectorySelectionNeverLaunchesPi(reason: String) async throws {
+    let root = try temporaryDirectory()
+    let project = root.appendingPathComponent("project")
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: project.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let executable = root.appendingPathComponent("must-not-start")
+    let marker = root.appendingPathComponent("launched")
+    try "#!/bin/sh\n/usr/bin/touch '\(marker.path)'\nexit 1\n".write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: executable)
+    do {
+        var id = try await host.directories.register(project)
+        var fault = RemoteFault.staleDirectory
+        switch reason {
+        case "unknown": id = UUID()
+        case "file":
+            let file = root.appendingPathComponent("file")
+            try Data().write(to: file); id = try await host.directories.register(file)
+        case "removed": try FileManager.default.removeItem(at: project)
+        case "replaced":
+            try FileManager.default.moveItem(at: project, to: root.appendingPathComponent("original"))
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+        default:
+            try FileManager.default.setAttributes([.posixPermissions: reason == "unreadable" ? 0o100 : 0o400], ofItemAtPath: project.path)
+            fault = .permissionDenied
+        }
+        let result = await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: id)), device: UUID())
+        #expect(result == .failure(fault))
+        #expect(await host.state().sessions.isEmpty)
+        #expect(await host.state().selected == nil)
+        #expect(!FileManager.default.fileExists(atPath: marker.path))
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
+@Test func directoryRequestsCannotCarryTraversalPaths() throws {
+    let id = UUID()
+    for action in [SessionAction.createSession(directory: id), .directories(id: id, cursor: nil)] {
+        let request = AppRequest(epoch: UUID(), session: nil, action: action)
+        let encoded = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+        let malformed = encoded.replacingOccurrences(of: id.uuidString, with: "../../outside")
+        #expect(encoded != malformed)
+        #expect(throws: (any Error).self) { try JSONDecoder().decode(AppRequest.self, from: Data(malformed.utf8)) }
+    }
+}
+
+@Test(.timeLimit(.minutes(1))) func lostDirectoryPermissionsRejectResumeBeforeProcessReplacement() async throws {
+    let root = try temporaryDirectory()
+    let project = root.appendingPathComponent("project")
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: project.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    let executable = try fakePi(at: root)
+    let marker = root.appendingPathComponent("launches")
+    let script = try String(contentsOf: executable, encoding: .utf8)
+    try script.replacingOccurrences(of: "folder=''; session=''", with: "printf x >> '\(marker.path)'\nfolder=''; session=''")
+        .write(to: executable, atomically: true, encoding: .utf8)
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: executable)
+    do {
+        let id = try await host.directories.register(project)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: id)), device: UUID()) == .ok)
+        let state = await host.state()
+        let session = try #require(state.selected)
+        try FileManager.default.setAttributes([.posixPermissions: 0o100], ofItemAtPath: project.path)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .resumeSession(id: session)), device: UUID()) == .failure(.permissionDenied))
+        #expect(try Data(contentsOf: marker).count == 1)
+        #expect(await host.state().selected == session)
+        #expect(await host.state().phase == "idle")
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["shutdown", "version"])
+func directoryReplacementDuringActivationCannotStartRPC(phase: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root)
+    let marker = root.appendingPathComponent("activation-paused")
+    let gate = root.appendingPathComponent("delay-activation")
+    let launches = root.appendingPathComponent("rpc-launches")
+    let pause = "if [ -e '\(gate.path)' ]; then /usr/bin/touch '\(marker.path)'; /bin/sleep 0.3; fi"
+    var script = try String(contentsOf: executable, encoding: .utf8)
+    script = script.replacingOccurrences(of: "folder=''; session=''", with: "printf x >> '\(launches.path)'\nfolder=''; session=''")
+    if phase == "shutdown" { script += "\n" + pause + "\n" }
+    else { script = script.replacingOccurrences(of: "then printf '1.3.0", with: "then \(pause); printf '1.3.0") }
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    let target = root.appendingPathComponent("next-project")
+    try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: executable)
+    do {
+        let first = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: first)), device: UUID()) == .ok)
+        let next = try await host.directories.register(target)
+        try Data().write(to: gate)
+        let activation = Task {
+            await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: next)), device: UUID())
+        }
+        for _ in 0..<200 {
+            if FileManager.default.fileExists(atPath: marker.path) { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        await #expect(throws: RemoteFault.busy) { try await host.setExecutable(root.appendingPathComponent("different-pi")) }
+        try FileManager.default.moveItem(at: target, to: root.appendingPathComponent("moved-project"))
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        #expect(await activation.value == .failure(.staleDirectory))
+        #expect(try Data(contentsOf: launches).count == 1)
+        #expect(await host.state().phase == "unavailable")
+    } catch { await host.shutdown(); throw error }
     await host.shutdown()
 }
 

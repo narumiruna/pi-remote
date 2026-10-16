@@ -229,10 +229,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ### 3. Build the Mac host
 
 - [ ] Implement Pi selection, directory listing and validation, and companion-owned session storage; prove the selected working directory is used for creation and resumption without changing unrelated Pi sessions.
-  - Verified: private-catalog tests cover creation, restart, header IDs and directory aliases; the installed-Pi native check passes launch and idle restoration in the selected directory without changing global settings. Physical product setup and nonempty real-host restoration remain open.
-- [ ] Test directory-access enforcement with unauthenticated requests, stale IDs, inaccessible folders, symbolic links, traversal attempts, and a folder removed between selection and launch; prove rejected requests do not start Pi.
+  - Verified: private-catalog tests cover creation, restart, header IDs and directory aliases. Installed-Pi checks pass creation, idle restoration and nonempty provider-history restoration after coordinator restart in the selected directory, without changing agent settings. Physical product setup remains open.
+- [x] Test directory-access enforcement with unauthenticated requests, stale IDs, inaccessible folders, symbolic links, traversal attempts, and a folder removed between selection and launch; production TLS and filesystem tests pass. Rejected creation requests start no process or session; lost read/search permissions reject resume before replacing Pi. Protected-folder/TCC device acceptance remains in step 1; see [directory evidence](docs/workflow-verification.md#directory-browsing-and-launch-protection).
 - [x] Implement pairing, credential storage, authentication, and revocation; production TLS integration tests pass local approval, certificate/hostname rejection, unauthenticated request rejection and revoked reconnection rejection. Registry tests verify persistent credentials and fail-closed secret-deletion failure. Physical product Keychain checks remain open.
-- [ ] Implement prompt, steering, follow-up, Stop, model selection, and thinking-level controls; validate their state transitions against the installed Pi.
+- [x] Implement prompt, steering, follow-up, Stop, model selection, and thinking-level controls; Pi 1.3.0 passes isolated model/thinking changes and the native-provider exercise passes live text, steering/follow-up delivery and active Stop with queued instructions. These are host checks, not physical product acceptance; see [provider evidence](docs/workflow-verification.md#native-provider-check).
 - [x] Implement snapshot synchronization, event replay, request deduplication, and bounded buffers; tests pass active-run reconnection with identical final messages and one dispatch, contiguous state replay, expired-cursor/epoch fallback, unknown outcomes and UTF-8 output limits. Physical network transitions remain open.
 - [ ] Implement menu-bar status and local session controls; prove local and remote actions share the same serialized session state.
 
@@ -240,6 +240,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 - [ ] Create and review a small SwiftUI interface prototype covering directory selection, an idle conversation, streaming with tool output, Stop, session controls, and reconnection; confirm the primary screen remains limited to the header, transcript, and composer.
 - [ ] Implement pairing, saved Mac connections, the Mac directory picker, and session selection; on a physical iPhone, navigate into and out of nested folders and start Pi in a selected directory without registering that project separately on the Mac.
+  - Verified: six new simulator tests cover bounded picker pages, cached back/forward navigation, stale/cancelled requests, stale previews and retry after denied navigation. Fourteen iOS tests pass. The physical acceptance check remains open.
 - [ ] Implement the native commands and session controls accepted by the compatibility review; verify their results against the same workflows in the installed Pi terminal interface and report unsupported features explicitly.
 - [x] Implement a streamed transcript with Markdown, code blocks, expandable tool output, and clear run states; shared tests pass authoritative text/thinking reconstruction, error visibility, retry, compaction and cancellation settlement. Hosted UIKit fixtures cover idle, working, retrying, compacting and interrupted states. This is not physical-device acceptance; see [workflow evidence](docs/workflow-verification.md).
 - [ ] Implement the composer, steering/follow-up choice, Stop, model controls, and supported extension dialogs; verify actions against the Mac host, including expired dialogs.
@@ -250,7 +251,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### 5. Validate and prepare the first release
 
-- [ ] Add automated protocol and integration tests with a fake Pi process; cover rejected commands, unknown outcomes, stale events, invalid credentials, large output, and connection loss during an active run.
+- [x] Add automated protocol and integration tests with a fake Pi process; 51 root tests and 18 shared-package tests pass. Coverage includes rejected commands, unknown outcomes, directly injected stale/wrong-identity client states, epoch/cursor fallback, invalid credentials, bounded output and active-run TLS reconnection without duplicate dispatch. All 51 root tests also pass with Thread Sanitizer. Real-device acceptance remains separate.
 - [ ] Run a real-device test from local pairing through a coding task, phone disconnection, reconnection, Stop, and session restoration; record the result and remaining defects.
 - [ ] Test Mac sleep/wake, lost project access, missing model credentials, and Pi crashes; verify actionable errors and no automatic re-execution of interrupted work.
 - [ ] Install personal signed builds on the iPhone 16 Pro and the current Mac; verify launch, permissions, local connection, and Tailscale access without claiming TestFlight or public distribution is ready.
@@ -265,7 +266,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - Mac Tailscale is running, but the iPhone peer is offline; off-site access still needs an active iPhone Tailscale connection from a different network.
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
 - Both native apps and the production authenticated host now exist. The older diagnostic remains separate and cannot start Pi or read Mac files. Passing diagnostic device tests do not satisfy product-app acceptance checks.
-- The installed Pi now passes isolated native-host model/thinking changes, input/editor dialogs, prefill, idle Stop, directory launch and idle restoration checks without an inference prompt. Active-run controls, real compaction, branching, provider attachments and the normal installed extension set still need comparisons.
+- Installed Pi 1.3.0 passes isolated native-host model/thinking changes, input/editor dialogs, prefill and directory launch without inference. The explicit provider exercise also passes live text, steering/follow-up delivery, active Stop, fork/clone, synthetic image input and nonempty restoration after coordinator restart. Real compaction, normal installed extensions and physical product paths remain open.
 - Paged history inspection, bounded thinking display and native Markdown blocks are implemented. In-place tree navigation, terminal-only custom renderers and full image output remain gaps; no reduced scope has been accepted.
 - `AGENTS.md` still says that no app build/test configuration exists. `project.yml` now provides it; the instruction file needs a separate reviewed maintenance change.
 

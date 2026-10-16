@@ -6,10 +6,11 @@ struct DirectoryBrowser: View {
     var request: (SessionAction) async throws -> AppResult
     var selected: (UUID) async throws -> Void
     @State private var directory: UUID?
-    @State private var page: DirectoryPage?
+    @State private var browser = DirectoryBrowserModel()
     @State private var error: String?
-    @State private var loading = false
-    @State private var preview: FilePreview?
+    @State private var selectingSession = false
+    private var page: DirectoryPage? { browser.page }
+    private var loading: Bool { browser.loading || selectingSession }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +22,7 @@ struct DirectoryBrowser: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }.padding(.horizontal)
             }
-            if let error { Text(error).foregroundStyle(.red).padding() }
+            if let error = error ?? browser.fault?.explanation { Text(error).foregroundStyle(.red).padding() }
             List {
                 if loading { ProgressView("Loading folders") }
                 if !loading, let page {
@@ -30,7 +31,12 @@ struct DirectoryBrowser: View {
                         Text("No subfolders on this page.").foregroundStyle(.secondary)
                     }
                 }
-                if error != nil { Button("Retry") { Task { await load(cursor: nil) } }.disabled(loading) }
+                if error != nil || browser.fault != nil {
+                    Button("Retry") { Task { error = nil; await browser.retry(request: request) } }.disabled(loading)
+                }
+                if !browser.previousPages.isEmpty {
+                    Button("Previous page") { browser.previous() }.frame(minHeight: 44).disabled(loading)
+                }
                 ForEach(Array((page?.items ?? []).enumerated()), id: \.offset) { _, item in
                     if let fault = item.fault {
                         VStack(alignment: .leading) {
@@ -41,18 +47,21 @@ struct DirectoryBrowser: View {
                         Button { directory = item.id } label: { Label(item.name, systemImage: "folder") }
                             .frame(minHeight: 44)
                     } else if !selecting {
-                        Button { Task { await open(item.id) } } label: { Label(item.name, systemImage: "doc") }
+                        Button { Task { await browser.openPreview(item.id, request: request) } } label: { Label(item.name, systemImage: "doc") }
                             .frame(minHeight: 44)
                     }
                 }
-                if let next = page?.next { Button("Load more") { Task { await load(cursor: next) } }.disabled(loading) }
+                if page?.next != nil {
+                    Button("Next page") { Task { await browser.next(request: request) } }.frame(minHeight: 44).disabled(loading)
+                }
             }
+            .disabled(loading)
             if selecting {
                 Button("Start Pi Here") {
                     if let id = page?.id {
                         Task {
-                            loading = true
-                            defer { loading = false }
+                            selectingSession = true
+                            defer { selectingSession = false }
                             do { try await selected(id) }
                             catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
                         }
@@ -63,26 +72,10 @@ struct DirectoryBrowser: View {
             }
         }
         .navigationTitle(selecting ? "Choose a Mac folder" : "Mac files")
-        .task(id: directory) { await load(cursor: nil) }
-        .sheet(isPresented: Binding(get: { preview != nil }, set: { if !$0 { preview = nil } })) {
-            if let preview { FilePreviewView(preview: preview) }
+        .task(id: directory) { error = nil; await browser.open(directory, request: request) }
+        .sheet(isPresented: Binding(get: { browser.preview != nil }, set: { if !$0 { browser.preview = nil } })) {
+            if let preview = browser.preview { FilePreviewView(preview: preview) }
         }
-    }
-
-    @MainActor private func load(cursor: UUID?) async {
-        loading = true; error = nil
-        if cursor == nil { page = nil }
-        let intended = directory
-        defer { loading = false }
-        do {
-            guard case .directories(var value) = try await request(.directories(id: directory, cursor: cursor)), intended == directory else { return }
-            if cursor != nil, let old = page { value.items = old.items + value.items }
-            page = value
-        } catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
-    }
-    @MainActor private func open(_ id: UUID) async {
-        do { if case .preview(let value) = try await request(.preview(id: id)) { preview = value } }
-        catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
     }
 }
 

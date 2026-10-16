@@ -165,7 +165,7 @@ public actor RemoteClient {
         }
     }
     @discardableResult
-    private func apply(_ state: HostSnapshot) -> Bool {
+    func apply(_ state: HostSnapshot) -> Bool {
         guard state.host == mac?.id, state.epoch == snapshot?.epoch else {
             disconnect(fault: .unknownOutcome)
             return false
