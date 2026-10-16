@@ -25,6 +25,7 @@ actor FixtureConnection: PhoneConnection {
         state.sessions = [SessionInfo(id: session, title: "Fixture session", directory: "/Users/fixture/project")]
         state.phase = phase == "working" || phase == "streaming" ? "working" : "idle"
         state.piVersion = "UI fixture"
+        state.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
         state.models = [ModelOption(provider: "fixture", model: "one", name: "Fixture One"), ModelOption(provider: "fixture", model: "two", name: "Fixture Two")]
         state.model = state.models[0].id
         state.thinkingLevels = ["off", "low", "high"]; state.thinking = "low"
@@ -83,6 +84,20 @@ actor FixtureConnection: PhoneConnection {
         defer { if action.mutates { publish() } }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .lastAssistant: return .preview(FilePreview(name: "Last assistant text", text: "Native copy fixture", truncated: false))
+        case .runtimeSettings:
+            guard let runtime = snapshot.runtime else { throw RemoteFault.unavailable }
+            return .runtimeSettings(runtime)
+        case .queueMode(let kind, let mode):
+            guard !snapshot.working, var runtime = snapshot.runtime else { throw RemoteFault.busy }
+            if kind == .steering { runtime.steeringMode = mode } else { runtime.followUpMode = mode }
+            snapshot.runtime = runtime
+        case .autoCompaction(let enabled):
+            guard !snapshot.working, var runtime = snapshot.runtime else { throw RemoteFault.busy }
+            runtime.autoCompactionEnabled = enabled; snapshot.runtime = runtime
+        case .closeSession:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            snapshot.selected = nil; snapshot.messages = []; snapshot.runtime = nil
         case .outputImage(let id):
             guard id == Self.imageID else { throw RemoteFault.expired }
             guard let context = CGContext(data: nil, width: 32, height: 32, bitsPerComponent: 8, bytesPerRow: 128,
@@ -114,7 +129,10 @@ actor FixtureConnection: PhoneConnection {
             let path = directory == nested ? "/Users/fixture/project/nested" : "/Users/fixture/project"
             let session = SessionInfo(id: UUID(), title: "New fixture session", directory: path)
             snapshot.sessions.append(session); snapshot.selected = session.id; snapshot.messages = []; snapshot.phase = "idle"
-        case .resumeSession(let id): snapshot.selected = id
+            snapshot.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
+        case .resumeSession(let id):
+            snapshot.selected = id
+            snapshot.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
         case .prompt(let text, _, _):
             snapshot.messages.append(TranscriptMessage(role: "user", text: text)); snapshot.phase = "working"
         case .stop:

@@ -41,7 +41,9 @@ struct SessionListView: View {
 struct SessionControls: View {
     let state: HostSnapshot
     let request: (SessionAction) async throws -> AppResult
+    var closed: () -> Void = {}
     let preview: (FilePreview) -> Void
+    @State private var confirmClose = false
     @State private var name = ""
     @State private var arguments = ""
     @State private var error: String?
@@ -70,11 +72,26 @@ struct SessionControls: View {
                         .frame(minHeight: 44).disabled(state.selected == nil)
                 }
             }
+            if state.capabilities.contains("last-assistant") {
+                Section("Output") {
+                    NavigationLink("Copy last response") { LastAssistantView(request: request) }
+                        .frame(minHeight: 44).disabled(state.selected == nil)
+                }
+            }
+            if state.capabilities.contains("runtime-settings"), state.runtime != nil {
+                Section("Runtime") {
+                    NavigationLink("Pi runtime settings") { RuntimeSettingsView(request: request) }
+                        .frame(minHeight: 44).disabled(state.working || state.selected == nil)
+                }
+            }
             Section("Session") {
                 TextField("Session name", text: $name)
                 Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
                 Button("Compact context") { perform(.compact(instructions: "")) }
                 Button("Clone current branch") { perform(.clone) }
+                if state.capabilities.contains("close-session") {
+                    Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: 44)
+                }
                 Button("Working tree diff") {
                     Task {
                         do { if case .preview(let value) = try await request(.diff) { preview(value) } }
@@ -97,6 +114,15 @@ struct SessionControls: View {
             }.disabled(state.working || state.selected == nil)
         }
         .navigationTitle("Session controls")
+        .alert("Close this Pi session?", isPresented: $confirmClose) {
+            Button("Close Pi session", role: .destructive) {
+                Task {
+                    do { _ = try await request(.closeSession); closed() }
+                    catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This stops the idle Pi process, not the listener. Saved history remains on the Mac. Reopen it from Sessions; no prompt is resent.") }
     }
     private func perform(_ action: SessionAction) {
         Task {

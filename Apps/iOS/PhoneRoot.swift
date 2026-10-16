@@ -167,7 +167,7 @@ struct PhoneRoot: View {
                     DirectoryBrowser(selecting: false, request: request, attach: { preview in
                         try model.attachText(preview, context: state.context); model.panel = nil
                     }) { _ in }
-                case "controls": SessionControls(state: state, request: request) { model.preview = $0; model.panel = "preview" }
+                case "controls": SessionControls(state: state, request: request, closed: { model.panel = "sessions" }) { model.preview = $0; model.panel = "preview" }
                 case "history": HistoryView(request: request, paged: state.capabilities.contains("history-pages")) { model.panel = nil }
                 case "preview": if let value = model.preview { FilePreviewView(preview: value) }
                 case "dialog":

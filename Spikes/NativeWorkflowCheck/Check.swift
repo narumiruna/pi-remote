@@ -3,7 +3,7 @@ import Foundation
 import PiRemoteCore
 import PiRemoteHost
 
-private enum CheckFailure: Error { case assertion(Int), arguments, rejected(RemoteFault) }
+private enum CheckFailure: Error { case assertion(Int), arguments, rejected(RemoteFault, Int) }
 private func require(_ condition: Bool, line: Int = #line) throws { if !condition { throw CheckFailure.assertion(line) } }
 private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
@@ -63,10 +63,10 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
         do {
             let directory = try await host.directories.register(folder)
             let device = UUID()
-            func send(_ action: SessionAction) async throws -> AppResult {
+            func send(_ action: SessionAction, line: Int = #line) async throws -> AppResult {
                 let state = await host.state()
                 let result = await host.handle(AppRequest(epoch: state.epoch, session: state.selected, action: action), device: device)
-                if case .failure(let fault) = result { throw CheckFailure.rejected(fault) }
+                if case .failure(let fault) = result { throw CheckFailure.rejected(fault, line) }
                 return result
             }
             _ = try await send(.createSession(directory: directory))
@@ -76,6 +76,19 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             guard case .statistics(let usage) = try await send(.statistics) else { throw CheckFailure.assertion(#line) }
             try usage.validate()
             try require(usage.userMessages == 0 && usage.tokens.total == 0 && usage.cost == 0)
+            guard case .preview(let emptyText) = try await send(.lastAssistant) else { throw CheckFailure.assertion(#line) }
+            try require(emptyText.text.isEmpty && !emptyText.truncated)
+            guard let originalRuntime = initial.runtime else { throw CheckFailure.assertion(#line) }
+            let steering: QueueMode = originalRuntime.steeringMode == .all ? .oneAtATime : .all
+            let followUp: QueueMode = originalRuntime.followUpMode == .all ? .oneAtATime : .all
+            _ = try await send(.queueMode(kind: .steering, mode: steering))
+            _ = try await send(.queueMode(kind: .followUp, mode: followUp))
+            _ = try await send(.autoCompaction(enabled: !originalRuntime.autoCompactionEnabled))
+            guard case .runtimeSettings(let changed) = try await send(.runtimeSettings) else { throw CheckFailure.assertion(#line) }
+            try require(changed == RuntimeSettings(steeringMode: steering, followUpMode: followUp, autoCompactionEnabled: !originalRuntime.autoCompactionEnabled))
+            _ = try await send(.queueMode(kind: .steering, mode: originalRuntime.steeringMode))
+            _ = try await send(.queueMode(kind: .followUp, mode: originalRuntime.followUpMode))
+            _ = try await send(.autoCompaction(enabled: originalRuntime.autoCompactionEnabled))
             try require(try DirectoryRegistry.identify(URL(fileURLWithPath: String(contentsOf: cwd, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))) == DirectoryRegistry.identify(folder))
             guard let model = initial.models.first(where: { $0.provider == "openai" && $0.model.hasPrefix("gpt-5") }) ?? initial.models.first(where: { $0.provider == "openai" }) else { throw CheckFailure.assertion(#line) }
             _ = try await send(.model(provider: model.provider, id: model.model))
@@ -132,6 +145,13 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             try require(try DirectoryRegistry.identify(URL(fileURLWithPath: String(contentsOf: cwd, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))) == DirectoryRegistry.identify(folder))
             if case .historyPage(let page) = try await send(.historyPage(cursor: nil)) { try require(page.items.isEmpty) }
             else { throw CheckFailure.assertion(#line) }
+            let catalog = await host.state().sessions
+            _ = try await send(.closeSession)
+            let closed = await host.state()
+            try require(closed.selected == nil && closed.messages.isEmpty)
+            try require(await host.state().sessions == catalog)
+            _ = try await send(.resumeSession(id: selected!))
+            try require(await host.state().runtime == originalRuntime)
             await host.shutdown()
             try require((try? Data(contentsOf: globalSettings)) == settingsBefore)
         } catch { await host.shutdown(); throw error }

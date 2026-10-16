@@ -190,6 +190,18 @@ private final class IntegrationSecrets: SecretStore, @unchecked Sendable {
             let unchanged = try await state(client)
             XCTAssertFalse(unchanged.working)
             XCTAssertEqual(unchanged.messages, reviewed.messages)
+            guard case .preview(let lastText) = try await client.request(.lastAssistant) else { throw RemoteFault.invalidRequest }
+            XCTAssertLessThanOrEqual(lastText.text.utf8.count, 256 * 1_024)
+            _ = try await client.request(.closeSession)
+            let closed = try await state(client)
+            XCTAssertNil(closed.selected)
+            XCTAssertEqual(closed.sessions, unchanged.sessions)
+            XCTAssertEqual(closed.sessions.first(where: { $0.id == session })?.interrupted, true)
+            _ = try await client.request(.resumeSession(id: session))
+            let reopened = try await state(client)
+            XCTAssertFalse(reopened.working)
+            XCTAssertEqual(reopened.messages.map(\.text), unchanged.messages.map(\.text))
+            XCTAssertEqual(reopened.messages.map(\.role), unchanged.messages.map(\.role))
             await client.disconnect()
             try Data().write(to: root.appendingPathComponent("stop"))
         } catch {

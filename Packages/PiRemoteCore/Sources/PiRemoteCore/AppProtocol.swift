@@ -33,17 +33,22 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case diff
     case statistics
     case outputImage(id: UUID)
+    case lastAssistant
+    case runtimeSettings
+    case queueMode(kind: QueueKind, mode: QueueMode)
+    case autoCompaction(enabled: Bool)
+    case closeSession
 
     public var mutates: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics, .outputImage: false
+        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings: false
         default: true
         }
     }
 
     public var changesSession: Bool {
         switch self {
-        case .createSession, .resumeSession, .fork, .clone: true
+        case .createSession, .resumeSession, .fork, .clone, .closeSession: true
         default: false
         }
     }
@@ -88,6 +93,7 @@ public enum AppResult: Codable, Sendable, Equatable {
     case historyPage(HistoryPage)
     case statistics(SessionStatistics)
     case image(ImageAttachment)
+    case runtimeSettings(RuntimeSettings)
     case failure(RemoteFault)
 }
 

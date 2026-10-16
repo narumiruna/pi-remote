@@ -20,6 +20,10 @@ struct InterfaceFixtureApp: App {
     var body: some Scene {
         WindowGroup {
             PhoneRoot(model: model)
+                .environment(\.clipboardWriter, { text in
+                    // Verify the fixture payload without changing the system clipboard.
+                    guard text == "Native copy fixture" else { throw RemoteFault.invalidRequest }
+                })
                 .preferredColorScheme(dark ? .dark : .light)
                 .onChange(of: phase, initial: true) { _, phase in model.scene(phase) }
         }

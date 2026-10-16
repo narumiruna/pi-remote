@@ -142,16 +142,23 @@ file="$folder/$session.jsonl"
 printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
 streaming=false
 thinking=off
+steering=one-at-a-time
+followup=one-at-a-time
+compaction=true
 reply() { printf '{"id":"%s","type":"response","command":"%s","success":true,"data":%s}\n' "$id" "$command" "$1"; }
 while IFS= read -r line; do
     id=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
     command=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
     case "$command" in
-        get_state) reply "{\"model\":{\"id\":\"fixture\",\"provider\":\"test\"},\"thinkingLevel\":\"$thinking\",\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"sessionId\":\"$session\",\"sessionFile\":\"$file\"}" ;;
+        get_state) reply "{\"model\":{\"id\":\"fixture\",\"provider\":\"test\"},\"thinkingLevel\":\"$thinking\",\"steeringMode\":\"$steering\",\"followUpMode\":\"$followup\",\"autoCompactionEnabled\":$compaction,\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"sessionId\":\"$session\",\"sessionFile\":\"$file\"}" ;;
         get_available_models) reply '{"models":[{"id":"fixture","provider":"test","name":"Fixture"}]}' ;;
         get_available_thinking_levels) reply '{"levels":["off","low"]}' ;;
         get_commands) reply '{"commands":[{"name":"ask","description":"Fixture dialog","source":"extension"}]}' ;;
         get_messages) reply '{"messages":[]}' ;;
+        get_last_assistant_text) reply '{"text":"Fixture complete"}' ;;
+        set_steering_mode) printf x >> "$folder/runtime-writes"; steering=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
+        set_follow_up_mode) printf x >> "$folder/runtime-writes"; followup=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
+        set_auto_compaction) printf x >> "$folder/runtime-writes"; case "$line" in *'"enabled":true'*) compaction=true ;; *) compaction=false ;; esac; reply '{}' ;;
         get_session_stats) reply '{"userMessages":1,"assistantMessages":1,"toolCalls":0,"toolResults":0,"totalMessages":2,"tokens":{"input":10,"output":20,"cacheRead":0,"cacheWrite":0,"total":30},"cost":0.01,"contextUsage":{"tokens":30,"contextWindow":200000,"percent":0.015},"sessionFile":"private-fixture-path"}' ;;
         get_entries) reply '{"entries":[],"leafId":null}' ;;
         set_thinking_level) thinking=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"level":"\([^"]*\)".*/\1/p'); reply '{}' ;;
@@ -297,6 +304,101 @@ func invalidPiStatisticsFailClosed(payload: String) async throws {
         let current = await host.state().selected
         #expect(await host.handle(AppRequest(epoch: host.epoch, session: current, action: .outputImage(id: reference.id)), device: device) == .failure(.expired))
         #expect(await host.handle(AppRequest(epoch: host.epoch, session: current, action: .historyEntry(id: previewID)), device: device) == .failure(.expired))
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1))) func runtimeSettingsAreSerializedAndClosePreservesTheCatalog() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: fakePi(at: root, hold: true))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let initial = await host.state(), session = try #require(await host.state().selected)
+        #expect(initial.runtime == RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true))
+        let queue = AppRequest(epoch: host.epoch, session: session, action: .queueMode(kind: .steering, mode: .all))
+        #expect(await host.handle(queue, device: device) == .ok)
+        #expect(await host.handle(queue, device: device) == .ok)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .queueMode(kind: .followUp, mode: .all)), device: device) == .ok)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .autoCompaction(enabled: false)), device: device) == .ok)
+        let settings = RuntimeSettings(steeringMode: .all, followUpMode: .all, autoCompactionEnabled: false)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .runtimeSettings), device: device) == .runtimeSettings(settings))
+        let writes = support.appendingPathComponent("pi-sessions/" + session.uuidString + "/runtime-writes")
+        #expect(try Data(contentsOf: writes).count == 3)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .prompt(text: "Hold fixture", delivery: .prompt, image: nil)), device: device) == .ok)
+        for _ in 0..<100 {
+            if await host.state().working { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let close = AppRequest(epoch: host.epoch, session: session, action: .closeSession)
+        #expect(await host.handle(close, device: device) == .failure(.busy))
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .autoCompaction(enabled: true)), device: device) == .failure(.busy))
+        #expect(try Data(contentsOf: writes).count == 3)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .stop), device: device) == .ok)
+        let idleClose = AppRequest(epoch: host.epoch, session: session, action: .closeSession)
+        #expect(await host.handle(idleClose, device: device) == .ok)
+        let closed = await host.state()
+        #expect(closed.selected == nil && closed.phase == "idle" && closed.messages.isEmpty && closed.runtime == nil)
+        #expect(closed.sessions.count == 1 && closed.sessions.first?.id == session)
+        #expect(await host.handle(idleClose, device: device) == .failure(.conflict))
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .resumeSession(id: session)), device: device) == .ok)
+        #expect(await host.state().selected == session)
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["steering", "follow-up", "compaction"])
+func runtimeSettingsRejectUnconfirmedChangesWithoutRedispatch(mode: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root)
+    let command = mode == "steering" ? "set_steering_mode" : mode == "follow-up" ? "set_follow_up_mode" : "set_auto_compaction"
+    let script = try String(contentsOf: executable, encoding: .utf8)
+    let line = try #require(script.components(separatedBy: "\n").first { $0.hasPrefix("        " + command + ")") })
+    let replacement = "        " + command + ") printf x >> \"$folder/runtime-writes\"; reply '{}' ;;"
+    try script.replacingOccurrences(of: line, with: replacement).write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: executable)
+    do {
+        let directory = try await host.directories.register(root), device = UUID()
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let initial = await host.state(), session = try #require(await host.state().selected)
+        let action: SessionAction = mode == "compaction" ? .autoCompaction(enabled: false) : .queueMode(kind: mode == "steering" ? .steering : .followUp, mode: .all)
+        let request = AppRequest(epoch: host.epoch, session: session, action: action)
+        #expect(await host.handle(request, device: device) == .failure(.conflict))
+        #expect(await host.handle(request, device: device) == .failure(.conflict))
+        #expect(await host.state().runtime == initial.runtime)
+        #expect(try Data(contentsOf: support.appendingPathComponent("pi-sessions/" + session.uuidString + "/runtime-writes")).count == 1)
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["none", "omitted", "invalid", "large"])
+func lastAssistantTextHasExplicitEmptyInvalidAndTruncatedResults(mode: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root)
+    let value: JSONValue = mode == "none" ? .null : mode == "invalid" ? .number(4) : .string(String(repeating: "é", count: 140_000))
+    let payload = String(decoding: try JSONEncoder().encode(JSONValue.object(mode == "omitted" ? [:] : ["text": value])), as: UTF8.self)
+    let script = try String(contentsOf: executable, encoding: .utf8).replacingOccurrences(of: "get_last_assistant_text) reply '{\"text\":\"Fixture complete\"}'", with: "get_last_assistant_text) reply '" + payload + "'")
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: executable)
+    do {
+        let directory = try await host.directories.register(root), device = UUID()
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let session = await host.state().selected
+        let result = await host.handle(AppRequest(epoch: host.epoch, session: session, action: .lastAssistant), device: device)
+        if mode == "invalid" { #expect(result == .failure(.incompatiblePi)) }
+        else {
+            guard case .preview(let preview) = result else { throw RemoteFault.invalidRequest }
+            #expect(preview.truncated == (mode == "large"))
+            #expect(preview.text.utf8.count == (mode == "large" ? 256 * 1_024 : 0))
+            #expect(try AppPacket(result).encode().count < 4 * 1_024 * 1_024)
+        }
     } catch { await host.shutdown(); throw error }
     await host.shutdown()
 }
@@ -507,6 +609,12 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         try await client.connect(mac)
         let folder = try await host.directories.register(root)
         _ = try await client.request(.createSession(directory: folder))
+        guard case .runtimeSettings(let initialRuntime) = try await client.request(.runtimeSettings) else { throw RemoteFault.invalidRequest }
+        #expect(initialRuntime.autoCompactionEnabled)
+        _ = try await client.request(.queueMode(kind: .steering, mode: .all))
+        guard case .runtimeSettings(let changedRuntime) = try await client.request(.runtimeSettings) else { throw RemoteFault.invalidRequest }
+        #expect(changedRuntime.steeringMode == .all)
+        #expect(try await client.request(.lastAssistant) == .preview(FilePreview(name: "Last assistant text", text: "Fixture complete", truncated: false)))
         _ = try await client.request(.prompt(text: "Interface fixture", delivery: .prompt, image: nil))
         for _ in 0..<100 {
             if await host.state().messages.contains(where: { $0.images?.isEmpty == false }) { break }

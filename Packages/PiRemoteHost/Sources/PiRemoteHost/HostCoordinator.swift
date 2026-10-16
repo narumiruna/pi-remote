@@ -141,6 +141,46 @@ public actor HostCoordinator {
         switch action {
         case .snapshot: return .snapshot(snapshot)
         case .outputImage(let id): return .image(try outputImages.image(id))
+        case .lastAssistant:
+            let data = try await requireRPC().request("get_last_assistant_text")
+            guard case .object = data else { throw RemoteFault.incompatiblePi }
+            let text: String
+            // Pi 1.3.0 omits undefined text; the reference also permits null.
+            if data["text"] == nil || data["text"] == .null { text = "" }
+            else if let value = data["text"]?.string { text = value }
+            else { throw RemoteFault.incompatiblePi }
+            return .preview(FilePreview(name: "Last assistant text", text: DisplayLimit.text(text, bytes: 256 * 1_024), truncated: text.utf8.count > 256 * 1_024))
+        case .runtimeSettings:
+            let value = try await refreshRuntime()
+            return .runtimeSettings(value)
+        case .queueMode(let kind, let mode):
+            guard !snapshot.working else { throw RemoteFault.busy }
+            try await requireIdle()
+            let command = kind == .steering ? "set_steering_mode" : "set_follow_up_mode"
+            _ = try await requireRPC().request(command, fields: ["mode": .string(mode.rawValue)])
+            let applied = try await refreshRuntime()
+            guard (kind == .steering ? applied.steeringMode : applied.followUpMode) == mode else { throw RemoteFault.conflict }
+        case .autoCompaction(let enabled):
+            guard !snapshot.working else { throw RemoteFault.busy }
+            try await requireIdle()
+            _ = try await requireRPC().request("set_auto_compaction", fields: ["enabled": .bool(enabled)])
+            let applied = try await refreshRuntime()
+            guard applied.autoCompactionEnabled == enabled else { throw RemoteFault.conflict }
+        case .closeSession:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            try await requireIdle()
+            snapshot.phase = "stopping"; publish()
+            generation = UUID(); observer?.cancel(); observer = nil
+            scheduledPublish?.cancel(); scheduledPublish = nil
+            if let child = rpc, !(await child.shutdown()) {
+                snapshot.phase = "unavailable"
+                throw RemoteFault.unavailable
+            }
+            rpc = nil; reducer = TranscriptReducer(); outputImages = OutputImages()
+            snapshot.selected = nil; snapshot.phase = "idle"; snapshot.messages = []; snapshot.dialogs = []
+            snapshot.model = ""; snapshot.thinking = ""; snapshot.models = []; snapshot.thinkingLevels = []; snapshot.commands = []
+            snapshot.runtime = nil; snapshot.draft = nil; snapshot.draftID = nil; snapshot.notices = []; snapshot.hasOlderMessages = false
+            dialogDeadlines = [:]; statuses = [:]; notifications = []
         case .statistics:
             let data = try await requireRPC().request("get_session_stats")
             let statistics: SessionStatistics
@@ -340,7 +380,7 @@ public actor HostCoordinator {
         let activation = generation
         observer?.cancel(); rpc = nil
         snapshot.phase = "starting"; snapshot.selected = id; snapshot.messages = []; snapshot.dialogs = []
-        snapshot.draft = nil; snapshot.draftID = nil; outputImages = OutputImages()
+        snapshot.draft = nil; snapshot.draftID = nil; snapshot.runtime = nil; outputImages = OutputImages()
         dialogDeadlines = [:]; statuses = [:]; notifications = []; publish()
         if let previous, !(await previous.shutdown()) { throw RemoteFault.unavailable }
         guard !closing, generation == activation else { throw RemoteFault.cancelled }
@@ -389,9 +429,22 @@ public actor HostCoordinator {
         return args
     }
 
+    private func decodeRuntime(_ data: JSONValue) throws -> RuntimeSettings {
+        do { return try JSONDecoder().decode(RuntimeSettings.self, from: JSONEncoder().encode(data)) }
+        catch { throw RemoteFault.incompatiblePi }
+    }
+
+    private func refreshRuntime() async throws -> RuntimeSettings {
+        let data = try await requireRPC().request("get_state")
+        let value = try decodeRuntime(data)
+        snapshot.runtime = value
+        return value
+    }
+
     private func refreshConfiguration() async throws {
         let child = try requireRPC()
         let state = try await child.request("get_state")
+        snapshot.runtime = try? decodeRuntime(state)
         let models = try await child.request("get_available_models")
         let levels = try await child.request("get_available_thinking_levels")
         let commands = try await child.request("get_commands")

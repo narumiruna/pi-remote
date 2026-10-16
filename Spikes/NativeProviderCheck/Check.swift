@@ -96,6 +96,8 @@ private func quoted(_ value: String) -> String { "'" + value.replacingOccurrence
             let completed = try await wait(host) { state in
                 state.phase == "idle" && state.messages.contains { $0.role == "assistant" && !$0.text.isEmpty && !$0.streaming }
             }
+            guard case .preview(let lastText) = try await send(.lastAssistant, to: host) else { throw CheckFailure.assertion(#line) }
+            try require(!lastText.text.isEmpty && !lastText.truncated && lastText.text.contains("READY"))
             let firstMessages = completed.messages
             try require(firstMessages.contains { $0.role == "user" })
             guard case .historyPage(let page) = try await send(.historyPage(cursor: nil), to: host),
@@ -195,6 +197,11 @@ private func quoted(_ value: String) -> String { "'" + value.replacingOccurrence
             try require(state.sessions.first { $0.id == saved.session }?.directory == saved.directory)
             try require(!state.messages.isEmpty && sameMessages(state.messages, saved.messages))
             try require(state.sessions.first { $0.id == saved.session }?.interrupted == false)
+            _ = try await send(.closeSession, to: host)
+            let closed = await host.state()
+            try require(closed.selected == nil && closed.sessions == state.sessions && closed.messages.isEmpty)
+            _ = try await send(.resumeSession(id: saved.session), to: host)
+            try require(sameMessages(await host.state().messages, saved.messages))
             await host.shutdown()
         } catch { await host.shutdown(); throw error }
     }

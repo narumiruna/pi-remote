@@ -58,6 +58,7 @@ targets:
       - Tests/MacTests
       - Apps/macOS/CompanionModel.swift
       - Apps/Shared/EditorOffer.swift
+      - Apps/Shared/Clipboard.swift
     dependencies:
       - package: PiRemoteSpikes
         product: PiRemoteHost

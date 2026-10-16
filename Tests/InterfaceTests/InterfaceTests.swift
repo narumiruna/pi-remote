@@ -95,6 +95,65 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(tool.waitForExistence(timeout: 5) && tool.isHittable)
     }
 
+    func testLastResponseCopyAndIdleSessionCloseUseExplicitActions() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let copyLink = app.buttons["Copy last response"]
+        for _ in 0..<8 where !copyLink.isHittable { app.swipeUp() }
+        XCTAssertTrue(copyLink.isHittable); copyLink.tap()
+        XCTAssertTrue(app.navigationBars["Last assistant text"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Native copy fixture"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Copied to this device"].exists)
+        let copy = app.buttons["Copy text"]
+        reachable(copy, app: app); copy.tap()
+        XCTAssertTrue(app.staticTexts["Copied to this device"].waitForExistence(timeout: 5))
+        capture(app, "compact-last-response-copy")
+        reachable(app.buttons["Done"], app: app); app.buttons["Done"].tap()
+        XCTAssertTrue(app.navigationBars["Session controls"].waitForExistence(timeout: 5))
+        let close = app.buttons["Close Pi session"].firstMatch
+        for _ in 0..<8 where !close.isHittable { app.swipeUp() }
+        XCTAssertTrue(close.isHittable); close.tap()
+        XCTAssertTrue(app.staticTexts["Close this Pi session?"].waitForExistence(timeout: 5))
+        let confirm = try XCTUnwrap(app.buttons.matching(identifier: "Close Pi session").allElementsBoundByIndex.first { $0.isHittable })
+        confirm.tap()
+        XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
+        let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Fixture session")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 5)); saved.tap()
+        XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Send"].isEnabled)
+        XCTAssertFalse(app.buttons["Stop"].exists)
+    }
+
+    func testRuntimeSettingsRequireConfirmationAndRefreshTheAppliedValue() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let runtime = app.buttons["Pi runtime settings"]
+        for _ in 0..<8 where !runtime.isHittable { app.swipeUp() }
+        XCTAssertTrue(runtime.isHittable); runtime.tap()
+        XCTAssertTrue(app.navigationBars["Pi runtime settings"].waitForExistence(timeout: 5))
+        let steering = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Steering delivery")).firstMatch
+        XCTAssertTrue(steering.waitForExistence(timeout: 5)); steering.tap()
+        app.buttons["All queued messages"].tap()
+        XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5))
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(steering.label.contains("One at a time"))
+        steering.tap(); app.buttons["All queued messages"].tap()
+        XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5)); app.buttons["Apply"].tap()
+        let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "All queued messages"), object: steering)
+        XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 5), .completed)
+        let compaction = app.switches["Automatic compaction"]
+        for _ in 0..<8 where !compaction.isHittable { app.swipeUp() }
+        XCTAssertEqual(compaction.value as? String, "1")
+        compaction.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5)); app.buttons["Cancel"].tap()
+        XCTAssertEqual(compaction.value as? String, "1")
+        compaction.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5)); app.buttons["Apply"].tap()
+        let disabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '0'"), object: compaction)
+        XCTAssertEqual(XCTWaiter.wait(for: [disabled], timeout: 5), .completed)
+        capture(app, "compact-confirmed-runtime-settings")
+    }
+
     func testMacFileAttachmentAppendsToTheDraftWithoutSending() throws {
         let app = launch(["idle"])
         instruction(app).tap(); instruction(app).typeText("Keep this draft")

@@ -62,15 +62,17 @@ The installed `docs/slash-commands.md` lists built-in commands; `get_commands` i
 | Commands, skills, templates | Discovery and named command dispatch implemented | Actual skill/template expansion and the normal loaded-resource set still need checks. |
 | Dialogs, notifications, text widgets/status | All four supported dialogs and expiry pass | Terminal custom components, terminal input and custom renderers are not transported. |
 | Attachments and files | Image input, original raster-image retrieval/viewing, phone/Mac text-file attachment, file preview and Git diff implemented; [image checks](output-images.md) and [attachment checks](workflow-verification.md#mac-text-file-attachment) pass | Image format/size, first-frame and combined text-budget limits remain explicit. The terminal file-context extension's range-selection/editor workflow is not implemented. |
-| `/settings`, `/scoped-models` | Not implemented | Native settings/model-scope controls and a supported persistence interface are needed. |
+| `/settings`, `/scoped-models` | Models/thinking, queue delivery and automatic compaction have native controls; confirmed writes and read-back checks pass | Remaining preferences, current retry-setting inspection and model scopes need a supported interface and native controls. |
 | `/login`, `/logout` | Missing-credential recovery directs the user to the Mac | This is not a native authentication-management workflow. Secrets must not move to the phone. |
 | `/llama` | Not implemented | Inspect configured router capabilities and design native management. |
-| `/copy` | Transcript text is selectable | A direct last-assistant copy action remains. |
+| `/copy` | Native last-text review and explicit copy pass; iOS expiration and isolated clipboard tests pass | Text beyond 256 KiB is explicitly partial; clipboard restrictions are OS options, not protection from local clipboard managers. |
 | `/export`, `/share`, `/bug` | Not implemented | Typed export/share/report controls need explicit sensitive-data review before external publication. |
 | `/import` | Not implemented | Explicit import must validate a session's cwd and companion ownership; automatic history import remains excluded. |
 | `/trust`, `/reload` | Not implemented | Native trust/resource review and reload controls remain. |
 | `/hotkeys`, `/changelog` | Not implemented | Native equivalents need an explicit compatibility decision; terminal keybindings cannot be copied as mobile controls. |
-| `/quit` | Companion shutdown stops its child | No separate native idle-session close action exists. |
+| `/quit` | Native idle-session close stops Pi, keeps the listener/catalog and supports explicit resume without prompt replay | Working state rejects close until Stop reaches idle. |
+
+Managed-session activation currently starts a new Pi child with the selected cwd. Startup/shutdown is not equivalent to Pi's `session_before_switch` or `session_before_tree` hooks. Cancellation, summary and extension lifecycle parity need an adapter or upstream interface; the passing companion-managed create/resume checks do not prove those terminal hooks.
 
 ## Adapter investigation
 
@@ -79,7 +81,7 @@ Pi 1.3.0's RPC UI contract explicitly returns `undefined` for `custom()`. Termin
 The following alternatives require further work or approval; none is silently accepted:
 
 1. Add RPC-native workflows to the upstream extensions and expose missing core commands through a maintained Pi interface. Changes to installed packages or upstream repositories are external writes and require approval.
-2. Add a bundled Pi extension/SDK adapter and native Swift screens. That changes the current all-Swift app-owned-service boundary and requires an explicit architecture decision. It must not embed a terminal, forward arbitrary RPC, expose credentials or mutate session files behind Pi. Authorization for a bundled adapter was requested; no explicit decision has been received.
+2. Add a bundled Pi extension/SDK adapter and native Swift screens. That changes the current all-Swift app-owned-service boundary and requires an explicit architecture decision. It must not embed a terminal, forward arbitrary RPC, expose credentials or mutate session files behind Pi. Authorization for a bundled adapter was requested; no explicit decision has been received. The fresh audit in `/tmp/pi-remote-runtime-extension-audit.log` still verifies the same three terminal-only rejections with Pi 1.3.0 and the current `pi list` inventory.
 3. Obtain explicit agreement to exclude the named terminal-only/configuration workflows. No such agreement exists; this would reduce the current objective and cannot be assumed.
 
-Independent Swift work can continue, including copy/export controls and other built-in workflows. Session statistics, bounded raster output, Mac text-file attachment and clean setup controls are now implemented and verified. These gaps are not a reason to mark the plan complete or to stop all implementation work.
+Independent Swift work remains, including export/share/import and other built-in workflows. Last-text copy, queue/automatic-compaction settings, idle-session close, session statistics, bounded raster output, Mac text-file attachment and clean setup controls are implemented and verified. See [runtime evidence](runtime-controls.md). None of this closes the full-scope acceptance gate. These gaps are not a reason to mark the plan complete or to stop all implementation work.

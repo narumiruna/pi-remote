@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import PiRemoteClient
 import PiRemoteCore
@@ -21,6 +22,17 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         }
         XCTFail("State did not arrive", line: line)
         throw RemoteFault.unavailable
+    }
+
+    func testClipboardUsesANamedBoardAndRejectsInvalidTextBeforeWriting() throws {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        try LocalClipboard.copy("Private synthetic copy fixture", to: board)
+        XCTAssertEqual(board.string(forType: .string), "Private synthetic copy fixture")
+        XCTAssertThrowsError(try LocalClipboard.copy("", to: board))
+        XCTAssertEqual(board.string(forType: .string), "Private synthetic copy fixture")
+        XCTAssertThrowsError(try LocalClipboard.copy(String(repeating: "x", count: 256 * 1_024 + 1), to: board))
+        XCTAssertEqual(board.string(forType: .string), "Private synthetic copy fixture")
     }
 
     func testCleanConnectionSetupUsesModelApprovalPersistenceAndRevocation() async throws {
