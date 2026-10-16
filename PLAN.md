@@ -10,7 +10,7 @@ Provide the Pi workflow through native screens and controls, not an embedded ter
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: native iOS and macOS apps now build without signing. Host/client integration, shared-package and iOS simulator app tests pass. The overall plan remains incomplete: signed product-device tests, off-site Tailscale, full workflow compatibility, accessibility and release checks remain open. See [native app verification](docs/native-apps.md), [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
+Status: native iOS and macOS apps now build without signing. Host/client integration, shared-package and iOS simulator app tests pass. The overall plan remains incomplete: signed product-device tests, off-site Tailscale, full workflow compatibility, accessibility and release checks remain open. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
 
 ## Context
 
@@ -229,6 +229,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ### 3. Build the Mac host
 
 - [ ] Implement Pi selection, directory listing and validation, and companion-owned session storage; prove the selected working directory is used for creation and resumption without changing unrelated Pi sessions.
+  - Verified: private-catalog tests cover creation, restart, header IDs and directory aliases; the installed-Pi native check passes launch and idle restoration in the selected directory without changing global settings. Physical product setup and nonempty real-host restoration remain open.
 - [ ] Test directory-access enforcement with unauthenticated requests, stale IDs, inaccessible folders, symbolic links, traversal attempts, and a folder removed between selection and launch; prove rejected requests do not start Pi.
 - [x] Implement pairing, credential storage, authentication, and revocation; production TLS integration tests pass local approval, certificate/hostname rejection, unauthenticated request rejection and revoked reconnection rejection. Registry tests verify persistent credentials and fail-closed secret-deletion failure. Physical product Keychain checks remain open.
 - [ ] Implement prompt, steering, follow-up, Stop, model selection, and thinking-level controls; validate their state transitions against the installed Pi.
@@ -240,9 +241,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [ ] Create and review a small SwiftUI interface prototype covering directory selection, an idle conversation, streaming with tool output, Stop, session controls, and reconnection; confirm the primary screen remains limited to the header, transcript, and composer.
 - [ ] Implement pairing, saved Mac connections, the Mac directory picker, and session selection; on a physical iPhone, navigate into and out of nested folders and start Pi in a selected directory without registering that project separately on the Mac.
 - [ ] Implement the native commands and session controls accepted by the compatibility review; verify their results against the same workflows in the installed Pi terminal interface and report unsupported features explicitly.
-- [ ] Implement a streamed transcript with Markdown, code blocks, expandable tool output, and clear run states; verify recorded success, retry, compaction, failure, and cancellation cases.
+- [x] Implement a streamed transcript with Markdown, code blocks, expandable tool output, and clear run states; shared tests pass authoritative text/thinking reconstruction, error visibility, retry, compaction and cancellation settlement. Hosted UIKit fixtures cover idle, working, retrying, compacting and interrupted states. This is not physical-device acceptance; see [workflow evidence](docs/workflow-verification.md).
 - [ ] Implement the composer, steering/follow-up choice, Stop, model controls, and supported extension dialogs; verify actions against the Mac host, including expired dialogs.
 - [ ] Implement foreground reconnection, draft retention, disconnected status, and snapshot replacement; verify phone lock, app suspension, Wi-Fi changes, and host restart without duplicate prompts.
+  - Verified: simulator tests cover retained per-session drafts, protected background state, stale editor offers and resend confirmations. TLS tests reject wrong-host, wrong-epoch and stale-session contexts before dispatch. Physical network and lock transitions remain open.
 - [ ] Verify light and dark appearance, Dynamic Type, VoiceOver labels, contrast, touch targets, keyboard use, and standard dictation; record physical-device results for the main coding-task flow.
 - [ ] Test the interface on the smallest supported iPhone with the keyboard open and large text enabled; verify directory selection, prompt entry, Stop, errors, and secondary controls remain reachable without clipped content.
 
@@ -257,13 +259,14 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ## Execution blockers
 
 - Xcode 26.6 is installed, but the global developer directory selects Command Line Tools; verified package checks use a command-local `DEVELOPER_DIR` override without changing the user's settings.
-- The iPhone is connected and DDI services are usable; the earlier mount failure returned `kAMDMobileImageMounterDeviceLocked`, not a proven Xcode/iOS version incompatibility.
+- CoreDevice still reports the iPhone connected. DDI services passed the earlier diagnostic; the mount failure before that returned `kAMDMobileImageMounterDeviceLocked`, not a proven Xcode/iOS version incompatibility.
 - Background-session signing remains unavailable, but an Xcode-signed `dev.narumi` build passes signature verification and launches the physical test through `test-without-building`; no key ACLs or passwords were changed.
 - The physical local-network test now passes after the user confirmed network setup; the earlier `NSURLErrorDomain -1009` failure is retained in the verification record, not treated as a certificate failure.
 - Mac Tailscale is running, but the iPhone peer is offline; off-site access still needs an active iPhone Tailscale connection from a different network.
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
 - Both native apps and the production authenticated host now exist. The older diagnostic remains separate and cannot start Pi or read Mac files. Passing diagnostic device tests do not satisfy product-app acceptance checks.
-- The native controls still need real-Pi comparisons for model changes, compaction, branching, attachments and extension workflows. Full history navigation, thinking display and Markdown support remain incomplete; no reduced scope has been accepted.
+- The installed Pi now passes isolated native-host model/thinking changes, input/editor dialogs, prefill, idle Stop, directory launch and idle restoration checks without an inference prompt. Active-run controls, real compaction, branching, provider attachments and the normal installed extension set still need comparisons.
+- Paged history inspection, bounded thinking display and native Markdown blocks are implemented. In-place tree navigation, terminal-only custom renderers and full image output remain gaps; no reduced scope has been accepted.
 - `AGENTS.md` still says that no app build/test configuration exists. `project.yml` now provides it; the instruction file needs a separate reviewed maintenance change.
 
 ## Risks and Recovery

@@ -6,6 +6,11 @@ public struct RegisteredPath: Sendable, Codable, Equatable {
     public var url: URL
     public var identity: String
     public var directory: Bool
+
+    public static func == (lhs: RegisteredPath, rhs: RegisteredPath) -> Bool {
+        // URL's directory hint can add a trailing slash without changing the filesystem object.
+        lhs.url.path == rhs.url.path && lhs.identity == rhs.identity && lhs.directory == rhs.directory
+    }
 }
 
 public actor DirectoryRegistry {

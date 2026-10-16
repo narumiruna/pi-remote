@@ -97,9 +97,16 @@ public actor RemoteClient {
     }
 
     public func request(_ action: SessionAction, expectedSession: UUID?) async throws -> AppResult {
+        guard let snapshot else { throw RemoteFault.unavailable }
+        var context = snapshot.context
+        if action.needsSession { context.session = expectedSession }
+        return try await request(action, context: context)
+    }
+
+    public func request(_ action: SessionAction, context: SessionContext) async throws -> AppResult {
         guard let channel, let snapshot else { throw RemoteFault.unavailable }
-        guard !action.needsSession || expectedSession != nil else { throw RemoteFault.conflict }
-        let request = AppRequest(epoch: snapshot.epoch, session: expectedSession, action: action)
+        guard context == snapshot.context, !action.needsSession || context.session != nil else { throw RemoteFault.conflict }
+        let request = AppRequest(epoch: context.epoch, session: context.session, action: action)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 guard waiting.count < 8, !Task.isCancelled else { continuation.resume(throwing: RemoteFault.capacity); return }

@@ -188,12 +188,23 @@ done
         #expect(await host.handle(request, device: device) == .ok)
         #expect(await host.handle(request, device: device) == .ok)
         for _ in 0..<50 {
-            if await host.state().messages.last?.text == "Fixture complete" { break }
+            let current = await host.state()
+            if current.messages.last?.text == "Fixture complete", current.phase == "idle" { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(await host.state().messages.last?.text == "Fixture complete")
         let accepted = support.appendingPathComponent("pi-sessions/" + state.selected!.uuidString + "/accepted")
         #expect(try Data(contentsOf: accepted).count == 1)
+        let file = try #require(FileManager.default.contentsOfDirectory(at: accepted.deletingLastPathComponent(), includingPropertiesForKeys: nil).first { $0.pathExtension == "jsonl" })
+        let writer = try FileHandle(forWritingTo: file)
+        try writer.seekToEnd()
+        try writer.write(contentsOf: Data(#"{"type":"message","id":"saved","parentId":null,"message":{"role":"user","content":"Saved fixture"}}"#.utf8) + Data([10]))
+        try writer.close()
+        let pageResult = await host.handle(AppRequest(epoch: state.epoch, session: state.selected, action: .historyPage(cursor: nil)), device: device)
+        guard case .historyPage(let page) = pageResult else { throw RemoteFault.invalidRequest }
+        #expect(page.items.first?.id == "saved")
+        let previewID = try #require(page.items.first?.preview)
+        #expect(await host.handle(AppRequest(epoch: state.epoch, session: state.selected, action: .historyEntry(id: previewID)), device: device) == .preview(FilePreview(name: "message", text: "Saved fixture", truncated: false)))
         let lease = AuthorizationLease(); lease.revoke()
         #expect(await host.handle(AppRequest(epoch: state.epoch, session: state.selected, action: .clone), device: device, authorization: lease) == .failure(.unauthorized))
     } catch { await host.shutdown(); throw error }
@@ -243,7 +254,14 @@ done
         }
         #expect(!page.path.isEmpty)
         let folder = try await host.directories.register(root)
+        let originalContext = await host.state().context
+        var wrongContext = originalContext; wrongContext.host = UUID()
+        await #expect(throws: RemoteFault.conflict) { try await client.request(.createSession(directory: folder), context: wrongContext) }
+        wrongContext = originalContext; wrongContext.epoch = UUID()
+        await #expect(throws: RemoteFault.conflict) { try await client.request(.createSession(directory: folder), context: wrongContext) }
+        #expect(await host.state().sessions.isEmpty)
         _ = try await client.request(.createSession(directory: folder))
+        await #expect(throws: RemoteFault.conflict) { try await client.request(.rename(name: "Stale session"), context: originalContext) }
         let command = Task { try await client.request(.command(name: "ask", arguments: "")) }
         for _ in 0..<100 {
             if await host.state().dialogs.first != nil { break }
@@ -403,13 +421,29 @@ done
     func resume() async throws {
         let host = try HostCoordinator(support: support, executable: executable)
         #expect(await host.state().selected == nil)
-        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .resumeSession(id: session.id)), device: UUID()) == .ok)
+        let savedFile = support.appendingPathComponent("pi-sessions/" + session.id.uuidString + "/" + session.id.uuidString + ".jsonl")
+        let firstLine = try #require(Data(contentsOf: savedFile).split(separator: 10).first)
+        let header = try JSONDecoder().decode(JSONValue.self, from: Data(firstLine))
+        #expect(header["id"]?.string == session.id.uuidString)
+        let cwd = try #require(header["cwd"]?.string)
+        let headerDirectory = try DirectoryRegistry.identify(URL(fileURLWithPath: cwd))
+        let expectedDirectory = try DirectoryRegistry.identify(root)
+        #expect(headerDirectory == expectedDirectory)
+        let result = await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .resumeSession(id: session.id)), device: UUID())
+        #expect(result == .ok)
         #expect(await host.state().sessions.first?.directory == session.directory)
         await host.shutdown()
     }
     try await resume()
     let folder = support.appendingPathComponent("pi-sessions/" + session.id.uuidString)
     let file = try #require(FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).first { $0.pathExtension == "jsonl" })
+    let alias = root.appendingPathComponent("same-directory-alias")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+    let aliasIdentity = try DirectoryRegistry.identify(alias), originalIdentity = try DirectoryRegistry.identify(root)
+    #expect(aliasIdentity == originalIdentity)
+    let initialHeader = try String(contentsOf: file, encoding: .utf8)
+    try initialHeader.replacingOccurrences(of: session.directory, with: alias.path).write(to: file, atomically: true, encoding: .utf8)
+    try await resume()
     let header = try String(contentsOf: file, encoding: .utf8)
     try header.replacingOccurrences(of: session.directory, with: "/wrong-directory").write(to: file, atomically: true, encoding: .utf8)
     let host = try HostCoordinator(support: support, executable: executable)
@@ -495,7 +529,7 @@ done
         .prompt(text: "Hello 日本語", delivery: .prompt, image: ImageAttachment(data: Data([1, 2]), mimeType: "image/png")),
         .prompt(text: "Steer", delivery: .steer, image: nil), .prompt(text: "Next", delivery: .followUp, image: nil),
         .stop, .model(provider: "test", id: "fixture"), .thinking(level: "low"), .compact(instructions: "Summarize"),
-        .rename(name: "A session"), .history, .fork(entry: "entry"), .clone, .command(name: "ask", arguments: "test"),
+        .rename(name: "A session"), .history, .historyPage(cursor: id), .historyEntry(id: id), .fork(entry: "entry"), .clone, .command(name: "ask", arguments: "test"),
         .answer(dialog: "question", value: "one", confirmed: nil, cancelled: false), .diff
     ]
     for action in actions {
@@ -507,7 +541,7 @@ done
     }
     let state = HostSnapshot(host: id, epoch: epoch)
     let results: [AppResult] = [.ok, .failure(.unknownOutcome), .snapshot(state),
-                                .synchronized(StateSync(events: [state])), .history([]),
+                                .synchronized(StateSync(events: [state])), .history([]), .historyPage(HistoryPage(items: [], next: id)),
                                 .directories(DirectoryPage(id: id, path: "/", parent: nil, items: [], next: nil)),
                                 .preview(FilePreview(name: "test", text: "content", truncated: true))]
     for result in results {

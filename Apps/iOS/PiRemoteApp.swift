@@ -21,6 +21,8 @@ struct PhoneRoot: View {
     @Bindable var model: PhoneModel
     @State private var photo: PhotosPickerItem?
     @State private var importing = false
+    @State private var pickingPhoto = false
+    @State private var attachmentScope: PhoneModel.ContentScope?
     var body: some View {
         Group {
             if model.locked || model.covered {
@@ -34,7 +36,7 @@ struct PhoneRoot: View {
             } else {
                 NavigationStack {
                     VStack(spacing: 0) {
-                        if let fault = model.fault ?? model.state?.error {
+                        if let fault = model.needsActionReview ? RemoteFault.unknownOutcome : (model.fault ?? model.state?.error) {
                             HStack {
                                 Text(fault.explanation).font(.caption)
                                 Spacer()
@@ -53,10 +55,12 @@ struct PhoneRoot: View {
                             if model.image != nil {
                                 HStack { Label("Image attached", systemImage: "photo"); Button("Remove") { model.image = nil; photo = nil } }.font(.caption).padding(.horizontal)
                             }
-                            ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending, send: model.send, stop: model.stop) {
+                            ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending,
+                                             send: { model.send(context: state.context) },
+                                             stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } }) {
                                 Menu {
-                                    PhotosPicker(selection: $photo, matching: .images) { Label("Photo", systemImage: "photo") }
-                                    Button("Text file") { importing = true }
+                                    Button("Photo", systemImage: "photo") { attachmentScope = model.contentScope; pickingPhoto = true }
+                                    Button("Text file") { attachmentScope = model.contentScope; importing = true }
                                 } label: { Label("Attach", systemImage: "plus").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44) }
                             }.disabled(!model.connected)
                         } else {
@@ -92,11 +96,16 @@ struct PhoneRoot: View {
                     }
             }
         }
+        .modifier(EditorOfferPrompt(offer: $model.editorOffer, replace: model.acceptEditorOffer))
         .confirmationDialog("Send this instruction again?", isPresented: $model.confirmResend) {
             Button("Send again") { model.resend() }
         } message: { Text("The previous action has an unknown outcome. Sending again can repeat file changes or external actions. Check the session first.") }
+        .photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .images)
+        .onChange(of: model.locked) { _, locked in
+            if locked { pickingPhoto = false; importing = false; photo = nil; attachmentScope = nil }
+        }
         .onChange(of: photo) { _, item in
-            guard let item else { return }
+            guard let item, let scope = attachmentScope else { return }
             Task {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self), data.count <= 32 * 1_024 * 1_024,
@@ -107,9 +116,9 @@ struct PhoneRoot: View {
                             kCGImageSourceCreateThumbnailWithTransform: true
                           ] as CFDictionary),
                           let jpeg = UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.8), jpeg.count <= 2 * 1_024 * 1_024 else { throw RemoteFault.tooLarge }
-                    guard !model.locked, photo == item else { return }
+                    guard !model.locked, photo == item, model.contentScope == scope else { return }
                     model.image = ImageAttachment(data: jpeg, mimeType: "image/jpeg")
-                } catch { model.fault = .tooLarge }
+                } catch { if !model.locked, model.contentScope == scope { model.fault = .tooLarge } }
             }
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .sourceCode, .json]) { result in
@@ -120,34 +129,43 @@ struct PhoneRoot: View {
                 let handle = try FileHandle(forReadingFrom: url); defer { try? handle.close() }
                 let data = try handle.read(upToCount: 256 * 1_024 + 1) ?? Data()
                 guard data.count <= 256 * 1_024, let content = String(data: data, encoding: .utf8) else { throw RemoteFault.tooLarge }
-                guard !model.locked, !model.covered else { throw RemoteFault.cancelled }
+                guard !model.locked, !model.covered, attachmentScope == model.contentScope else { throw RemoteFault.cancelled }
                 model.text += "\n\nFile: " + url.lastPathComponent + "\n```\n" + content + "\n```"
-            } catch { model.fault = error as? RemoteFault ?? .permissionDenied }
+            } catch let error as CocoaError where error.code == .userCancelled {
+                // Cancelling a picker is not a file-access failure.
+            } catch {
+                if !model.locked, attachmentScope == model.contentScope, error as? RemoteFault != .cancelled {
+                    model.fault = error as? RemoteFault ?? .permissionDenied
+                }
+            }
         }
     }
 
     @ViewBuilder private var sheet: some View {
-        switch model.panel {
-        case "connections": ConnectionsView(model: model)
-        case "pair": PairingView(model: model)
-        case "sessions":
-            if let state = model.state { SessionListView(state: state, request: model.request, newSession: { model.panel = "directory" }, selected: { model.panel = nil }) }
-        case "directory":
-            DirectoryBrowser(selecting: true, request: model.request) { id in
-                _ = try await model.request(.createSession(directory: id)); model.panel = nil
-            }
-        case "files": DirectoryBrowser(selecting: false, request: model.request) { _ in }
-        case "controls":
-            if let state = model.state { SessionControls(state: state, request: model.request) { model.preview = $0; model.panel = "preview" } }
-        case "history": HistoryView(request: model.request) { model.panel = nil }
-        case "preview": if let value = model.preview { FilePreviewView(preview: value) }
-        case "dialog":
-            if let dialog = model.state?.dialogs.first {
-                ExtensionDialogView(dialog: dialog) { value, confirmed, cancelled in
-                    Task { do { _ = try await model.request(.answer(dialog: dialog.id, value: value, confirmed: confirmed, cancelled: cancelled)) } catch {} }
-                }.id(dialog.id)
-            }
-        default: EmptyView()
+        if model.panel == "connections" { ConnectionsView(model: model) }
+        else if model.panel == "pair" { PairingView(model: model) }
+        else if let state = model.state {
+            let request = model.scopedRequest(for: state)
+            Group {
+                switch model.panel {
+                case "sessions": SessionListView(state: state, request: request, newSession: { model.panel = "directory" }, selected: { model.panel = nil })
+                case "directory":
+                    DirectoryBrowser(selecting: true, request: request) { id in
+                        _ = try await request(.createSession(directory: id)); model.panel = nil
+                    }
+                case "files": DirectoryBrowser(selecting: false, request: request) { _ in }
+                case "controls": SessionControls(state: state, request: request) { model.preview = $0; model.panel = "preview" }
+                case "history": HistoryView(request: request, paged: state.capabilities.contains("history-pages")) { model.panel = nil }
+                case "preview": if let value = model.preview { FilePreviewView(preview: value) }
+                case "dialog":
+                    if let dialog = state.dialogs.first {
+                        ExtensionDialogView(dialog: dialog) { value, confirmed, cancelled in
+                            Task { _ = try? await request(.answer(dialog: dialog.id, value: value, confirmed: confirmed, cancelled: cancelled)) }
+                        }.id(dialog.id)
+                    }
+                default: EmptyView()
+                }
+            }.id(state.context)
         }
     }
 }

@@ -15,11 +15,12 @@ public struct TranscriptMessage: Codable, Sendable, Equatable, Identifiable {
     public var id: UUID
     public var role: String
     public var text: String
+    public var thinking: String?
     public var isError: Bool
     public var streaming: Bool
     public var truncated: Bool
-    public init(id: UUID = UUID(), role: String, text: String, isError: Bool = false, streaming: Bool = false, truncated: Bool = false) {
-        self.id = id; self.role = role; self.text = text; self.isError = isError
+    public init(id: UUID = UUID(), role: String, text: String, thinking: String? = nil, isError: Bool = false, streaming: Bool = false, truncated: Bool = false) {
+        self.id = id; self.role = role; self.text = text; self.thinking = thinking; self.isError = isError
         self.streaming = streaming; self.truncated = truncated
     }
 }
@@ -63,7 +64,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var epoch: UUID
     public var sequence: UInt64 = 0
     public var piVersion = "Not running"
-    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "fork", "clone", "compaction", "file-preview", "git-diff", "images"]
+    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images"]
     public var sessions: [SessionInfo] = []
     public var selected: UUID?
     public var phase = "idle"
@@ -83,6 +84,15 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public init(host: UUID, epoch: UUID) { self.host = host; self.epoch = epoch }
 
     public var working: Bool { !["idle", "interrupted", "unavailable"].contains(phase) }
+    public var context: SessionContext { SessionContext(host: host, epoch: epoch, session: selected) }
+}
+
+/// Bind a UI action to the host epoch and session that the user saw.
+public struct SessionContext: Sendable, Equatable, Hashable {
+    public var host: UUID
+    public var epoch: UUID
+    public var session: UUID?
+    public init(host: UUID, epoch: UUID, session: UUID?) { self.host = host; self.epoch = epoch; self.session = session }
 }
 
 public struct DirectoryItem: Codable, Sendable, Equatable, Identifiable {
@@ -119,7 +129,14 @@ public struct HistoryItem: Codable, Sendable, Equatable, Identifiable {
     public var kind: String
     public var text: String
     public var canFork: Bool
-    public init(id: String, parent: String?, kind: String, text: String, canFork: Bool) {
-        self.id = id; self.parent = parent; self.kind = kind; self.text = text; self.canFork = canFork
+    public var preview: UUID?
+    public init(id: String, parent: String?, kind: String, text: String, canFork: Bool, preview: UUID? = nil) {
+        self.id = id; self.parent = parent; self.kind = kind; self.text = text; self.canFork = canFork; self.preview = preview
     }
+}
+
+public struct HistoryPage: Codable, Sendable, Equatable {
+    public var items: [HistoryItem]
+    public var next: UUID?
+    public init(items: [HistoryItem], next: UUID?) { self.items = items; self.next = next }
 }
