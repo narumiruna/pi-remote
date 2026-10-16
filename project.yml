@@ -51,6 +51,21 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Accept authenticated connections from your paired iPhone.
+  PiRemoteMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/MacTests
+      - Apps/macOS/CompanionModel.swift
+      - Apps/Shared/EditorOffer.swift
+    dependencies:
+      - package: PiRemoteSpikes
+        product: PiRemoteHost
+      - package: PiRemoteSpikes
+        product: PiRemoteClient
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.MacTests
   PiRemoteTests:
     type: bundle.unit-test
     platform: iOS
@@ -110,3 +125,7 @@ schemes:
     build:
       targets:
         PiRemoteMac: all
+        PiRemoteMacTests: [test]
+    test:
+      targets:
+        - PiRemoteMacTests

@@ -65,6 +65,26 @@ Wait for `READY` before starting Xcode tests. For the LAN check on this Mac, use
 
 Latest local logs are `/tmp/pi-remote-network-final.log`, `/tmp/pi-remote-network-final-tsan.log`, `/tmp/pi-remote-network-final-mac.log`, `/tmp/pi-remote-network-final-device.log`, `/tmp/pi-remote-final-simulator.log`, `/tmp/pi-remote-final-simulator-host.log` and `/tmp/pi-remote-final-simulator-summary.json`. They are temporary evidence, not release artifacts.
 
+## Mac local and remote controls
+
+The menu-bar status and Mac window use the same `CompanionModel`. Its local requests and authenticated phone requests reach one `HostCoordinator`. A new unhosted macOS test bundle compiles the production model directly, without launching the product app or opening its real support directory. Initializer dependencies supply a private support directory, isolated preferences and memory credentials; production defaults remain unchanged.
+
+`testLocalAndPairedControlsShareStateAndSerialization` passes over production TLS. Local Send, local follow-up and remote steering produce exactly three dispatches in the same session. Both clients see the same transcript and working state. Local Stop makes the paired client idle. A pending local extension command blocks a competing remote mutation, but the phone can complete its dialog. A remote session change makes an older local action fail with conflict instead of stopping the new session. The test makes no provider request.
+
+Run from the repository root:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcodegen generate --spec project.yml
+xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/pi-remote-goal-mac CODE_SIGNING_ALLOWED=NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 60 \
+  -maximum-test-execution-time-allowance 90 test
+```
+
+Xcode reports one passed test, zero failures and zero skips. The unsigned Mac app also builds in this scheme. Evidence is `/tmp/pi-remote-mac-controls.log` and `/tmp/pi-remote-mac-controls-summary.json`. This is model and transport evidence, not an automated menu-bar interaction or signed installation check.
+
 ## Host failure matrix
 
 The local failure checks pass. These tests do not suspend the laptop or require another network.

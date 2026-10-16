@@ -38,7 +38,8 @@ final class CompanionModel {
     @ObservationIgnored private(set) var coordinator: HostCoordinator?
     @ObservationIgnored private var registry: DeviceRegistry?
     @ObservationIgnored private let support: URL
-    @ObservationIgnored private let secrets = KeychainSecrets(service: "dev.narumi.PiRemote.Host")
+    @ObservationIgnored private let secrets: any SecretStore
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var server: AppServer?
     @ObservationIgnored private var startup: Task<Void, Never>?
     @ObservationIgnored private var shuttingDown = false
@@ -51,13 +52,17 @@ final class CompanionModel {
     @ObservationIgnored private var drafts: [UUID: String] = [:]
     @ObservationIgnored private let localDevice = UUID()
 
-    init() {
-        support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PiRemote", isDirectory: true)
+    init(
+        support: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PiRemote", isDirectory: true),
+        secrets: any SecretStore = KeychainSecrets(service: "dev.narumi.PiRemote.Host"),
+        defaults: UserDefaults = .standard
+    ) {
+        self.support = support; self.secrets = secrets; self.defaults = defaults
         let candidates = [
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".bun/bin/pi").path,
             "/opt/homebrew/bin/pi", "/usr/local/bin/pi"
         ]
-        piPath = UserDefaults.standard.string(forKey: "piExecutable") ?? candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "/usr/local/bin/pi"
+        piPath = defaults.string(forKey: "piExecutable") ?? candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "/usr/local/bin/pi"
         address = addresses.first(where: { $0.address != "127.0.0.1" })?.address ?? "127.0.0.1"
         do {
             coordinator = try HostCoordinator(support: support, executable: URL(fileURLWithPath: piPath))
@@ -254,7 +259,7 @@ final class CompanionModel {
         picker.message = "Select the installed Pi executable."
         if picker.runModal() == .OK, let url = picker.url {
             Task {
-                do { try await coordinator?.setExecutable(url); piPath = url.path; UserDefaults.standard.set(url.path, forKey: "piExecutable") }
+                do { try await coordinator?.setExecutable(url); piPath = url.path; defaults.set(url.path, forKey: "piExecutable") }
                 catch { fault = error as? RemoteFault ?? .busy }
             }
         }
