@@ -139,6 +139,13 @@ public actor HostCoordinator {
         if action.mutates { snapshot.error = nil }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .statistics:
+            let data = try await requireRPC().request("get_session_stats")
+            let statistics: SessionStatistics
+            do { statistics = try JSONDecoder().decode(SessionStatistics.self, from: JSONEncoder().encode(data)) }
+            catch { throw RemoteFault.incompatiblePi }
+            try statistics.validate()
+            return .statistics(statistics)
         case .synchronize(let epoch, let after):
             return .synchronized(replay.synchronize(current: snapshot, epoch: epoch, after: after))
         case .directories(let id, let cursor): return .directories(try await directories.list(id: id, cursor: cursor))

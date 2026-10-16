@@ -31,6 +31,23 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let wrapper = root.appendingPathComponent("isolated-pi")
         let cwd = root.appendingPathComponent("observed-cwd")
+        let dialogs = root.appendingPathComponent("dialogs.js")
+        let extensionSource = """
+        export default function (pi) {
+            pi.registerCommand("fixture-select", { handler: async (_args, ctx) => {
+                const result = await ctx.ui.select("Fixture selection", ["First", "Second"]);
+                ctx.ui.notify(result === "Second" ? "Selection verified" : "Selection cancelled", "info");
+            }});
+            pi.registerCommand("fixture-confirm", { handler: async (_args, ctx) => {
+                const result = await ctx.ui.confirm("Fixture confirmation", "Confirm fixture");
+                ctx.ui.notify(result ? "Confirmation verified" : "Confirmation cancelled", "info");
+            }});
+            pi.registerCommand("fixture-expire", { handler: async (_args, ctx) => {
+                await ctx.ui.input("Fixture expiry", "", { timeout: 150 });
+            }});
+        }
+        """
+        try extensionSource.write(to: dialogs, atomically: true, encoding: .utf8)
         let script = """
         #!/bin/sh
         export PI_CODING_AGENT_DIR=\(quoted(root.appendingPathComponent("agent").path))
@@ -38,7 +55,7 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
         export PI_TELEMETRY=0
         export OPENAI_API_KEY=pi-remote-fixture-not-a-real-key
         if [ "${1:-}" != --version ]; then /bin/pwd > \(quoted(cwd.path)); fi
-        exec \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files --no-tools --extension \(quoted(demo.path)) "$@"
+        exec \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files --no-tools --extension \(quoted(demo.path)) --extension \(quoted(dialogs.path)) "$@"
         """
         try script.write(to: wrapper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
@@ -56,6 +73,9 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             let initial = await host.state()
             let selected = initial.selected
             try require(selected != nil && initial.sessions.first?.directory == folder.resolvingSymlinksInPath().path)
+            guard case .statistics(let usage) = try await send(.statistics) else { throw CheckFailure.assertion(#line) }
+            try usage.validate()
+            try require(usage.userMessages == 0 && usage.tokens.total == 0 && usage.cost == 0)
             try require(try DirectoryRegistry.identify(URL(fileURLWithPath: String(contentsOf: cwd, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines))) == DirectoryRegistry.identify(folder))
             guard let model = initial.models.first(where: { $0.provider == "openai" && $0.model.hasPrefix("gpt-5") }) ?? initial.models.first(where: { $0.provider == "openai" }) else { throw CheckFailure.assertion(#line) }
             _ = try await send(.model(provider: model.provider, id: model.model))
@@ -65,7 +85,7 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             try require(await host.state().thinking == level)
             _ = try await send(.rename(name: "Native workflow fixture"))
             try require(await host.state().sessions.first?.title == "Native workflow fixture")
-            for (name, method) in [("rpc-input", "input"), ("rpc-editor", "editor")] {
+            for (name, method) in [("rpc-input", "input"), ("rpc-editor", "editor"), ("fixture-select", "select"), ("fixture-confirm", "confirm")] {
                 try require(await host.state().commands.contains { $0.name == name })
                 let command = Task { try await send(.command(name: name, arguments: "")) }
                 var dialog: ExtensionDialog?
@@ -75,9 +95,27 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
                     try await Task.sleep(for: .milliseconds(25))
                 }
                 guard let dialog, dialog.method == method else { throw CheckFailure.assertion(#line) }
-                _ = try await send(.answer(dialog: dialog.id, value: "Fixture response", confirmed: nil, cancelled: false))
+                if method == "select" { try require(dialog.options == ["First", "Second"]) }
+                _ = try await send(.answer(dialog: dialog.id, value: method == "select" ? "Second" : "Fixture response", confirmed: method == "confirm" ? true : nil, cancelled: false))
                 _ = try await command.value
             }
+            try require(await host.state().notices.contains("Selection verified"))
+            try require(await host.state().notices.contains("Confirmation verified"))
+            let expiringCommand = Task { try await send(.command(name: "fixture-expire", arguments: "")) }
+            var expiringDialog: ExtensionDialog?
+            for _ in 0..<200 {
+                expiringDialog = await host.state().dialogs.first
+                if expiringDialog != nil { break }
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            guard let expiringDialog, expiringDialog.expires != nil else { throw CheckFailure.assertion(#line) }
+            _ = try await expiringCommand.value
+            try await Task.sleep(for: .milliseconds(200))
+            let expiredState = await host.state()
+            try require(expiredState.dialogs.isEmpty && expiredState.phase == "idle")
+            let expiredResult = await host.handle(AppRequest(epoch: host.epoch, session: expiredState.selected,
+                action: .answer(dialog: expiringDialog.id, value: "Late", confirmed: nil, cancelled: false)), device: device)
+            try require(expiredResult == .failure(.expired))
             _ = try await send(.command(name: "rpc-prefill", arguments: ""))
             for _ in 0..<100 {
                 if await host.state().draftID != nil { break }

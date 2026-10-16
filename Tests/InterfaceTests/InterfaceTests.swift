@@ -95,6 +95,26 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(tool.waitForExistence(timeout: 5) && tool.isHittable)
     }
 
+    func testSessionUsageIsReadableAndRefreshable() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let usage = app.buttons["Session tokens and cost"]
+        for _ in 0..<6 where !usage.isHittable { app.swipeUp() }
+        XCTAssertTrue(usage.isHittable)
+        usage.tap()
+        XCTAssertTrue(app.navigationBars["Session usage"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Session totals"].waitForExistence(timeout: 5))
+        capture(app, "compact-session-usage")
+        let refresh = app.buttons["Refresh usage"]
+        for _ in 0..<10 where !refresh.isHittable { app.swipeUp() }
+        reachable(refresh, app: app)
+        refresh.tap()
+        XCTAssertTrue(app.staticTexts["Estimated tokens"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Used"].isHittable)
+        try audit(app)
+        capture(app, "compact-session-usage-context")
+    }
+
     func testDarkErrorsAndSessionControlsRemainReadable() throws {
         let app = launch(["dark", "error"])
         let failure = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Permission denied for the fixture file")).firstMatch

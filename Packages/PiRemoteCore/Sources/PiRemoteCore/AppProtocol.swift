@@ -31,10 +31,11 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case command(name: String, arguments: String)
     case answer(dialog: String, value: String?, confirmed: Bool?, cancelled: Bool)
     case diff
+    case statistics
 
     public var mutates: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff: false
+        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics: false
         default: true
         }
     }
@@ -84,6 +85,7 @@ public enum AppResult: Codable, Sendable, Equatable {
     case preview(FilePreview)
     case history([HistoryItem])
     case historyPage(HistoryPage)
+    case statistics(SessionStatistics)
     case failure(RemoteFault)
 }
 

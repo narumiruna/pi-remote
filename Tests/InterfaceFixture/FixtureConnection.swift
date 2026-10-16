@@ -76,6 +76,9 @@ actor FixtureConnection: PhoneConnection {
         defer { if action.mutates { publish() } }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .statistics:
+            let json = #"{"userMessages":3,"assistantMessages":3,"toolCalls":1,"toolResults":1,"totalMessages":8,"tokens":{"input":1000,"output":200,"cacheRead":500,"cacheWrite":0,"total":1700},"cost":0.0025,"contextUsage":{"tokens":1700,"contextWindow":200000,"percent":0.85}}"#
+            return .statistics(try JSONDecoder().decode(SessionStatistics.self, from: Data(json.utf8)))
         case .directories(let id, _):
             let id = id ?? home
             switch id {

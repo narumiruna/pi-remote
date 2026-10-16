@@ -152,6 +152,7 @@ while IFS= read -r line; do
         get_available_thinking_levels) reply '{"levels":["off","low"]}' ;;
         get_commands) reply '{"commands":[{"name":"ask","description":"Fixture dialog","source":"extension"}]}' ;;
         get_messages) reply '{"messages":[]}' ;;
+        get_session_stats) reply '{"userMessages":1,"assistantMessages":1,"toolCalls":0,"toolResults":0,"totalMessages":2,"tokens":{"input":10,"output":20,"cacheRead":0,"cacheWrite":0,"total":30},"cost":0.01,"contextUsage":{"tokens":30,"contextWindow":200000,"percent":0.015},"sessionFile":"private-fixture-path"}' ;;
         get_entries) reply '{"entries":[],"leafId":null}' ;;
         set_thinking_level) thinking=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"level":"\([^"]*\)".*/\1/p'); reply '{}' ;;
         prompt)
@@ -243,6 +244,26 @@ func promptFailuresPreserveRecoveryAndNeverRedispatch(mode: String) async throws
     } catch { await host.shutdown(); throw error }
 }
 
+@Test(.timeLimit(.minutes(1)), arguments: ["{}", "{\"userMessages\":-1,\"assistantMessages\":0,\"toolCalls\":0,\"toolResults\":0,\"totalMessages\":0,\"tokens\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0},\"cost\":0}"])
+func invalidPiStatisticsFailClosed(payload: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root)
+    let script = try String(contentsOf: executable, encoding: .utf8)
+    let changed = script.replacingOccurrences(of: "        get_session_stats) reply '", with: "        get_session_stats) reply '" + payload + "'; continue ;;\n        unused_statistics) reply '")
+    try changed.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: executable)
+    do {
+        let directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: UUID()) == .ok)
+        let request = AppRequest(epoch: host.epoch, session: await host.state().selected, action: .statistics)
+        #expect(await host.handle(request, device: UUID()) == .failure(.incompatiblePi))
+        #expect(await host.state().phase == "idle")
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
 @Test(.timeLimit(.minutes(1))) func missingPiReportsFailureWithoutStartingAChild() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -276,6 +297,12 @@ func promptFailuresPreserveRecoveryAndNeverRedispatch(mode: String) async throws
         let state = await host.state()
         #expect(state.sessions.first?.directory == project.path)
         #expect(state.piVersion == "1.3.0")
+        let statsRequest = AppRequest(epoch: host.epoch, session: state.selected, action: .statistics)
+        guard case .statistics(let statistics) = await host.handle(statsRequest, device: device) else { throw RemoteFault.invalidRequest }
+        #expect(statistics.tokens.total == 30 && statistics.cost == 0.01)
+        #expect(!String(decoding: try AppPacket(AppResult.statistics(statistics)).encode(), as: UTF8.self).contains("private-fixture-path"))
+        var staleStats = statsRequest; staleStats.session = UUID()
+        #expect(await host.handle(staleStats, device: device) == .failure(.conflict))
         let request = AppRequest(epoch: state.epoch, session: state.selected, action: .prompt(text: "Fixture task", delivery: .prompt, image: nil))
         #expect(await host.handle(request, device: device) == .ok)
         #expect(await host.handle(request, device: device) == .ok)

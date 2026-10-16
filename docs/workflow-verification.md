@@ -6,11 +6,11 @@ The native workflow implementation has advanced, but `PLAN.md` is not complete. 
 
 Verified on this Mac with Pi 1.3.0, Xcode 26.6 and the iOS/macOS 26.5 SDKs:
 
-- 61 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
-- 18 shared-package tests pass.
+- 62 root package tests pass, also with Thread Sanitizer. Earlier shared-suite Thread Sanitizer evidence remains separate.
+- 21 shared-package tests pass.
 - Twenty-five iOS app tests pass with the explicit provider fixture on the iPhone 17 Pro simulator, iOS 26.5, with zero failures or skips; see the local audit below.
 - Both unsigned app builds pass. The unsigned iOS device-SDK build is a compile check, not an installed personal build.
-- An isolated check using the installed Pi passes model and thinking changes, input/editor dialogs, editor prefill, idle Stop, directory launch and idle session restoration. It sends no inference prompt.
+- An isolated check using the installed Pi passes model and thinking changes, all four supported dialog methods, dialog expiry, editor prefill, idle Stop, directory launch and idle session restoration. It sends no inference prompt.
 - An explicit provider check through the native host passes synthetic image input, observed live text, steering/follow-up delivery, active Stop, fork/clone and nonempty history restoration after coordinator restart. Tools and installed resources are disabled.
 
 ## Local plan audit
@@ -20,7 +20,7 @@ The current completion scope is simulator and laptop verification, as defined in
 The latest local run verifies:
 
 - Unsigned Mac, iOS simulator and iOS device-SDK builds. `project.yml` sets automatic signing, iOS 18 and macOS 15 deployment floors. The installed SDKs are version 26.5. These checks do not establish minimum-version compatibility or signed installation.
-- All 61 root tests, also with Thread Sanitizer, and 18 shared-package tests.
+- All 62 root tests, also with Thread Sanitizer, and 21 shared-package tests.
 - Twenty-five iOS simulator tests with the explicit provider fixture, with zero failures or skips. The full suite passed on both the Mac's LAN and Tailscale interfaces. Xcode result summaries confirm the counts. Without the fixture, the provider integration test skips; normal app tests make no provider requests.
 - The isolated `NativeWorkflowCheck` with Pi 1.3.0. Directory launch, models, thinking, dialogs, Stop and idle restoration pass without inference or global-settings changes.
 
@@ -64,6 +64,14 @@ wait "$fixture"
 Wait for `READY` before starting Xcode tests. For the LAN check on this Mac, use `$(ipconfig getifaddr en0)` instead of `$(tailscale ip -4)`. Resolve an eligible address and simulator ID on other hosts. The fixture refuses an existing `/tmp/pi-remote-simulator-fixture`; do not remove a directory owned by another running check. It stops after the integration test or a 15-minute safety deadline. These checks do not establish off-site reliability, physical-device behavior, normal installed-extension compatibility or complete UI accessibility.
 
 Latest local logs are `/tmp/pi-remote-network-final.log`, `/tmp/pi-remote-network-final-tsan.log`, `/tmp/pi-remote-network-final-mac.log`, `/tmp/pi-remote-network-final-device.log`, `/tmp/pi-remote-final-simulator.log`, `/tmp/pi-remote-final-simulator-host.log` and `/tmp/pi-remote-final-simulator-summary.json`. They are temporary evidence, not release artifacts.
+
+## Session usage
+
+Session controls now open a native usage view through the `session-statistics` capability and typed read-only action. The host maps Pi's `get_session_stats` response to known numeric fields only; local session paths do not enter the remote DTO. Invalid, negative or nonfinite values fail closed. Context estimates remain optional, including null tokens/percent after compaction. Refresh reads current values without changing session work.
+
+Shared tests verify Codable round-trip, omission of local file paths, null post-compaction estimates and invalid values. Host tests check mapping, stale-session rejection and malformed responses. Installed-Pi checks pass empty-session statistics and nonempty cumulative usage after real compaction, including Pi's null post-compaction context estimate. The compact simulator view opens and refreshes with large text; reviewed captures show readable totals and context values. Explicit primary text is used for numeric values rather than low-contrast secondary styling.
+
+The current root suite has 62 passing tests, also with Thread Sanitizer, in `/tmp/pi-remote-stats-root-final.log` and `/tmp/pi-remote-stats-tsan-final.log`. All 25 product simulator tests pass again with the Tailscale provider fixture in `/tmp/pi-remote-stats-product.log` and `/tmp/pi-remote-stats-product-summary.json`. The current shared suite has 21 passing tests. Seven interface tests pass in `/tmp/pi-remote-stats-ui.log` and `/tmp/pi-remote-stats-ui-summary.json`; the focused usage test passes again after the contrast fix and stronger context assertions in `/tmp/pi-remote-stats-ui-final.log`. Unsigned device-SDK compilation passes in `/tmp/pi-remote-stats-device.log`. Mac-model and installed-Pi metadata/provider checks pass in `/tmp/pi-remote-stats-mac.log`, `/tmp/pi-remote-stats-workflow.log` and `/tmp/pi-remote-stats-provider.log`. This is not a full Pi compatibility claim; see the [current review](native-compatibility.md).
 
 ## Mac local and remote controls
 
@@ -174,9 +182,9 @@ swift run NativeWorkflowCheck "$(command -v pi)" \
   /Users/narumi/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/examples/extensions/rpc-demo.ts
 ```
 
-The second argument is the checked demo extension bundled with the installed Pi. Resolve its path for other installations. The Swift check creates a private temporary wrapper and an isolated Pi config/session directory. It loads only that demo, disables tools, MCP, context files and other resources, and uses offline mode. A dummy, nonfunctional OpenAI key permits local model-selection checks; it is never used for a provider request. The wrapper records the subprocess working directory inside its private fixture. The check verifies that the user's global settings file is unchanged and removes its fixture after shutdown. It does not copy provider credentials or print transcripts, dialog answers or tool output.
+The second argument is the checked demo extension bundled with the installed Pi. The check also creates a private JavaScript test extension for select, confirm and timed input. It verifies selected options and confirmation notifications, waits for Pi's real timeout, then confirms that a late answer is rejected as expired. All four dialog methods and expiry pass with Pi 1.3.0 in `/tmp/pi-remote-all-dialogs.log`. This fixture is not an app backend and is removed after the run. Resolve its path for other installations. The Swift check creates a private temporary wrapper and an isolated Pi config/session directory. It loads only that demo, disables tools, MCP, context files and other resources, and uses offline mode. A dummy, nonfunctional OpenAI key permits local model-selection checks; it is never used for a provider request. The wrapper records the subprocess working directory inside its private fixture. The check verifies that the user's global settings file is unchanged and removes its fixture after shutdown. It does not copy provider credentials or print transcripts, dialog answers or tool output.
 
-This metadata-only check does not exercise provider work. The separate provider check below covers active-run controls, synthetic image input and nonempty native-host restoration. Normal installed-extension compatibility, real compaction and physical product-app acceptance remain open. See [the original RPC exercise](verification.md#installed-pi-exercise) for its separate, earlier provider-run evidence.
+This metadata-only check does not exercise provider work. The separate provider check below covers active-run controls, synthetic image input and nonempty native-host restoration. Normal installed-extension compatibility and physical product-app acceptance remain open. Generic real manual compaction now passes in the provider check below. See [the original RPC exercise](verification.md#installed-pi-exercise) for its separate, earlier provider-run evidence.
 
 ### Native provider check
 
@@ -189,9 +197,9 @@ swift run NativeProviderCheck "$(command -v pi)" --exercise-model
 
 The check starts three initial prompts, sends steering/follow-up instructions during active work, and stops the final run with queued instructions. It verifies visible streaming, delivery of both queue types, idle Stop with no later user-message delivery, history paging, clone/fork, return to the original session and nonempty restoration after a new coordinator acquires the same private catalog. Restored text, thinking and display flags must match; display-only message IDs can change. The working directory must remain unchanged.
 
-The check disables tools, extensions, MCP, skills, templates and project context. `--offline` disables Pi's automatic network activity, not these explicit provider requests. It uses Pi's existing credentials in place without copying or printing them. Session files and the nested working directory stay in a private temporary fixture, removed after shutdown. The effective agent settings file must remain unchanged. The check never resends an accepted prompt. Failures report only an assertion location or typed app fault, not model text or provider diagnostics.
+The check disables tools, extensions, MCP, skills, templates and project context. It creates a private project settings file with automatic compaction disabled and `keepRecentTokens: 128`, then grants trust only for this synthetic invocation with `--approve`. This permits a short real manual-compaction check without changing global settings. It observes compacting state, verifies the persisted compaction entry, and restores the compacted transcript after coordinator restart. The initial attempts used the normal 20,000-token retention budget and were rejected because the synthetic session was too small; they were not treated as successful compaction evidence. The adjusted run passes in `/tmp/pi-remote-real-compaction.log`. `--offline` disables Pi's automatic network activity, not these explicit provider requests. It uses Pi's existing credentials in place without copying or printing them. Session files and the nested working directory stay in a private temporary fixture, removed after shutdown. The effective agent settings file must remain unchanged. The check never resends an accepted prompt. Failures report only an assertion location or typed app fault, not model text or provider diagnostics.
 
-This is a native-host exercise, not a signed product-app, physical-device or normal installed-extension test. It does not test real compaction, full image output, in-place tree navigation, hardware unlock, sleep/wake or off-site access.
+This is a native-host exercise, not a signed product-app, physical-device or normal installed-extension test. It does not test extension-specific compaction, full image output, in-place tree navigation, hardware unlock, sleep/wake or off-site access.
 
 ## Failures and external gates
 

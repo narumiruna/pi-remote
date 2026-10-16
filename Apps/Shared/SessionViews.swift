@@ -64,6 +64,12 @@ struct SessionControls: View {
                     ForEach(state.thinkingLevels, id: \.self) { Text($0).tag($0) }
                 }
             }.disabled(state.working || state.selected == nil)
+            if state.capabilities.contains("session-statistics") {
+                Section("Usage") {
+                    NavigationLink("Session tokens and cost") { SessionStatisticsView(request: request) }
+                        .frame(minHeight: 44).disabled(state.selected == nil)
+                }
+            }
             Section("Session") {
                 TextField("Session name", text: $name)
                 Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)

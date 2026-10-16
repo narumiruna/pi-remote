@@ -4,7 +4,7 @@ import Foundation
 import PiRemoteCore
 import PiRemoteHost
 
-private enum CheckFailure: Error { case usage, assertion(Int), rejected(RemoteFault), deadline }
+private enum CheckFailure: Error { case usage, assertion(Int), rejected(RemoteFault, Int), deadline }
 private func require(_ value: Bool, line: Int = #line) throws { if !value { throw CheckFailure.assertion(line) } }
 private func quoted(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
@@ -15,7 +15,7 @@ private func quoted(_ value: String) -> String { "'" + value.replacingOccurrence
     static func main() async {
         do {
             try await run()
-            print("PASS: native host provider image input, streaming, branching, queues, Stop and restart restoration.")
+            print("PASS: native host provider image input, streaming, branching, compaction, queues, Stop and restart restoration.")
         } catch {
             if let failure = error as? CheckFailure { print("FAIL: \(failure). No instruction will be resent.") }
             else { print("FAIL: native provider check could not complete. No instruction will be resent.") }
@@ -23,17 +23,17 @@ private func quoted(_ value: String) -> String { "'" + value.replacingOccurrence
         }
     }
 
-    private static func send(_ action: SessionAction, to host: HostCoordinator) async throws -> AppResult {
+    private static func send(_ action: SessionAction, to host: HostCoordinator, line: Int = #line) async throws -> AppResult {
         let state = await host.state()
         let result = await host.handle(AppRequest(epoch: host.epoch, session: state.selected, action: action), device: device)
-        if case .failure(let fault) = result { throw CheckFailure.rejected(fault) }
+        if case .failure(let fault) = result { throw CheckFailure.rejected(fault, line) }
         return result
     }
 
     private static func wait(_ host: HostCoordinator, until predicate: (HostSnapshot) -> Bool) async throws -> HostSnapshot {
         for _ in 0..<6_000 {
             let state = await host.state()
-            if let fault = state.error { throw CheckFailure.rejected(fault) }
+            if let fault = state.error { throw CheckFailure.rejected(fault, #line) }
             try require(!state.messages.contains { $0.isError })
             if predicate(state) { return state }
             try await Task.sleep(for: .milliseconds(20))
@@ -51,10 +51,16 @@ private func quoted(_ value: String) -> String { "'" + value.replacingOccurrence
         defer { try? FileManager.default.removeItem(at: root) }
         let folder = root.appendingPathComponent("project/nested")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let configuration = folder.appendingPathComponent(".pi", isDirectory: true)
+        try FileManager.default.createDirectory(at: configuration, withIntermediateDirectories: false)
+        // Keep a small recent span so a short synthetic run can exercise real
+        // manual summarization without changing the user's global settings.
+        try Data(#"{"compaction":{"enabled":false,"keepRecentTokens":128}}"#.utf8)
+            .write(to: configuration.appendingPathComponent("settings.json"), options: .atomic)
         let wrapper = root.appendingPathComponent("isolated-pi")
         let script = """
         #!/bin/sh
-        exec \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-context-files --no-skills --no-prompt-templates --no-approve --no-tools "$@"
+        exec \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-context-files --no-skills --no-prompt-templates --approve --no-tools "$@"
         """
         try script.write(to: wrapper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
@@ -128,8 +134,27 @@ private func quoted(_ value: String) -> String { "'" + value.replacingOccurrence
             try require(stopped.phase == "idle")
             try await Task.sleep(for: .seconds(1))
             try require(await host.state().phase == "idle")
+            let afterStop = await host.state()
+            try require(afterStop.messages.filter { $0.role == "user" }.map(\.text) == stopped.messages.filter { $0.role == "user" }.map(\.text))
+            let updates = await host.updates()
+            let compacting = Task {
+                for await update in updates {
+                    if update.phase == "compacting" { return true }
+                    if Task.isCancelled { return false }
+                }
+                return false
+            }
+            defer { compacting.cancel() }
+            _ = try await send(.compact(instructions: "Summarize this synthetic verification conversation. Preserve the READY, STEERED and FOLLOWED checks."), to: host)
+            try require(await compacting.value)
             let state = await host.state()
-            try require(state.messages.filter { $0.role == "user" }.map(\.text) == stopped.messages.filter { $0.role == "user" }.map(\.text))
+            try require(state.phase == "idle")
+            guard case .statistics(let usage) = try await send(.statistics, to: host) else { throw CheckFailure.assertion(#line) }
+            try usage.validate()
+            try require(usage.tokens.total > 0 && usage.userMessages > 0)
+            try require(usage.contextUsage?.tokens == nil && usage.contextUsage?.percent == nil)
+            guard case .historyPage(let compactedHistory) = try await send(.historyPage(cursor: nil), to: host) else { throw CheckFailure.assertion(#line) }
+            try require(compactedHistory.items.contains { $0.kind == "compaction" && !$0.text.isEmpty })
             guard let info = state.sessions.first(where: { $0.id == original }) else { throw CheckFailure.assertion(#line) }
             try require(info.directory == folder.resolvingSymlinksInPath().path && !info.interrupted)
             let saved = SavedSession(session: original, directory: info.directory, messages: state.messages)

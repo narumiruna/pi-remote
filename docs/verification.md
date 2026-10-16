@@ -68,6 +68,8 @@ The spike does not print raw transcripts, provider errors, credentials, or tool 
 
 ## Preliminary workflow compatibility review
 
+This historical inventory is superseded by the [current native compatibility review](native-compatibility.md), including updated installed versions and actual RPC command checks. It is retained as spike history, not current evidence.
+
 Evidence comes from the installed Pi 1.3.0 documentation and the exercise above. The table records remaining work at the spike checkpoint, not current implementation status. See [native app verification](native-apps.md) for implemented controls and remaining validation. Documentation support is not runtime validation or a completed compatibility review.
 
 | Workflow | Installed interface and evidence | Remaining work |
