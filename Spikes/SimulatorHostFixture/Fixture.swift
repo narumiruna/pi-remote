@@ -17,7 +17,23 @@ private struct Fixture: Codable {
     var code: PairingCode
     var directory: String
 }
-private enum FixtureFailure: Error { case usage, deadline, settingsChanged }
+private enum FixtureFailure: Error { case usage, deadline, settingsChanged, shutdownTimeout }
+private final class HostLifetime {
+    private weak var host: HostCoordinator?
+    private let lockFile: URL
+    init(_ host: HostCoordinator, lockFile: URL) { self.host = host; self.lockFile = lockFile }
+    var released: Bool {
+        guard host == nil else { return false }
+        // Weak references can clear before stored-property destruction ends.
+        // Verify that the actual exclusive catalog lock is also available.
+        let descriptor = open(lockFile.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { return false }
+        defer { close(descriptor) }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return false }
+        flock(descriptor, LOCK_UN)
+        return true
+    }
+}
 
 /// Test-only host. Pairing requires the UUID written by the local simulator test.
 /// Explicit invocation permits provider usage and temporary file changes by Pi.
@@ -76,6 +92,13 @@ private enum FixtureFailure: Error { case usage, deadline, settingsChanged }
         while true {
             let result = try await serve(root: root, directory: directory, wrapper: wrapper, address: address,
                                          port: port, secrets: secrets, identity: identity, deadline: deadline)
+            // Shutdown cancels observers and socket tasks. Their final references
+            // can outlive serve's return; wait for actual catalog-lease release.
+            for _ in 0..<250 {
+                if result.lifetime.released { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            guard result.lifetime.released else { throw FixtureFailure.shutdownTimeout }
             port = result.port
             if !result.restart { break }
         }
@@ -89,10 +112,11 @@ private enum FixtureFailure: Error { case usage, deadline, settingsChanged }
     }
 
     private static func serve(root: URL, directory: URL, wrapper: URL, address: String, port: UInt16,
-                              secrets: FixtureSecrets, identity: ServerIdentity, deadline: ContinuousClock.Instant) async throws -> (port: UInt16, restart: Bool) {
+                              secrets: FixtureSecrets, identity: ServerIdentity, deadline: ContinuousClock.Instant) async throws -> (port: UInt16, restart: Bool, lifetime: HostLifetime) {
         let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: wrapper)
         let registry = try DeviceRegistry(secrets: secrets, metadata: root.appendingPathComponent("devices.json"))
         let server = AppServer(coordinator: host, registry: registry)
+        let lifetime = HostLifetime(host, lockFile: root.appendingPathComponent("support/host.lock"))
         do {
             let bound = try await server.start(identity: identity, address: address, port: port)
             let updates = await server.pairingUpdates()
@@ -123,7 +147,7 @@ private enum FixtureFailure: Error { case usage, deadline, settingsChanged }
                     if again { try FileManager.default.removeItem(at: restart) }
                     try FileManager.default.removeItem(at: root.appendingPathComponent("ready.json"))
                     await server.stop(); await host.shutdown()
-                    return (bound, again)
+                    return (bound, again, lifetime)
                 }
                 try await Task.sleep(for: .milliseconds(100))
             }
