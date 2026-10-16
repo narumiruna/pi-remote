@@ -10,7 +10,7 @@ Provide the Pi workflow through native screens and controls, not an embedded ter
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: local RPC and secure WebSocket spikes pass focused tests, including an iOS simulator handshake test; the overall plan remains incomplete. A verified Xcode-signed build now launches tests on the iPhone, but its connection fails with `NSURLErrorDomain -1009` before TLS verification; both product apps and release checks remain open. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
+Status: local RPC and secure WebSocket spikes pass focused tests, including the physical iPhone 16 Pro secure transport test on iOS 26.7.1; the overall plan remains incomplete. Off-site Tailscale validation, both product apps, and release checks remain open. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md).
 
 ## Context
 
@@ -217,7 +217,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [ ] Validate access to any companion-accessible folder, including symbolic-link targets and macOS-protected locations; record expected access denials without requiring approved roots.
 - [ ] Select Keychain protection settings for the Face ID or device-passcode unlock policy; test denied unlock, background return, device lock, and credential revocation.
 - [x] Build a Swift command-line spike that launches Pi, sends a prompt, streams output, stops work, and resumes a persisted session; Pi 1.3.0 passed streaming, settlement, active-run Stop, working-directory, and saved-session assertions, with 15 RPC tests and seven shared-package tests; see [verification evidence](docs/verification.md).
-- [ ] Build a physical iPhone-to-Mac secure WebSocket spike with server-identity verification; prove pairing, authenticated reconnection, and rejection of an untrusted identity on the local network.
+- [x] Build a physical iPhone-to-Mac secure WebSocket spike with server-identity verification; the iPhone 16 Pro on iOS 26.7.1 passed one integration test with zero failures for certificate rejection, pairing, Keychain storage, authenticated reconnection, and replay rejection; see [device evidence](docs/secure-transport-spike.md).
 - [ ] Test the same spike over Tailscale with the iPhone away from the Mac's local network; record passing pairing, reconnection, and authenticated control results as a first-version requirement.
 
 ### 2. Establish the Swift workspace and contract
@@ -259,10 +259,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - Xcode 26.6 is installed, but the global developer directory selects Command Line Tools; verified package checks use a command-local `DEVELOPER_DIR` override without changing the user's settings.
 - The iPhone is connected and DDI services are usable; the earlier mount failure returned `kAMDMobileImageMounterDeviceLocked`, not a proven Xcode/iOS version incompatibility.
 - Background-session signing remains unavailable, but an Xcode-signed `dev.narumi` build passes signature verification and launches the physical test through `test-without-building`; no key ACLs or passwords were changed.
-- The physical test currently fails with `NSURLErrorDomain -1009` before TLS verification; confirm the iPhone's Wi-Fi route to the Mac and local-network permission, then rerun while the phone remains unlocked.
+- The physical local-network test now passes after the user confirmed network setup; the earlier `NSURLErrorDomain -1009` failure is retained in the verification record, not treated as a certificate failure.
 - Mac Tailscale is running, but the iPhone peer is offline; off-site access still needs an active iPhone Tailscale connection from a different network.
 - The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
-- A restricted TLS listener and diagnostic iOS test host now exist; they cannot start Pi or read Mac files. The local iOS simulator test passes, but the physical transport gate remains open and no product screens were added.
+- A restricted TLS listener and diagnostic iOS test host now exist; they cannot start Pi or read Mac files. Local simulator and physical-device transport checks pass, so the local transport gate is satisfied; no product screens have been added.
 
 ## Risks and Recovery
 

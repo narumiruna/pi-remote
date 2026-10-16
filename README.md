@@ -8,7 +8,7 @@ Start a coding task from your iPhone, watch streamed output and tool activity, s
 
 **Early implementation; the complete plan is blocked.** Local Swift RPC and secure WebSocket spikes, shared-package tests, and an iOS diagnostic test host are available. There are no Pi Remote product apps or production pairing service yet.
 
-The RPC spike passed against Pi 1.3.0. The secure transport spike passes local and iOS simulator tests; an Xcode-signed build now launches on the physical iPhone, but its network connection fails before TLS verification. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md) for commands, limits, and remaining checks; this is not a supported app release.
+The RPC spike passed against Pi 1.3.0. The secure transport spike passes host, iOS simulator, and physical iPhone 16 Pro tests, including pairing and authenticated reconnection; off-site Tailscale access and the product apps remain unverified. See [RPC verification](docs/verification.md) and [secure transport verification](docs/secure-transport-spike.md) for commands, limits, and remaining checks; this is not a supported app release.
 
 See [PLAN.md](PLAN.md) for the proposed architecture, implementation steps, validation checks, and open decisions.
 
@@ -39,7 +39,7 @@ The iPhone will connect to the Mac companion through an authenticated secure Web
 
 ## Network and security limits
 
-- Both local-network and off-site Tailscale access are required for the first personal build; neither has been implemented or validated yet.
+- Both local-network and off-site Tailscale access are required for the first personal build; the local secure transport spike passed on the physical iPhone, but off-site access and remote Pi control are not validated yet.
 - No hosted relay, public internet listener, or router port forwarding is part of the first version.
 - A paired device is a trusted controller: Pi can change files and run commands with the Mac user's permissions. Directory-access rules are not a security sandbox.
 - Folder selection is limited by macOS permissions, not an approved-root list; the app will not bypass system protections.

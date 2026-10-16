@@ -2,7 +2,7 @@
 
 ## Status
 
-The restricted Network.framework TLS WebSocket server interoperates with the URLSession WebSocket client on macOS and an iOS 26.5 simulator. The physical iPhone test has **not passed**: a verified Xcode-signed build launches the test, but the phone returns `NSURLErrorDomain -1009` before TLS verification. Keep the physical transport task in `PLAN.md` open.
+The restricted Network.framework TLS WebSocket server interoperates with the URLSession WebSocket client on macOS, an iOS 26.5 simulator, and a physical iPhone 16 Pro running iOS 26.7.1. The local physical transport test **passed: one test, zero failures**. The local transport task in `PLAN.md` is complete; off-site Tailscale and product-app work remain open.
 
 This spike cannot start Pi, read Mac directories, or forward arbitrary RPC commands. The diagnostic iOS app is not the Pi Remote product interface.
 
@@ -13,7 +13,9 @@ This spike cannot start Pi, read Mac directories, or forward arbitrary RPC comma
 - The secure transport tests verify pairing, authenticated reconnection, refusal of unauthenticated requests, rejection of changed certificates and hostname mismatches, immediate closure of a revoked active connection, rejection of revoked credentials, explicit-port binding, and cancellation of a pending client receive.
 - The iOS diagnostic app and test bundle compile for physical iOS with `CODE_SIGNING_ALLOWED=NO`.
 - A separately Xcode-signed build with bundle IDs `dev.narumi.PiRemote.TransportSpike` and `dev.narumi.PiRemote.TransportSpikeTests` passes deep signature verification; its bundled private fixture matches the server fixture, and its test binary is newer than the test sources.
-- The first physical execution waited for device unlock and timed out before running a test. After unlocking, the iPhone 16 Pro on iOS 26.7.1 ran the test, which failed with network error `-1009`; neither certificate rejection nor pairing has passed on the phone.
+- The first physical execution waited for device unlock and timed out before running a test. The next run failed with network error `-1009` before TLS verification. After the user confirmed network setup, the same signed build passed on the iPhone 16 Pro, iOS 26.7.1, build 23H30; no trust checks were weakened.
+- The passing physical test covers changed-certificate rejection, unauthenticated request denial, pairing, consumed-grant rejection, Keychain save/load/cleanup, two authenticated connections, correlated ping responses, and fresh-challenge replay rejection. Physical-device credential revocation and app suspension were not tested.
+- Local result evidence: `/tmp/pi-remote-transport-physical-results-3`; `xcresulttool get test-results summary` reports `Passed`, one passed test, zero failed tests, and zero skipped tests. Result bundles remain local and are not committed.
 - The iPhone 16 Pro simulator on iOS 26.5 passes one end-to-end test covering certificate rejection, unauthorized requests, pairing, consumed-grant rejection, device Keychain storage and retrieval, two authenticated connections, correlated ping responses, and replay rejection.
 - The initial simulator run failed because the listener supplied a concrete port twice and returned POSIX error 22; the listener initialization was fixed, an explicit-port regression test was added, and the simulator rerun passed.
 
@@ -102,8 +104,8 @@ Use the same build/signing settings as the build step. Allow the diagnostic app'
 
 ## Remaining blockers
 
-1. The physical phone returns `NSURLErrorDomain -1009` before TLS verification. The signed app includes its local-network usage description, but Wi-Fi reachability and the user's local-network permission still need confirmation; the failure does not establish a certificate problem. Background signing remains unavailable, but the verified foreground-signed build is usable through `test-without-building`.
+1. Background signing remains unavailable, but it no longer blocks this test: the verified foreground-signed build passes through `test-without-building`. New source changes still need a matching signed build; do not reuse stale artifacts.
 2. Mac Tailscale is running, but the iPhone peer is offline. A physical off-site test still needs the iPhone online through Tailscale from a different network, with a new fixture pinned to the selected Tailscale address.
 3. GitHub authentication still returns HTTP 401, so pull request creation remains blocked even though Git-over-SSH push works.
 
-No physical pairing, off-site access, product interface, or complete-plan acceptance is claimed from simulator results.
+Local physical pairing and authenticated reconnection are supported by the device result, not inferred from simulator results. No off-site access, production pairing interface, remote Pi control, product interface, or complete-plan acceptance is claimed.

@@ -109,10 +109,10 @@ None of these packages has passed a remote native-client compatibility test. Sta
 
 ## Blockers and next evidence
 
-1. Resolve the physical phone's network access: a verified Xcode-signed build launches tests, but the connection returns `NSURLErrorDomain -1009` before TLS verification; confirm Wi-Fi reachability and local-network permission. Background signing remains unavailable, so reuse the matching foreground-signed test artifacts without rebuilding.
+1. The physical local-network transport test now passes; use the verified foreground-signed test artifacts when background signing is unavailable. Follow the [secure transport evidence](secure-transport-spike.md) for artifact checks and failed-run history.
 2. Bring the iPhone online in Tailscale and make it available on a different network for the off-site test; Mac Tailscale is already running.
 3. Validate the Face ID or device-passcode unlock policy and matching Keychain access behavior on the physical phone.
-4. Build the secure WebSocket spike and prove pairing, server-identity rejection, credential revocation, and reconnection on the physical phone over local and Tailscale connections.
+4. Extend the passing physical local-network spike to off-site Tailscale access and physical-device credential-revocation checks; local pairing, server-identity rejection, and authenticated reconnection have passed.
 5. Complete the installed-command and extension review, including adapters for missing RPC behavior, without silently reducing the complete-workflow requirement.
 
-Keep the physical transport gate in `PLAN.md` open. Do not continue into screen implementation or report the overall plan complete on the basis of these local tests.
+The local physical transport gate in `PLAN.md` is satisfied. Keep off-site Tailscale, product-app, and release checks open; do not report the overall plan complete from a diagnostic handshake test.
