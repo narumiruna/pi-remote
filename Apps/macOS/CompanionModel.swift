@@ -166,6 +166,7 @@ final class CompanionModel {
                     for await value in updates {
                         guard let self, !Task.isCancelled else { return }
                         self.pending = value
+                        if value != nil, self.panel == "pairingQR" { self.panel = nil }
                         self.listening = await server.isRunning()
                         if !self.listening { self.code = "" }
                     }
@@ -192,6 +193,7 @@ final class CompanionModel {
                     url: URL(string: "wss://\(address):7443/")!, certificate: identity.certificate,
                     grant: grant, expires: Date().addingTimeInterval(120)
                 ).encoded()
+                panel = "pairingQR"
                 codeExpiry?.cancel()
                 codeExpiry = Task {
                     do { try await Task.sleep(for: .seconds(120)) } catch { return }

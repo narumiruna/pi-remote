@@ -109,6 +109,7 @@ struct CompanionWindow: View {
                             }
                         }.id(dialog.id)
                     }
+                case "pairingQR": PairingQRView(code: model.code)
                 case "preview": if let preview = model.preview { FilePreviewView(preview: preview) }
                 default: EmptyView()
                 }
@@ -116,7 +117,7 @@ struct CompanionWindow: View {
             .toolbar {
                 if model.panel != "dialog" { ToolbarItem(placement: .cancellationAction) { Button("Close") { model.panel = nil } } }
             }
-            .frame(minWidth: 480, minHeight: 420)
+            .frame(minWidth: 480, minHeight: model.panel == "pairingQR" ? 720 : 420)
             .id(state.context)
         }
     }
@@ -136,7 +137,7 @@ struct CompanionWindow: View {
             Button("Replace connection identity", role: .destructive) { resetIdentity = true }.disabled(model.starting)
             if !model.code.isEmpty {
                 Text("Pairing code · expires in two minutes").font(.caption)
-                Text(model.code).font(.caption2.monospaced()).lineLimit(3).textSelection(.enabled)
+                Button("Show pairing QR code") { model.panel = "pairingQR" }
                 Button("Copy pairing code") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.code, forType: .string) }
             }
             ForEach(model.devices) { device in
