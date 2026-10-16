@@ -4,15 +4,17 @@
 
 Build a native iOS app in Swift that lets one user talk to and control Pi running on a MacBook or Mac mini. Build a Swift macOS companion that manages the connection and Pi process.
 
-The user can start a coding task on their iPhone, watch Pi work on their Mac, send more instructions, stop work, and return to the conversation after a connection loss.
+The user can choose a working directory on the Mac from their iPhone, start Pi there, watch its work, send more instructions, stop work, and return after a connection loss.
+
+Provide the Pi workflow through native screens and controls, not an embedded terminal or a chat-only interface. Review terminal features against the installed Pi interface before defining supported behavior; do not promise full parity without evidence.
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: proposed plan. Implementation has not started.
+Status: local RPC spike implemented and verified; the overall plan is blocked and incomplete. Physical secure transport, both apps, and release checks remain open; see [verification evidence](docs/verification.md).
 
 ## Context
 
-- This repository currently contains a README, a license, and a Git ignore file. There is no app code or build configuration.
+- This repository contains a shared Swift package and a local macOS RPC spike with tests, but no iOS or macOS app targets.
 - Swift is the implementation language for the first version, including both apps and shared code.
 - Pi already provides a bidirectional JSON RPC interface over a subprocess's stdin and stdout. A TypeScript backend is not required.
 - Pi, project files, tools, model credentials, and command execution stay on the Mac. Pi still sends model requests to its configured provider; this is not an offline AI system.
@@ -29,15 +31,27 @@ References for implementation:
 
 These references describe the current interface. Confirm behavior against the installed Pi version before implementation.
 
+## Accepted product decisions
+
+- Allow selection of any folder accessible to the Mac companion; do not require approved roots or per-project registration, and do not bypass macOS permissions.
+- Target the complete Pi workflow through native controls, including all commands and installed extensions; technical gaps require investigation and explicit user agreement before reducing scope.
+- Require both local-network access and access away from home through Tailscale for the first personal build.
+- Use iPhone 16 Pro as the first physical test device; `devicectl` reports iOS 26.7.1, build 23H30, but cannot mount its developer disk image with the current Xcode setup; minimum deployment versions remain unverified.
+- Use this Mac as the initial development host: `sw_vers` reports macOS 26.6.2, build 25G83; this is an observed environment, not a tested support claim or minimum deployment version.
+- Deliver a personal build first and prepare TestFlight distribution later; signing and provisioning still require validation.
+- Add accounts and a public connection server in a later phase so users can connect their iPhones to their own Macs without requiring Tailscale; do not implement that service in the first version.
+
 ## First-Version Scope
 
 ### iOS app
 
 - Pair with a Mac through an explicit approval step.
 - Save multiple Mac connections, but control one Mac at a time.
-- Show connection status, Mac availability, selected project, and session status.
-- Select a project that the user registered on the Mac.
-- Create a session or resume a session managed by the companion.
+- Show connection status, Mac availability, working directory, and session status.
+- Browse Mac directories from the iPhone and select where to start Pi; do not require each project to be registered on the Mac first.
+- Show the selected absolute Mac path before starting a session and keep it visible in session details.
+- Create, resume, and switch companion-managed sessions while idle; associate each session with its working directory.
+- Provide native command discovery and controls for supported Pi workflows, not only text prompts; use the compatibility review below to define the release scope.
 - Send text prompts and render streamed Markdown, code blocks, tool activity, and errors.
 - Send a steering instruction or queue a follow-up while Pi is working.
 - Stop current work and clear queued instructions through one explicit Stop action.
@@ -49,8 +63,9 @@ These references describe the current interface. Confirm behavior against the in
 ### macOS companion
 
 - Provide a menu-bar app with connection, pairing, project, and Pi status controls.
-- Let the user select the installed Pi executable and register project folders.
-- Start and supervise a Pi RPC child process in the selected project.
+- Let the user select the installed Pi executable and manage directory-access permissions.
+- Serve authenticated directory listings so the iPhone can select a working directory under the accepted access policy.
+- Start and supervise a Pi RPC child process with the selected directory as its working directory.
 - Keep Pi running when the iPhone disconnects or locks.
 - Store sessions on the Mac and resume them after a companion restart.
 - Show paired devices and let the user revoke access.
@@ -64,9 +79,36 @@ These references describe the current interface. Confirm behavior against the in
 - Custom audio recording, live voice conversations, or spoken responses.
 - Public internet exposure, a hosted relay, account registration, and multi-user access.
 - Push notifications or a promise of continuous iOS background connectivity.
-- Concurrent active sessions on one Mac, session branching, and automatic Git worktrees.
-- Importing all existing Pi history or full compatibility with terminal-only extensions.
-- Image attachments, file uploads, and a separate file or diff browser.
+- Concurrent active sessions on one Mac and automatic Git worktrees.
+- Automatic import of all existing Pi history or unverified compatibility with terminal-only extensions.
+
+Include session branching, history navigation, attachments, and file or diff views in the complete-workflow review and implementation scope where the Pi interface supports them. Investigate missing interfaces before proposing a deferral; obtain user agreement for any reduced scope. A directory picker is required and is separate from a file-content browser.
+
+## Interface design
+
+### Design principles
+
+- Use a clean, minimal native interface with the conversation as the primary screen; do not reproduce the terminal layout or add a dashboard.
+- Use system typography, consistent spacing, restrained color, and standard SwiftUI controls; reserve monospaced text for code, paths, and tool output.
+- Support light and dark appearance, Dynamic Type, VoiceOver, sufficient contrast, and touch targets of at least 44 × 44 points.
+- Show secondary controls only when needed, without removing supported Pi capabilities or hiding errors, connection loss, or active work.
+- Use clear text labels for unfamiliar actions; do not rely on color or unexplained icons to communicate state.
+
+### Main conversation
+
+- Keep the main screen to a compact header, transcript, and composer.
+- Show the session title, a compact working-directory label, and connection or run status in the header; make the full Mac path available in session details.
+- Open session selection from the header and group model, thinking-level, and other secondary controls in a session menu or sheet rather than a permanent toolbar.
+- Keep the composer and Send action available while idle; while working, keep Stop visible and make the steering or follow-up choice explicit before submitting another instruction.
+- Show concise tool activity in the transcript with expandable output; keep errors and pending extension dialogs visible without requiring users to expand a tool result.
+- Keep the reader's scroll position when new output arrives; follow live output only when already at the bottom and offer a return-to-latest action otherwise.
+
+### Directory and session selection
+
+- Use a native directory-picker sheet with the current Mac path, parent navigation, folder rows, and one clear action to start Pi in the selected directory.
+- Distinguish opening a folder from selecting it as the working directory; show loading, empty, and access-denied states in place.
+- Show session titles and working directories in the session list so sessions in different folders are easy to distinguish.
+- Keep pairing and connection settings outside the normal coding flow after setup; show recovery actions when the connection fails.
 
 ## Architecture
 
@@ -83,14 +125,40 @@ Use one repository with `Apps/iOS/`, `Apps/macOS/`, and `Packages/PiRemoteCore/`
 
 The intended data path is iOS client → authenticated secure connection → Mac companion → local JSON RPC → Pi. Responses and events return along the same path.
 
+### Native Pi workflow and compatibility
+
+- Review the installed Pi version and extensions against the terminal workflow; record each feature, available RPC support, proposed native interaction, validation evidence, and any gap.
+- Cover directory selection, session creation and resumption, session switching, history navigation and branching, prompts, streaming, tool results, steering, follow-ups, Stop, models, thinking levels, commands, skills, prompt templates, extension dialogs, compaction, attachments, and file or diff inspection.
+- Treat this list as a review checklist, not a claim that Pi exposes every feature through RPC.
+- Classify each feature as supported natively, requiring an adapter, or blocked by a missing interface; record an implementation or investigation task for each gap and obtain user agreement before deferring it.
+- Resolve material gaps before calling the release scope accepted; record limits in `README.md` rather than silently omitting terminal workflows.
+- Use native forms, menus, transcript views, and dialogs where appropriate; do not embed a terminal or expose arbitrary RPC forwarding to imitate parity.
+
+### Working-directory selection
+
+- The iPhone browses the Mac filesystem, not the iPhone filesystem; browsing selects an existing directory and does not execute a shell command.
+- Allow browsing and launch selection across all directories accessible to the companion; do not add an approved-root restriction or request elevated privileges to bypass macOS permissions.
+- Return directory names, display paths, parent navigation, and opaque directory IDs through authenticated, bounded listings; file-content access is a separate capability.
+- Resolve directory IDs and symbolic-link targets on the Mac and validate access again before launch; allow accessible targets and report broken links, loops, and permission failures.
+- Set the child process working directory explicitly and persist it with the session; restoring a session must not silently move it to another directory.
+- Reject directory and session switches while Pi is working; require the user to stop work and reach idle first.
+- Show actionable errors for inaccessible, deleted, or moved folders; do not start Pi in a fallback directory.
+
 ### Swift transport
 
 - Use an authenticated secure WebSocket connection for commands, responses, and events.
 - Prototype an Apple Network.framework server on macOS and URLSession WebSocket client on iOS before building the screens. Verify TLS trust and WebSocket interoperability on physical devices.
 - If the prototype cannot meet those requirements, record the reason and select a maintained Swift server library before implementation continues. Do not add a Node.js or TypeScript service.
 - Start with a manually entered address. Add local discovery only if setup tests show that it is necessary.
-- Support the same local network first. Validate access over a user-managed private network such as Tailscale before calling access away from home supported.
+- Support both the local network and Tailscale in the first version; validate an iPhone connection from a different network before accepting access away from home.
 - Do not require router port forwarding. Do not use an unencrypted public listener.
+
+### Later public connection service
+
+- After the personal build, plan account registration and a public service that connects an iPhone to its user's Mac; the Mac companion remains responsible for Pi execution and local permissions.
+- Decide account authentication, device enrollment, relay routing, end-to-end encryption, recovery, abuse controls, and hosting before implementation; do not treat account sign-in alone as authorization to control a Mac.
+- Evaluate passkeys for account sign-in during that phase; do not add an account service or speculative transport abstraction to the first version.
+- Keep direct and Tailscale connections available as the first implementation; the future service must not require exposing the Mac directly to the public internet.
 
 ### Pi process and session lifecycle
 
@@ -98,7 +166,7 @@ The intended data path is iOS client → authenticated secure connection → Mac
 - Launch Pi in RPC mode with persistent sessions enabled. Resolve the exact startup arguments from the selected Pi version.
 - Maintain one active Pi process and one active session per Mac in the first version. Reject project or session switches while work is active.
 - Only the companion writes to its managed sessions. Do not open the same session for writing in a separate terminal Pi process.
-- Persist the mapping between app session IDs, project IDs, and Pi session files. Remote clients use opaque IDs, not arbitrary Mac paths.
+- Persist the mapping between app session IDs, working-directory IDs, resolved Mac directories, and Pi session files. Remote clients use opaque IDs for commands; display paths do not authorize access.
 - A phone disconnection does not terminate the process. A companion exit stops its managed process after an orderly shutdown attempt.
 - After a Mac or companion restart, offer session restoration. Do not automatically repeat an interrupted prompt or claim that an interrupted tool completed.
 - Treat Mac sleep as an interruption to availability. The first version does not promise to wake a sleeping Mac or keep a closed MacBook running.
@@ -127,24 +195,30 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - Pair only while the Mac user has opened a short-lived pairing window. Require local confirmation of the device and server identity.
 - Verify TLS server identity during initial pairing and pin it for later connections. Never silently trust a changed certificate or disable certificate validation globally.
 - Generate a separate high-entropy credential for each paired device. Store credentials in Keychain, authenticate each connection, and support immediate revocation.
+- Require Face ID or the iPhone device passcode before exposing transcripts, directory listings, or remote controls after app launch or return from the background; validate Keychain access behavior on the physical phone.
+- Keep local app unlocking separate from Mac authentication; blocking the phone UI must not cancel work already running on the Mac.
 - Rate-limit pairing attempts. Reject unpaired, expired, replayed, and revoked credentials.
 - Bind only to intended interfaces and document firewall and private-network setup. A private network is not a substitute for application authentication.
-- Register projects through a Mac folder picker. Resolve remote project IDs only to locally registered folders.
-- Project registration limits app selection; it is not a security sandbox for Pi's tools. Explain this limit during setup.
+- Validate directory IDs and macOS access on the Mac for every listing and launch; reject stale IDs and malformed requests without assuming that a directory is forbidden merely because it is outside a project.
+- Require authentication for directory listings because folder names and paths can expose private information.
+- Directory-access rules limit app browsing and launch selection; they are not a security sandbox for Pi's tools. Explain this limit during setup.
 - Keep provider credentials on the Mac. Exclude secrets, pairing data, prompt text, and tool output from routine diagnostic logs.
 - Do not assume Pi asks for approval before every tool call. Supported extension dialogs are not a complete command-permission system.
-- Start with a directly distributed macOS companion because it launches a CLI and accesses development folders. Validate signing, notarization, folder permissions, and login-item behavior before promising distribution support.
+- Start with personal iOS and macOS builds; validate development signing, provisioning, folder permissions, and login-item behavior on the user's devices.
+- Before later distribution, validate TestFlight requirements for iOS and signing and notarization for the directly distributed macOS companion.
 - Request required iOS local-network permissions and define a deliberate certificate-trust flow. Do not add broad App Transport Security exceptions as a workaround.
 
 ## Plan
 
 ### 1. Resolve implementation blockers
 
-- [ ] Confirm the first-version scope, minimum iOS/macOS versions, distribution method, and local/private-network access requirements; record accepted decisions in this file.
-- [ ] Inspect the target Mac's Pi version, executable, authentication setup, and extensions; capture a compatibility report with supported commands and known RPC limitations.
-- [ ] Build a Swift command-line spike that launches Pi, sends a prompt, streams output, stops work, and resumes a persisted session; verify behavior with recorded events and an actual installed Pi.
+- [ ] Confirm the iPhone 16 Pro's installed iOS version, minimum iOS/macOS deployment versions, and personal-build signing setup; record evidence without treating the development host version as a compatibility guarantee.
+- [ ] Inspect the target Mac's Pi version, executable, authentication setup, and extensions; complete the native-workflow compatibility review with evidence and explicit decisions for each gap.
+- [ ] Validate access to any companion-accessible folder, including symbolic-link targets and macOS-protected locations; record expected access denials without requiring approved roots.
+- [ ] Select Keychain protection settings for the Face ID or device-passcode unlock policy; test denied unlock, background return, device lock, and credential revocation.
+- [x] Build a Swift command-line spike that launches Pi, sends a prompt, streams output, stops work, and resumes a persisted session; Pi 1.3.0 passed streaming, settlement, active-run Stop, working-directory, and saved-session assertions, with 15 RPC tests and seven shared-package tests; see [verification evidence](docs/verification.md).
 - [ ] Build a physical iPhone-to-Mac secure WebSocket spike with server-identity verification; prove pairing, authenticated reconnection, and rejection of an untrusted identity on the local network.
-- [ ] Test the same spike over the chosen private network; record setup instructions and whether access away from home is supported for this release.
+- [ ] Test the same spike over Tailscale with the iPhone away from the Mac's local network; record passing pairing, reconnection, and authenticated control results as a first-version requirement.
 
 ### 2. Establish the Swift workspace and contract
 
@@ -154,7 +228,8 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### 3. Build the Mac host
 
-- [ ] Implement Pi selection, project registration, and companion-owned session storage; demonstrate create, switch while idle, restart, and resume without changing unrelated Pi sessions.
+- [ ] Implement Pi selection, directory listing and validation, and companion-owned session storage; prove the selected working directory is used for creation and resumption without changing unrelated Pi sessions.
+- [ ] Test directory-access enforcement with unauthenticated requests, stale IDs, inaccessible folders, symbolic links, traversal attempts, and a folder removed between selection and launch; prove rejected requests do not start Pi.
 - [ ] Implement pairing, credential storage, authentication, and revocation; prove an unpaired or revoked device cannot read transcripts or issue commands.
 - [ ] Implement prompt, steering, follow-up, Stop, model selection, and thinking-level controls; validate their state transitions against the installed Pi.
 - [ ] Implement snapshot synchronization, event replay, request deduplication, and bounded buffers; prove reconnection does not lose completed messages or resend accepted prompts.
@@ -162,19 +237,30 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### 4. Build the iOS client
 
-- [ ] Implement pairing, saved Mac connections, project selection, and session selection; complete setup on a physical iPhone without developer tools on the phone.
+- [ ] Create and review a small SwiftUI interface prototype covering directory selection, an idle conversation, streaming with tool output, Stop, session controls, and reconnection; confirm the primary screen remains limited to the header, transcript, and composer.
+- [ ] Implement pairing, saved Mac connections, the Mac directory picker, and session selection; on a physical iPhone, navigate into and out of nested folders and start Pi in a selected directory without registering that project separately on the Mac.
+- [ ] Implement the native commands and session controls accepted by the compatibility review; verify their results against the same workflows in the installed Pi terminal interface and report unsupported features explicitly.
 - [ ] Implement a streamed transcript with Markdown, code blocks, expandable tool output, and clear run states; verify recorded success, retry, compaction, failure, and cancellation cases.
 - [ ] Implement the composer, steering/follow-up choice, Stop, model controls, and supported extension dialogs; verify actions against the Mac host, including expired dialogs.
 - [ ] Implement foreground reconnection, draft retention, disconnected status, and snapshot replacement; verify phone lock, app suspension, Wi-Fi changes, and host restart without duplicate prompts.
-- [ ] Verify Dynamic Type, VoiceOver labels, keyboard use, and standard dictation; record physical-device results for the main coding-task flow.
+- [ ] Verify light and dark appearance, Dynamic Type, VoiceOver labels, contrast, touch targets, keyboard use, and standard dictation; record physical-device results for the main coding-task flow.
+- [ ] Test the interface on the smallest supported iPhone with the keyboard open and large text enabled; verify directory selection, prompt entry, Stop, errors, and secondary controls remain reachable without clipped content.
 
 ### 5. Validate and prepare the first release
 
 - [ ] Add automated protocol and integration tests with a fake Pi process; cover rejected commands, unknown outcomes, stale events, invalid credentials, large output, and connection loss during an active run.
 - [ ] Run a real-device test from local pairing through a coding task, phone disconnection, reconnection, Stop, and session restoration; record the result and remaining defects.
 - [ ] Test Mac sleep/wake, lost project access, missing model credentials, and Pi crashes; verify actionable errors and no automatic re-execution of interrupted work.
-- [ ] Prepare signed iOS test builds and a signed/notarized Mac build using the selected distribution route; verify installation and connection outside the development environment.
+- [ ] Install personal signed builds on the iPhone 16 Pro and the current Mac; verify launch, permissions, local connection, and Tailscale access without claiming TestFlight or public distribution is ready.
 - [ ] Document supported Pi versions, setup, security limits, network requirements, session ownership, and recovery in README.md; validate the instructions on a clean test setup.
+
+## Execution blockers
+
+- Xcode 26.6 is installed, but the global developer directory selects Command Line Tools; verified package checks use a command-local `DEVELOPER_DIR` override without changing the user's settings.
+- The paired iPhone is visible, but its developer disk image cannot be mounted; physical installation, secure pairing, accessibility, and lifecycle checks cannot pass until device support works.
+- Tailscale reports stopped and offline; off-site access cannot pass until the user's private-network setup is running and the iPhone is on a different network.
+- The native-workflow review has identified terminal-only extension APIs that RPC cannot carry; the full compatibility task remains open, with no feature deferrals accepted.
+- No app screens or remote listener were added before the physical secure transport spike; all dependent plan items remain open.
 
 ## Risks and Recovery
 
@@ -191,10 +277,15 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ## Completion Checklist
 
 - [ ] Both apps and all app-owned service code are written in Swift; no TypeScript backend is required.
-- [ ] A physical iPhone can securely connect to a MacBook or Mac mini and complete a coding task through Pi.
+- [ ] The interface review accepts the minimal conversation layout, directory picker, and secondary controls; physical-device checks confirm readable content and reachable actions with large text and the keyboard open.
+- [ ] A physical iPhone can securely connect to a MacBook or Mac mini, browse permitted Mac directories, and start Pi in the selected directory.
+- [ ] Session details show the correct working directory, and session restoration preserves it without a silent fallback.
+- [ ] Any companion-accessible folder can be selected without prior project registration; access-denial, stale-selection, and symbolic-link tests pass without bypassing macOS permissions.
+- [ ] The accepted local unlock policy protects transcripts, directory browsing, and remote controls; device revocation closes access without cancelling Mac-side work.
+- [ ] The native-workflow compatibility review is complete, accepted workflows pass their checks, and remaining gaps are documented without claiming full terminal parity.
 - [ ] Text streaming, tool activity, steering, follow-up, Stop, and supported extension dialogs pass the recorded test cases.
 - [ ] A phone disconnect does not stop Pi; reconnection restores the correct state without duplicate prompts.
 - [ ] Session restoration works after a companion restart, with interrupted work clearly identified.
 - [ ] Unpaired and revoked devices cannot access the host; certificate changes fail closed.
 - [ ] Build commands, automated tests, physical-device checks, and installation instructions have recorded passing results.
-- [ ] Network limits, Mac sleep behavior, supported Pi versions, and exclusions are documented and accepted for release.
+- [ ] Local and off-site Tailscale connections pass physical-device tests; network limits, Mac sleep behavior, supported Pi versions, and user-approved feature gaps are documented for the personal build.

@@ -6,14 +6,18 @@ Start a coding task from your iPhone, watch streamed output and tool activity, s
 
 ## Status
 
-**Planning only. Implementation has not started.** This repository contains the first-version plan, not working apps. Installation instructions, build commands, supported OS versions, and tested Pi versions are not yet available.
+**Early implementation; the complete plan is blocked.** A local Swift RPC spike and shared-package tests are available. There are no working iOS or macOS apps, pairing service, or remote listener yet.
+
+The spike passed against Pi 1.3.0. See [verification evidence and reproducible commands](docs/verification.md) for the exact checks, limitations, and device/network blockers; this is not a supported app release.
 
 See [PLAN.md](PLAN.md) for the proposed architecture, implementation steps, validation checks, and open decisions.
 
 ## Planned first version
 
 - Pair an iPhone with a Mac through local approval.
-- Select projects registered on the Mac and create or resume companion-managed sessions.
+- Browse any directory accessible to the Mac companion from the iPhone and choose where to start Pi, without per-project registration.
+- Create, resume, and switch companion-managed sessions, with the working directory shown for each session.
+- Target the complete Pi workflow, including commands and installed extensions, through a clean native interface without an embedded terminal; compatibility gaps require investigation and user approval before reducing scope.
 - Read streamed Markdown, code blocks, tool activity, and errors.
 - Send prompts, steer active work, queue follow-up messages, and stop work.
 - Select configured models and supported thinking levels, and answer supported extension dialogs.
@@ -35,20 +39,29 @@ The iPhone will connect to the Mac companion through an authenticated secure Web
 
 ## Network and security limits
 
-- Local-network access comes first. Access through a user-managed private network, such as Tailscale, requires validation before it is supported.
-- No hosted relay, public internet listener, or router port forwarding is planned.
-- A paired device is a trusted controller: Pi can change files and run commands with the Mac user's permissions. Registered project folders are not a security sandbox.
+- Both local-network and off-site Tailscale access are required for the first personal build; neither has been implemented or validated yet.
+- No hosted relay, public internet listener, or router port forwarding is part of the first version.
+- A paired device is a trusted controller: Pi can change files and run commands with the Mac user's permissions. Directory-access rules are not a security sandbox.
+- Folder selection is limited by macOS permissions, not an approved-root list; the app will not bypass system protections.
 - Pairing will require local approval, verified server identity, and a separate revocable credential for each device.
+- Local protection will require Face ID or the device passcode on launch and return from the background; hardware behavior is not yet validated.
 - The companion is intended to keep Pi running when the phone disconnects. A sleeping Mac is unavailable; remote wake is not planned.
 
 ## Outside the first version
 
 - Attaching to an existing Pi terminal session.
 - Remote desktop, a general-purpose terminal, or a full mobile code editor.
-- Concurrent active sessions, session branching, or automatic Git worktrees.
-- Image attachments, file uploads, or a separate file or diff browser.
+- Concurrent active sessions or automatic Git worktrees.
 - Custom voice features, push notifications, or continuous iOS background connectivity.
-- Full compatibility with terminal-only extensions.
+- Unverified compatibility with terminal-only extensions.
+
+Session branching, history navigation, attachments, and file or diff views are part of the complete-workflow review, not verified capabilities. Any reduction in scope needs user agreement.
+
+## Build and distribution direction
+
+Start with a personal build for iPhone 16 Pro and the current Mac, then prepare TestFlight distribution later. Minimum OS versions, signing, and compatibility remain unverified.
+
+A later phase will add account registration and a public connection service so an iPhone can connect to its user's Mac without Tailscale. Authentication, encryption, and routing for that service still require design.
 
 ## License
 
