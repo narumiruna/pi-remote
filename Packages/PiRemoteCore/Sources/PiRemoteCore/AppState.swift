@@ -65,7 +65,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var epoch: UUID
     public var sequence: UInt64 = 0
     public var piVersion = "Not running"
-    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics", "output-images", "last-assistant", "runtime-settings", "close-session", "session-export", "session-import", "session-jsonl-export", "session-import-directory", "pi-release-notes", "model-cycling", "retry-controls"]
+    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics", "output-images", "last-assistant", "runtime-settings", "close-session", "session-export", "session-import", "session-jsonl-export", "session-import-directory", "pi-release-notes", "model-cycling", "retry-controls", "session-tree", "session-lifecycle"]
     public var sessions: [SessionInfo] = []
     public var selected: UUID?
     public var phase = "idle"
@@ -82,6 +82,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var error: RemoteFault?
     public var hasOlderMessages = false
     public var runtime: RuntimeSettings?
+    public var pendingMessages: Int?
 
     public init(host: UUID, epoch: UUID) { self.host = host; self.epoch = epoch }
 
@@ -137,6 +138,24 @@ public struct HistoryItem: Codable, Sendable, Equatable, Identifiable {
     public var preview: UUID?
     public init(id: String, parent: String?, kind: String, text: String, canFork: Bool, preview: UUID? = nil) {
         self.id = id; self.parent = parent; self.kind = kind; self.text = text; self.canFork = canFork; self.preview = preview
+    }
+}
+
+/// A tree node with a session-bound token for the existing full history preview.
+public struct SessionTreeItem: Codable, Sendable, Equatable, Identifiable {
+    public var node: SessionTreeNode
+    public var preview: UUID?
+    public var id: String { node.id }
+    public init(node: SessionTreeNode, preview: UUID?) { self.node = node; self.preview = preview }
+}
+
+/// One bounded page from an immutable, short-lived tree inspection.
+public struct SessionTreePage: Codable, Sendable, Equatable {
+    public var items: [SessionTreeItem]
+    public var leafID: String?
+    public var next: UUID?
+    public init(items: [SessionTreeItem], leafID: String?, next: UUID?) {
+        self.items = items; self.leafID = leafID; self.next = next
     }
 }
 

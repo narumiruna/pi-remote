@@ -2,9 +2,9 @@
 
 ## Result
 
-Sixteen interface tests now pass in bounded batches, with zero failures or skips; see the [current checkpoint](release-notes.md#verification-checkpoint). The original six also passed twice in sequence before usage, image-output, text-attachment and runtime-control checks were added. They run the production phone views in a separate test app on an iPhone SE (3rd generation) simulator, iOS 26.5, at 375 × 667 points with accessibility-extra-large text. Captures were inspected in light and dark appearance.
+All 27 current interface tests pass in 14 accepted batches, with zero failures or skips in that set; see the [current acceptance checkpoint](core-rpc-acceptance.md#delegated-compact-interface-audit). Earlier failed attempts and test-navigation fixes remain recorded. The original six also passed twice in sequence before usage, image-output, text-attachment and runtime-control checks were added. They run the production phone views in a separate test app on an iPhone SE (3rd generation) simulator, iOS 26.5, at 375 × 667 points with accessibility-extra-large text. Captures were inspected in light and dark appearance.
 
-The product app suite also passes all 29 tests with the explicit provider fixture on this Mac's LAN and Tailscale interfaces. All 83 root tests and 35 shared tests pass, also with Thread Sanitizer. The unsigned Mac and iOS device-SDK builds pass. This is local evidence, not hardware or distribution evidence.
+The product app suite also passes all 31 tests with the explicit provider fixture on this Mac's LAN and Tailscale interfaces. All 135 root tests and 50 shared tests pass, also with Thread Sanitizer. The unsigned Mac and iOS device-SDK builds pass. This is local evidence, not hardware or distribution evidence.
 
 ## Test boundary
 
@@ -68,8 +68,10 @@ Use the returned ID in the commands above. Boot it with `xcrun simctl boot <id>`
 
 ## Local artifacts
 
-Passing summaries: `/tmp/pi-remote-interface-verified-1-summary.json`, `/tmp/pi-remote-interface-verified-2-summary.json` and the final `/tmp/pi-remote-interface-final-summary.json`. Product summaries use `/tmp/pi-remote-interface-product-<address>.json`. Build and package logs use `/tmp/pi-remote-interface-{mac,device,root,core}.log`.
+Current artifacts are under `/tmp/pi-remote-worker-interface-final-hXEQ2M/`: `REPORT.md`, `accepted-results.json`, `verified-tests.json`, all per-batch summaries/result bundles and 39 reviewed captures. Parent verification matched every current test to the accepted set. UI/fixture hashes stayed unchanged; the fixture app and runner were removed. Earlier attempts had 12 failed executions across ten bundles; see `earlier-failures.json`. These records do not claim one uninterrupted passing suite.
+
+Historical passing summaries: `/tmp/pi-remote-interface-verified-1-summary.json`, `/tmp/pi-remote-interface-verified-2-summary.json` and the final `/tmp/pi-remote-interface-final-summary.json`. Product summaries use `/tmp/pi-remote-interface-product-<address>.json`. Build and package logs use `/tmp/pi-remote-interface-{mac,device,root,core}.log`.
 
 Xcode result bundles are under `/tmp/pi-remote-interface/Logs/Test/`. Reviewed captures are exported to `/tmp/pi-remote-interface-final-reviewed-attachments/`. The failed layout sample is `/tmp/pi-remote-reading-hang-1.log`. These are temporary local artifacts. No screenshots, recordings, transcripts or binary test artifacts are committed.
 
-Installed-extension compatibility and the remaining real-Pi command checks remain open in `PLAN.md`. Clean setup controls now have local model/transport and simulator evidence. The eight-test image checkpoint is recorded in `/tmp/pi-remote-output-ui-verified-summary.json`. The nine-test attachment checkpoint is recorded in `/tmp/pi-remote-attachment-ui-summary.json`. The current eleven-test runtime run is recorded in `/tmp/pi-remote-runtime-ui-full-summary.json`, with reviewed captures in `/tmp/pi-remote-runtime-ui-full-attachments/`.
+Only the core shell-control scope decision remains open in `PLAN.md`. Individual-extension compatibility and terminal-only behavior are outside the accepted scope. The following smaller checkpoints are historical evidence. Clean setup controls now have local model/transport and simulator evidence. The eight-test image checkpoint is recorded in `/tmp/pi-remote-output-ui-verified-summary.json`. The nine-test attachment checkpoint is recorded in `/tmp/pi-remote-attachment-ui-summary.json`. The current eleven-test runtime run is recorded in `/tmp/pi-remote-runtime-ui-full-summary.json`, with reviewed captures in `/tmp/pi-remote-runtime-ui-full-attachments/`.

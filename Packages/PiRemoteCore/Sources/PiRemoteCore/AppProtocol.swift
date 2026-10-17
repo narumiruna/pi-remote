@@ -16,6 +16,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case directories(id: UUID?, cursor: UUID?)
     case preview(id: UUID)
     case createSession(directory: UUID)
+    case newSession(parent: Bool)
     case importSession(data: Data)
     case importSessionInDirectory(data: Data, directory: UUID)
     case resumeSession(id: UUID)
@@ -30,6 +31,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case history
     case historyPage(cursor: UUID?)
     case historyEntry(id: UUID)
+    case sessionTree(cursor: UUID?)
     case fork(entry: String)
     case clone
     case command(name: String, arguments: String)
@@ -50,14 +52,14 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var mutates: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession, .exportJSONL, .releaseNotes: false
+        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .sessionTree, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession, .exportJSONL, .releaseNotes: false
         default: true
         }
     }
 
     public var changesSession: Bool {
         switch self {
-        case .createSession, .importSession, .importSessionInDirectory, .resumeSession, .fork, .clone, .closeSession: true
+        case .createSession, .newSession, .importSession, .importSessionInDirectory, .resumeSession, .fork, .clone, .closeSession: true
         default: false
         }
     }
@@ -100,6 +102,7 @@ public enum AppResult: Codable, Sendable, Equatable {
     case preview(FilePreview)
     case history([HistoryItem])
     case historyPage(HistoryPage)
+    case sessionTree(SessionTreePage)
     case statistics(SessionStatistics)
     case releaseNotes(ReleaseNotesPage)
     case exportSession(SessionExport)

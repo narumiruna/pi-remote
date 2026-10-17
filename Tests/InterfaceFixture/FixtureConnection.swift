@@ -18,6 +18,9 @@ actor FixtureConnection: PhoneConnection {
     private var snapshot: HostSnapshot
     private let unavailable: Bool
     private let streaming: Bool
+    private let inspection = ProcessInfo.processInfo.arguments.contains("inspection")
+    private let inspectionNext = UUID(), inspectionTextPreview = UUID(), inspectionImagePreview = UUID()
+    private var inspectionOrigin: UUID?
     private var streamTask: Task<Void, Never>?
     private var observers: [UUID: AsyncStream<ClientUpdate>.Continuation] = [:]
 
@@ -61,6 +64,7 @@ actor FixtureConnection: PhoneConnection {
             } catch { state.error = .storageFailure }
         }
         snapshot = state
+        if inspection { inspectionOrigin = state.selected }
     }
 
     private func directoryPath(_ id: UUID) throws -> String {
@@ -72,6 +76,30 @@ actor FixtureConnection: PhoneConnection {
         default: throw RemoteFault.staleDirectory
         }
     }
+    private func inspectionPage(_ cursor: UUID?) throws -> SessionTreePage {
+        guard inspection else { throw RemoteFault.unsupportedFeature }
+        guard snapshot.selected == inspectionOrigin else { throw RemoteFault.expired }
+        guard !snapshot.working else { throw RemoteFault.busy }
+        func node(_ id: String, parent: String?, text: String, canFork: Bool, label: String? = nil,
+                  timestamp: String? = nil, truncated: Bool = false, preview: UUID? = nil) -> SessionTreeItem {
+            SessionTreeItem(node: SessionTreeNode(id: id, parentID: parent, kind: "message", label: label,
+                labelTimestamp: timestamp, text: text, truncated: truncated, canFork: canFork), preview: preview)
+        }
+        if cursor == nil {
+            return SessionTreePage(items: [
+                node("root", parent: nil, text: "Shared root", canFork: false, label: "Root checkpoint", timestamp: "2024-12-03T14:30:00.125Z"),
+                node("abandoned", parent: "root", text: "Abandoned branch preview", canFork: true, truncated: true, preview: inspectionTextPreview),
+                node("image-only", parent: "root", text: "[Image]", canFork: false, preview: inspectionImagePreview),
+                node("active-leaf", parent: "root", text: "Active assistant response", canFork: false)
+            ], leafID: "active-leaf", next: inspectionNext)
+        }
+        guard cursor == inspectionNext else { throw RemoteFault.expired }
+        return SessionTreePage(items: [
+            node("whitespace", parent: "root", text: " \n\t", canFork: true),
+            node("empty-text", parent: "root", text: "", canFork: false)
+        ], leafID: "active-leaf", next: nil)
+    }
+
     private func importCopy(_ data: Data, directory: String? = nil) throws {
         guard !snapshot.working else { throw RemoteFault.busy }
         let value = try SessionImport(data: SessionImport.preparedCopy(of: data, directory: directory))
@@ -182,6 +210,12 @@ actor FixtureConnection: PhoneConnection {
         case .preview(let id):
             guard id == file else { throw RemoteFault.staleDirectory }
             return .preview(FilePreview(name: "fixture.swift", text: "let attached = 42", truncated: false))
+        case .newSession(let parent):
+            guard !snapshot.working, let current = snapshot.sessions.first(where: { $0.id == snapshot.selected }) else { throw RemoteFault.busy }
+            let session = SessionInfo(id: UUID(), title: parent ? "New child fixture" : "New empty fixture", directory: current.directory)
+            snapshot.sessions.append(session); snapshot.selected = session.id
+            snapshot.messages = []; snapshot.dialogs = []; snapshot.notices = []; snapshot.draft = nil; snapshot.draftID = nil
+            snapshot.phase = "idle"
         case .createSession(let directory):
             guard !snapshot.working else { throw RemoteFault.busy }
             let path = directory == nested ? "/Users/fixture/project/nested" : "/Users/fixture/project"
@@ -202,11 +236,32 @@ actor FixtureConnection: PhoneConnection {
         case .thinking(let level): snapshot.thinking = level
         case .rename(let name):
             if let index = snapshot.sessions.firstIndex(where: { $0.id == snapshot.selected }) { snapshot.sessions[index].title = name }
-        case .compact: snapshot.notices = ["Compaction fixture completed."]
+        case .compact(let instructions):
+            guard !snapshot.working, instructions.utf8.count <= 16_384 else { throw RemoteFault.invalidRequest }
+            snapshot.notices = ["Compaction fixture completed."]
+            if !instructions.isEmpty { snapshot.notices.append("Summary instructions: " + instructions) }
         case .command:
             snapshot.dialogs = [ExtensionDialog(id: "fixture-editor", method: "editor", title: "Fixture editor", message: "Review this text before submitting it.", options: [], text: "Fixture editor text", expires: nil)]
         case .answer: snapshot.dialogs = []
         case .diff: return .preview(FilePreview(name: "Working tree diff", text: "+ let fixture = 42", truncated: false))
+        case .sessionTree(let cursor): return .sessionTree(try inspectionPage(cursor))
+        case .historyEntry(let id):
+            guard inspection else { throw RemoteFault.unsupportedFeature }
+            guard snapshot.selected == inspectionOrigin else { throw RemoteFault.expired }
+            if id == inspectionTextPreview {
+                return .preview(FilePreview(name: "Abandoned entry", text: "Abandoned branch full entry. Exact full preview beyond abbreviated tree text.", truncated: false))
+            }
+            guard id == inspectionImagePreview else { throw RemoteFault.expired }
+            return .preview(FilePreview(name: "Image-only entry", text: "[Image]", truncated: false, images: [OutputImageReference(id: Self.imageID)]))
+        case .fork(let entry):
+            guard inspection else { throw RemoteFault.unsupportedFeature }
+            guard snapshot.selected == inspectionOrigin, !snapshot.working else { throw RemoteFault.conflict }
+            guard ["abandoned", "whitespace"].contains(entry) else { throw RemoteFault.invalidRequest }
+            let branch = SessionInfo(id: UUID(), title: "Inspection fork", directory: "/Users/fixture/project")
+            snapshot.sessions.append(branch); snapshot.selected = branch.id
+            snapshot.messages = [TranscriptMessage(role: "user", text: "Shared root")]
+            snapshot.draft = entry == "abandoned" ? "Abandoned branch draft; not sent." : " \n\t"
+            snapshot.draftID = UUID()
         case .historyPage: return .historyPage(HistoryPage(items: [], next: nil))
         default: throw RemoteFault.unsupportedFeature
         }

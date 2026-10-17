@@ -15,19 +15,46 @@ The user confirmed that app compatibility targets only the RPC protocol provided
 
 ## Core RPC audit inventory
 
-The following groups list the operations in installed Pi 1.3.0's `docs/rpc-commands.md`. Each operation still needs an explicit app mapping and direct evidence audit; grouping is not a claim that its implementation is missing or complete.
+The following groups list the operations in installed Pi 1.3.0's `docs/rpc-commands.md`. The table separates verified groups from remaining integration work. Passing checks for one group do not close another group.
 
 | Area | Core operations | Acceptance status |
 | --- | --- | --- |
-| Work and queues | `prompt`, `steer`, `follow_up`, `abort`, `clear_queue` | Audit pending |
-| Session changes | `new_session`, `switch_session`, `set_session_name`, `fork`, `clone` | Audit pending |
-| State and history | `get_state`, `get_messages`, `get_fork_messages`, `get_entries`, `get_tree`, `get_last_assistant_text`, `get_session_stats` | Audit pending |
-| Models and thinking | `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels` | Audit pending |
-| Runtime controls | `set_steering_mode`, `set_follow_up_mode`, `compact`, `set_auto_compaction`, `set_auto_retry`, `abort_retry` | Audit pending |
-| Shell and export | `bash`, `abort_bash`, `export_html` | Audit pending; shell controls must also respect the no-general-terminal requirement |
-| Discovery | `get_commands` | Audit pending |
+| Work and queues | `prompt`, `steer`, `follow_up`, `abort`, `clear_queue` | Native prompt/delivery/Stop controls; installed provider checks and [queue race regressions](core-event-verification.md#queue-delivery) pass |
+| Session changes | `new_session`, `switch_session`, `set_session_name`, `fork`, `clone` | Native same-directory core lifecycle, normalized names and authoritative branching; installed [lifecycle checks](session-lifecycle.md) pass normally and with Thread Sanitizer, including cancellation and oversized fork text |
+| State and history | `get_state`, `get_messages`, `get_fork_messages`, `get_entries`, `get_tree`, `get_last_assistant_text`, `get_session_stats` | Native state/transcript, authoritative paged tree/fork options, copy and usage; installed-Pi [inspection](session-inspection.md), copy and statistics checks pass. All 27 compact-interface tests and 31 product tests on each local network pass |
+| Models and thinking | `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels` | Native selection/cycling and discovered choices; installed-Pi and compact-interface [checks pass](runtime-controls.md#core-model-cycling-and-retry-checkpoint) |
+| Runtime controls | `set_steering_mode`, `set_follow_up_mode`, `compact`, `set_auto_compaction`, `set_auto_retry`, `abort_retry` | Confirmed native settings, compaction and retry cancellation; [settings checks](runtime-controls.md) and [active retry/compaction checks](core-event-verification.md) pass |
+| Shell and export | `bash`, `abort_bash`, `export_html` | Reviewed HTML export passes installed, native and product checks. `bash`/`abort_bash` remain unimplemented pending the no-general-shell-endpoint scope decision |
+| Discovery | `get_commands` | Native generic command list and dispatch; private startup/resource checks and active extension-dialog dispatch pass |
 
-Also inventory the core event stream and extension UI request/response methods, including cancellation, timeouts and unsupported-method behavior. Keep authenticated typed app actions, opaque filesystem/session identities, deduplication and bounded output; core RPC scope does not mean exposing an arbitrary raw RPC endpoint.
+### Event mapping
+
+The 24 event types in Pi 1.3.0's `json.md` have the following app mappings. This table does not close the pending shell-stream check.
+
+| Events | App behavior | Direct checks |
+| --- | --- | --- |
+| `agent_start`, `agent_settled` | Active/settled state and persisted interruption marker | Provider, host, reconnection and reducer checks |
+| `agent_end`, `turn_start`, `turn_end` | Do not declare idle or duplicate completed messages | `turnAndAgentEndRecordsCannotDeclareSettlementOrDuplicateMessages` |
+| `message_start`, `message_update`, `message_end` | Bounded streamed blocks replaced by final messages | Installed provider, image and reducer checks |
+| `tool_execution_start`, `tool_execution_update`, `tool_execution_end` | Correlated tool rows; final tool messages reconcile provisional output | Product coding tests and `finalToolResultReplacesExecutionResultWithStableIdentityAndImages` |
+| `queue_update` | Replace pending counts without copying queue text into snapshots | Dedicated queue and Stop regressions |
+| `entry_appended` | Retain opaque custom metadata in Pi history; do not invent a chat message | Reducer metadata boundary and [history-inspection checks](session-inspection.md) |
+| `session_info_changed`, `thinking_level_changed` | Normalized/cleared title and current thinking state | Installed `NativeUIStateCheck` |
+| `compaction_start`, `compaction_end` | Phase/error handling and deferred authoritative history refresh | Installed manual compaction and host automatic-compaction regression |
+| `auto_retry_start`, `auto_retry_end` | Retry state, bounded final failure and event-driven settlement | Installed `NativeRetryCheck` and reducer checks |
+| `summarization_retry_scheduled`, `summarization_retry_attempt_start`, `summarization_retry_finished` | Retry/compaction phases restored between attempts | Manual-compaction and branch-summary reducer cases |
+| `bash_execution_update` | Native shell output mapping pending the shell-control decision | Open |
+| `extension_error` | Generic unsupported-feature error without publishing extension paths or supplied error text | `extensionFailuresAndUnknownUIRequestsDoNotExposePathsOrApproveDialogs` |
+
+### Standard extension UI mapping
+
+All nine core UI methods have native mappings. `select`, `confirm`, `input` and `editor` use session-bound dialogs and typed responses. `notify` and `setTitle` use notices. `setStatus` and `setWidget` have independent bounded key namespaces. `set_editor_text` proposes a draft update, with an explicit decision before replacing a nonempty draft. Terminal severity styling, widget placement and terminal titles are not reproduced.
+
+Installed `NativeWorkflowCheck` verifies the four dialog methods, prefill, timeout and late-answer rejection. Installed `NativeUIStateCheck` verifies notices, status/widget replacement and clearing, and Stop-cancelled input. Host and app checks verify oversized-dialog cancellation, stale contexts and draft-replacement consent. This is standard protocol support, not a dependency on the fixture extension.
+
+Keep authenticated typed app actions, opaque filesystem/session identities, deduplication and bounded output; core RPC scope does not mean exposing an arbitrary raw RPC endpoint.
+
+A host regression verifies that an unknown UI method creates no dialog and sends no automatic response. The remaining open operation/event mappings concern shell controls.
 
 The current installed runtime is Pi 1.3.0 at `/Users/narumi/.bun/bin/pi`. The executable is a Node.js entry point. `pi auth check --provider openai-codex --model gpt-6.1-sol --json --no-refresh` reports ready with OAuth, without exposing credentials. This is the only runtime version exercised here; it is not a supported-version range.
 
@@ -38,7 +65,9 @@ The current installed runtime is Pi 1.3.0 at `/Users/narumi/.bun/bin/pi`. The ex
 - `NativeProviderCheck`: real image input, live streaming, steering, follow-up, queue-clearing Stop, clone, fork, real manual compaction and nonempty restoration. Resources and tools are disabled.
 - `NativeFailureCheck`: installed-Pi missing-credential rejection, deduplication and empty-session restoration in an empty home/environment.
 - `NativeExtensionCheck`: the currently configured package set loaded together in an empty home/environment, command discovery, safe menu cancellation and explicit terminal-only rejection. This does not test provider/account operations, configuration changes, sync transfers or normal credential-backed startup behavior.
-- Package, Mac-model, simulator and interface checks: [workflow evidence](workflow-verification.md) and [interface evidence](interface-verification.md).
+- `NativeInspectionCheck`: private 217-entry imported tree, resolved labels/timestamps/leaf, paged text/image previews, abandoned-message fork and restoration, with OS-level network denial and zero inference; [direct evidence](session-inspection.md).
+- `NativeRetryCheck` and `NativeUIStateCheck`: isolated installed-Pi retry cancellation, normalized names, thinking events, independent status/widget namespaces, notification/title projection and Stop-cancelled input; [direct evidence](core-event-verification.md).
+- Current 135-test root/50-test shared normal and sanitizer checks, three Mac-model checks, 31 product tests on each local network, installed probes and three unsigned builds: [acceptance checkpoint](core-rpc-acceptance.md). All 27 compact-interface tests pass in the final accepted batch set; earlier [workflow](workflow-verification.md) and [interface](interface-verification.md) checkpoints remain historical evidence.
 
 `NativeExtensionCheck` loads explicit package entry points and `builtin:llama.cpp` with other extensions disabled. Its inventory matches `pi list` at this checkpoint, not every package left on disk. It does not invoke `/herdr` or control Herdr. It sends no inference prompt, retains no real credentials and makes no deliberate external write. Private fixture files are removed after shutdown.
 
@@ -91,7 +120,7 @@ The installed `docs/slash-commands.md` includes terminal-only commands. Their pr
 | `/new`, `/resume`, `/name` | Implemented for companion-owned sessions; local and simulator checks pass | Manual import is separate; terminal-session attachment remains excluded. |
 | `/model`, `/thinking` | Implemented and checked against installed Pi | No tested runtime-version range beyond 1.3.0. |
 | Prompt, streaming, tools, steering, follow-up, Stop | Provider and simulator checks pass | Extension renderers remain a gap; bounded native raster-image viewing now passes separately. |
-| `/fork`, `/clone` | Implemented; real provider checks pass | Fork is limited by Pi to eligible active-branch user messages. |
+| `/fork`, `/clone` | Implemented; real provider checks pass | Historical active-branch-only assumption was incorrect. Core `get_fork_messages` also includes eligible messages from abandoned branches; authoritative native integration and installed-Pi checks now pass. |
 | `/tree` | Paged entry inspection only | In-place navigation is missing from RPC; extension command contexts expose `navigateTree`, but no app-owned adapter exists. Do not edit JSONL leaf state externally while Pi owns it. |
 | `/compact` | Real summarization, compacting state, persisted entry and restart restoration pass | Extension-specific compaction remains separate. |
 | `/session` | Native session-usage view shows validated token, cost, message and context statistics from `get_session_stats`; installed-Pi empty and post-compaction checks pass | Provider totals are estimates, not an invoice; unavailable post-compaction context is explicit. |
@@ -109,7 +138,7 @@ The installed `docs/slash-commands.md` includes terminal-only commands. Their pr
 | `/hotkeys` | Not implemented | Native equivalents need an explicit compatibility decision; terminal keybindings cannot be copied as mobile controls. |
 | `/quit` | Native idle-session close stops Pi, keeps the listener/catalog and supports explicit resume without prompt replay | Working state rejects close until Stop reaches idle. |
 
-Managed-session activation currently starts a new Pi child with the selected cwd. Startup/shutdown is not equivalent to Pi's `session_before_switch` or `session_before_tree` hooks. Cancellation, summary and extension lifecycle parity need an adapter or upstream interface; the passing companion-managed create/resume checks do not prove those terminal hooks.
+At the earlier checkpoint, managed-session activation always started a new child. The current [same-directory core lifecycle](session-lifecycle.md) now preserves the standard new/switch/fork hooks and cancellation without an adapter. Cross-directory activation still replaces the process deliberately. In-place tree navigation remains outside core RPC scope.
 
 </details>
 

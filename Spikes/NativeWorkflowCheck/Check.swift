@@ -144,7 +144,8 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             let expiredResult = await host.handle(AppRequest(epoch: host.epoch, session: expiredState.selected,
                 action: .answer(dialog: expiringDialog.id, value: "Late", confirmed: nil, cancelled: false)), device: device)
             try require(expiredResult == .failure(.expired))
-            _ = try await send(.command(name: "rpc-prefill", arguments: ""))
+            // A slash command handled by core is not a persisted user conversation.
+            _ = try await send(.prompt(text: "/rpc-prefill", delivery: .prompt, image: nil))
             for _ in 0..<100 {
                 if await host.state().draftID != nil { break }
                 try await Task.sleep(for: .milliseconds(25))
@@ -152,7 +153,25 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             try require(await host.state().draft == "This text was set by the rpc-demo extension.")
             _ = try await send(.stop)
             try require(await host.state().phase == "idle")
-            _ = try await send(.createSession(directory: directory))
+            let newSession = Task { try await send(.createSession(directory: directory)) }
+            do {
+                var confirmation: ExtensionDialog?
+                for _ in 0..<200 {
+                    confirmation = await host.state().dialogs.first
+                    if confirmation != nil { break }
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                guard let confirmation, confirmation.method == "confirm", confirmation.title == "Clear session?" else {
+                    throw CheckFailure.assertion(#line)
+                }
+                // This is explicit fixture consent to the standard core lifecycle hook.
+                _ = try await send(.answer(dialog: confirmation.id, value: nil, confirmed: true, cancelled: false))
+                _ = try await newSession.value
+            } catch {
+                await host.shutdown()
+                _ = try? await newSession.value
+                throw error
+            }
             let blank = await host.state()
             try require(blank.draft == nil && blank.draftID == nil)
             _ = try await send(.resumeSession(id: selected!))

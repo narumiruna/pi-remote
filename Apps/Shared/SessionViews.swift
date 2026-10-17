@@ -11,6 +11,11 @@ struct SessionListView: View {
     var body: some View {
         List {
             Button("New session", systemImage: "plus", action: newSession).frame(minHeight: 44).disabled(state.working)
+            if state.capabilities.contains("session-lifecycle"), state.selected != nil {
+                NavigationLink("New in current directory") {
+                    NewManagedSessionView(state: state, request: request, created: selected)
+                }.frame(minHeight: 44).disabled(state.working)
+            }
             if state.capabilities.contains("session-import") {
                 NavigationLink("Import JSONL session") { SessionImportView(request: request, canChooseDirectory: state.capabilities.contains("session-import-directory"), imported: selected) }
                     .frame(minHeight: 44).disabled(state.working)
@@ -115,9 +120,14 @@ struct SessionControls: View {
                 }
             }
             Section("Session") {
+                if state.capabilities.contains("session-lifecycle") {
+                    NavigationLink("New in current directory") {
+                        NewManagedSessionView(state: state, request: request, created: closed)
+                    }.frame(minHeight: 44)
+                }
                 TextField("Session name", text: $name)
                 Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
-                Button("Compact context") { perform(.compact(instructions: "")) }
+                NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: 44)
                 Button("Clone current branch") { perform(.clone) }
                 if state.capabilities.contains("close-session") {
                     Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: 44)
@@ -129,6 +139,11 @@ struct SessionControls: View {
                     }
                 }
             }.disabled(state.working || state.selected == nil)
+            if let pending = state.pendingMessages, pending > 0 {
+                Section("Pending instructions") {
+                    Text("Queued instructions: \(pending). Use Stop to clear the queue.")
+                }
+            }
             Section("Commands, skills, and templates") {
                 TextField("Command arguments", text: $arguments)
                 ForEach(state.commands) { command in
@@ -137,11 +152,11 @@ struct SessionControls: View {
                             Text("/" + command.name)
                             Text(command.detail).font(.caption).foregroundStyle(.primary.opacity(0.75))
                         }
-                    }
+                    }.disabled(state.working && command.source != "extension")
                 }
-                Text("Terminal-only extension interfaces require native adapters; full compatibility is not yet verified.")
+                Text("Commands use Pi core RPC. A command can report that it requires a terminal.")
                     .font(.caption).foregroundStyle(.primary.opacity(0.75))
-            }.disabled(state.working || state.selected == nil)
+            }.disabled(state.selected == nil)
         }
         .navigationTitle("Session controls")
         .alert("Close this Pi session?", isPresented: $confirmClose) {
@@ -162,6 +177,58 @@ struct SessionControls: View {
     }
 }
 
+struct NewManagedSessionView: View {
+    let state: HostSnapshot
+    let request: (SessionAction) async throws -> AppResult
+    let created: () -> Void
+    @State private var parent = false
+    @State private var confirm = false
+    @State private var sending = false
+    @State private var error: String?
+
+    var body: some View {
+        Form {
+            if let session = state.sessions.first(where: { $0.id == state.selected }) {
+                Section("Working directory") { Text(session.directory).font(.caption.monospaced()).textSelection(.enabled) }
+            }
+            Section("New session") {
+                Toggle("Record current session as parent", isOn: $parent)
+                    .accessibilityIdentifier("new-session-parent")
+                Text("Starts an empty conversation in the same directory. Parent ancestry records a link to saved history; it does not copy messages or resend instructions. A parent must have a saved session file.")
+                    .font(.caption)
+            }.disabled(sending || state.working || state.selected == nil)
+            if let error { Text(error).foregroundStyle(.primary) }
+        }
+        .accessibilityIdentifier("new-session-form")
+        .navigationTitle("New session")
+        .safeAreaInset(edge: .bottom) {
+            Button { confirm = true } label: {
+                Text("Review new session").frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("new-session-review")
+            .disabled(sending || state.working || state.selected == nil)
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            .background(.bar)
+        }
+        .alert("Start an empty session?", isPresented: $confirm) {
+            Button("Start new session") {
+                sending = true
+                Task {
+                    defer { sending = false }
+                    do {
+                        let result = try await request(.newSession(parent: parent))
+                        if case .failure(let fault) = result { throw fault }
+                        created()
+                    } catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text(parent ? "The new session will record the current saved session as its parent. No messages are copied." : "The current session remains in Sessions. No messages are copied or sent.") }
+        .onChange(of: state.context) { _, _ in confirm = false; parent = false }
+    }
+}
+
 struct HistoryView: View {
     let request: (SessionAction) async throws -> AppResult
     var paged = false
@@ -174,7 +241,9 @@ struct HistoryView: View {
     var body: some View {
         List {
             if let error { Text(error).foregroundStyle(.primary) }
-            Text("Includes compacted history and abandoned branches. Fork is available only for user messages on the active branch; it does not switch an abandoned branch.")
+            NavigationLink("Session tree and fork options") { SessionTreeView(request: request, forked: forked) }
+                .accessibilityIdentifier("session-tree-link")
+            Text("File history includes compacted entries and abandoned branches. Open the session tree for labels, the active leaf and Pi's current fork options.")
                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
             if loading { ProgressView("Loading history") }
             if !newer.isEmpty { Button("Newer entries") { page = newer.removeLast() }.frame(minHeight: 44).disabled(loading) }

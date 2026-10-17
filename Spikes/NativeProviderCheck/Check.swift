@@ -101,12 +101,21 @@ private func quoted(_ value: String) -> String { "'" + value.replacingOccurrence
             let firstMessages = completed.messages
             try require(firstMessages.contains { $0.role == "user" })
             guard case .historyPage(let page) = try await send(.historyPage(cursor: nil), to: host),
-                  let entry = page.items.first(where: { $0.canFork }) else { throw CheckFailure.assertion(#line) }
+                  page.items.contains(where: { $0.kind == "message" }),
+                  case .sessionTree(let tree) = try await send(.sessionTree(cursor: nil), to: host),
+                  let entry = tree.items.first(where: { $0.node.canFork }), tree.leafID != nil else {
+                throw CheckFailure.assertion(#line)
+            }
             _ = try await send(.clone, to: host)
             try require(try await selected(host) != original)
             try require(sameMessages(await host.state().messages, firstMessages))
-            _ = try await send(.fork(entry: entry.id), to: host)
+            _ = try await send(.fork(entry: entry.node.id), to: host)
             try require(await host.state().draft?.contains("READY") == true)
+            let branchID = try await selected(host)
+            let catalog = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: support.appendingPathComponent("sessions.json")))
+            guard let branch = catalog.array?.first(where: { $0["info"]?["id"]?.string?.lowercased() == branchID.uuidString.lowercased() }),
+                  let file = branch["file"]?.string.flatMap(URL.init(string:)) else { throw CheckFailure.assertion(#line) }
+            if !FileManager.default.fileExists(atPath: file.path) { try require(branch["hasHistory"]?.bool == false) }
             _ = try await send(.resumeSession(id: original), to: host)
             try require(sameMessages(await host.state().messages, firstMessages))
 

@@ -35,13 +35,21 @@ The `retry-controls` capability adds confirmed `set_auto_retry` requests and **C
 Verification:
 
 - All 86 root tests and 36 shared tests pass normally and with Thread Sanitizer. New cases cover typed round trips, old settings payloads, optional acknowledgements, request deduplication, null model-cycle responses, stale sessions, working-state rejection, failed setters, refresh/process reset and retry cancellation while another mutation waits for a dialog.
-- Installed Pi 1.3.0 `NativeWorkflowCheck` passes normally and with Thread Sanitizer without inference. It checks actual cycle results, acknowledged retry requests, private fixture settings-file writes and idle retry cancellation, with unchanged real user settings. This is not yet an active real-retry lifecycle check.
-- Four focused compact-interface checks pass without skips: cycling, retry consent/acknowledgement/refresh, retry cancellation, and the existing queue/compaction confirmation regression. Captures verify large-text controls. The remaining interface suite still needs its final acceptance run.
+- Installed Pi 1.3.0 `NativeWorkflowCheck` passes normally and with Thread Sanitizer without inference. It checks actual cycle results, acknowledged retry requests, private fixture settings-file writes and idle retry cancellation, with unchanged real user settings. The later [core event checkpoint](core-event-verification.md#active-retry-cancellation) also verifies an active retry wait and cancellation with an isolated synthetic provider, without network access or inference.
+- Four focused compact-interface checks pass without skips: cycling, retry consent/acknowledgement/refresh, retry cancellation, and the existing queue/compaction confirmation regression. Captures verify large-text controls. All 27 interface tests now pass in the final accepted batch set; see [acceptance evidence](core-rpc-acceptance.md).
 - All three Mac-model checks and unsigned Mac, simulator and device-SDK builds pass. A separate Herdr Pi agent then ran all 31 product E2E tests on LAN and Tailscale with no failures or skips. Parent inspection confirmed both result summaries, clean fixture shutdown, unchanged Pi settings and no surviving fixture processes. Evidence is `/tmp/pi-remote-delegated-core-e2e-u6sQps/`. Source code stayed unchanged during that delegation; only documentation was updated concurrently.
 
 Logs use `/tmp/pi-remote-core-controls-{root,tsan,core,core-tsan,installed,installed-tsan,ui-verified,mac-tests,ios,device}.log`; result summaries use the same prefix and `-summary.json`. The initial cached SwiftPM build linked an old initializer signature; a fresh scratch directory passed. UI attempts exposed short drags consumed by menu pickers and a coordinate tap on a clipped switch. The test now drags the leading gutter and targets the actual switch. Retry controls also use a separate, eager native screen rather than adding a large section to the delivery form. Failed attempts are not passing evidence.
 
 The remaining core RPC audit stays open. No installed-extension integration or terminal-only settings UI is required to close it.
+
+## Reviewed manual compaction
+
+**Session controls → Compact context** now accepts optional summary instructions, bounded to 16 KiB of UTF-8. Empty instructions retain Pi's default behavior. The form explains provider use and possible cost. Review opens an explicit Compact/Cancel decision; Cancel sends no request. The editor is disabled while waiting. Errors, including unknown outcomes, do not trigger automatic resubmission.
+
+One iPhone 17 Pro simulator interface test passes with no failures or skips. It verifies keyboard dismissal, retained custom text after Cancel, explicit confirmation, completion and the exact fixture-received instructions without a new prompt. Parent capture review confirms readable controls. This is not yet the final compact/large-text regression. The first attempt used an incorrect Done button; the test now returns through Session controls and closes the sheet using its actual Close action.
+
+Evidence: `/tmp/pi-remote-parent-compaction-ui-2-summary.json`, `/tmp/pi-remote-parent-compaction-ui-2.log` and `/tmp/pi-remote-parent-compaction-captures/`. Real provider-backed custom-instruction compaction remains covered by `NativeProviderCheck`; its final current-tree rerun passes in `/tmp/pi-remote-final3-provider.log`.
 
 ## Close Pi session
 

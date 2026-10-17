@@ -124,6 +124,205 @@ private func temporaryDirectory() throws -> URL {
     #expect(state.phase == "idle")
 }
 
+private func waitForHost(_ host: HostCoordinator, _ matches: (HostSnapshot) -> Bool) async throws {
+    for _ in 0..<200 {
+        if matches(await host.state()) { return }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    throw RemoteFault.unavailable
+}
+
+@Test(.timeLimit(.minutes(1))) func hostEventOverflowKeepsChildControlUntilExplicitStopAndNeverReplaysWork() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: fakePi(at: root), directories: DirectoryRegistry(), rpcEventCapacity: 1)
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        func send(_ action: SessionAction) async -> AppResult {
+            await host.handle(AppRequest(epoch: host.epoch, session: await host.state().selected, action: action), device: device)
+        }
+        #expect(await send(.createSession(directory: directory)) == .ok)
+        let session = try #require(await host.state().selected)
+        let folder = support.appendingPathComponent("pi-sessions/" + session.uuidString)
+        let pid = try #require(Int32(String(contentsOf: folder.appendingPathComponent("rpc-pid"), encoding: .utf8)))
+        #expect(await send(.command(name: "metadata", arguments: "flood")) == .ok)
+        try await waitForHost(host) { $0.phase == "recovering" && $0.notices.contains(where: { $0.contains("history was refreshed") }) }
+        #expect(kill(pid, 0) == 0)
+        guard case .statistics = await send(.statistics) else { Issue.record("Child commands must survive event loss"); await host.shutdown(); return }
+        #expect(await send(.cycleModel) == .failure(.busy))
+        #expect(await send(.stop) == .ok)
+        #expect(await host.state().phase == "interrupted")
+        #expect(kill(pid, 0) == -1 && errno == ESRCH)
+        #expect(await host.state().sessions.first(where: { $0.id == session })?.interrupted == true)
+        #expect(await send(.resumeSession(id: session)) == .ok)
+        #expect(await host.state().phase == "idle")
+        #expect(try String(contentsOf: folder.appendingPathComponent("flood-runs"), encoding: .utf8) == "F")
+        #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("accepted").path))
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func manualCompactionFailureSettlesAndAutomaticCompletionRefreshesHistory() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        func send(_ action: SessionAction) async -> AppResult {
+            await host.handle(AppRequest(epoch: host.epoch, session: await host.state().selected, action: action), device: device)
+        }
+        #expect(await send(.createSession(directory: directory)) == .ok)
+        #expect(await send(.compact(instructions: "")) == .failure(.invalidRequest))
+        try await waitForHost(host) { !$0.working && $0.messages.contains(where: { $0.isError && $0.text == "Private compaction failure" }) }
+        #expect(await send(.cycleModel) == .ok)
+        #expect(await send(.command(name: "metadata", arguments: "auto-compact")) == .ok)
+        try await waitForHost(host) { !$0.working && $0.messages.contains(where: { $0.text == "Compacted fixture" }) }
+        #expect(await host.state().phase == "idle")
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func automaticHistoryRefreshRetriesASupersededRunOnlyOnce() async throws {
+    for mode in ["once", "always", "custom"] {
+        let root = try temporaryDirectory()
+        let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root))
+        do {
+            let device = UUID(), directory = try await host.directories.register(root)
+            func send(_ action: SessionAction) async -> AppResult {
+                await host.handle(AppRequest(epoch: host.epoch, session: await host.state().selected, action: action), device: device)
+            }
+            #expect(await send(.createSession(directory: directory)) == .ok)
+            let session = try #require(await host.state().selected)
+            #expect(await send(.command(name: "metadata", arguments: "refresh-race-" + mode)) == .ok)
+            let count = root.appendingPathComponent("support/pi-sessions/" + session.uuidString + "/refresh-reads")
+            for _ in 0..<200 {
+                if (try? Data(contentsOf: count).count) == 2 { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(try Data(contentsOf: count).count == 2)
+            if mode != "always" {
+                let text = mode == "custom" ? "Visible custom message" : "Current refreshed history"
+                try await waitForHost(host) { $0.messages.contains { $0.text == text } }
+                #expect(await host.state().messages.filter { $0.text == text }.count == 1)
+            }
+            try await Task.sleep(for: .milliseconds(300))
+            #expect(try Data(contentsOf: count).count == 2)
+            #expect(await host.state().phase == "idle")
+            await host.shutdown()
+            try FileManager.default.removeItem(at: root)
+        } catch { await host.shutdown(); try? FileManager.default.removeItem(at: root); throw error }
+    }
+}
+
+@Test(.timeLimit(.minutes(1))) func explicitQueuesRejectCommandsAndCannotStartARunAfterSettlement() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: fakePi(at: root, hold: true))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        func send(_ action: SessionAction) async -> AppResult {
+            await host.handle(AppRequest(epoch: host.epoch, session: await host.state().selected, action: action), device: device)
+        }
+        #expect(await send(.createSession(directory: directory)) == .ok)
+        let session = try #require(await host.state().selected)
+        #expect(await send(.prompt(text: "Synthetic active run", delivery: .prompt, image: nil)) == .ok)
+        try await waitForHost(host) { $0.phase == "working" }
+        #expect(await send(.prompt(text: "/ask", delivery: .steer, image: nil)) == .failure(.invalidRequest))
+        #expect(await host.state().dialogs.isEmpty)
+        let command = Task { await send(.command(name: "ask", arguments: "")) }
+        try await waitForHost(host) { !$0.dialogs.isEmpty }
+        let dialog = try #require(await host.state().dialogs.first)
+        #expect(await send(.answer(dialog: dialog.id, value: nil, confirmed: nil, cancelled: true)) == .ok)
+        #expect(await command.value == .ok)
+        #expect(await send(.prompt(text: "consume", delivery: .followUp, image: nil)) == .ok)
+        #expect(await host.state().pendingMessages == 0)
+        #expect(await send(.prompt(text: "race", delivery: .steer, image: nil)) == .ok)
+        try await waitForHost(host) { $0.phase == "queued" && $0.pendingMessages == 1 }
+        #expect(await host.state().sessions.first(where: { $0.id == session })?.interrupted == true)
+        let folder = support.appendingPathComponent("pi-sessions/" + session.uuidString)
+        #expect(try Data(contentsOf: folder.appendingPathComponent("accepted")).count == 1)
+        #expect(try String(contentsOf: folder.appendingPathComponent("queue-wire"), encoding: .utf8) == "steer\nfollow_up\nsteer\n")
+        #expect(await send(.stop) == .ok)
+        try await waitForHost(host) { $0.phase == "idle" && $0.pendingMessages == 0 }
+        #expect(try Data(contentsOf: folder.appendingPathComponent("accepted")).count == 1)
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func sessionNamesUseCoreReadBackAndHandleClearingEvents() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        func send(_ action: SessionAction) async -> AppResult {
+            await host.handle(AppRequest(epoch: host.epoch, session: await host.state().selected, action: action), device: device)
+        }
+        #expect(await send(.createSession(directory: directory)) == .ok)
+        let session = try #require(await host.state().selected)
+        #expect(await send(.rename(name: "  Normalized fixture  ")) == .ok)
+        #expect(await host.state().sessions.first(where: { $0.id == session })?.title == "Normalized fixture")
+        #expect(await send(.closeSession) == .ok)
+        #expect(await send(.resumeSession(id: session)) == .ok)
+        #expect(await host.state().sessions.first(where: { $0.id == session })?.title == "Normalized fixture")
+        #expect(await send(.command(name: "metadata", arguments: "clear-name")) == .ok)
+        try await waitForHost(host) { $0.sessions.first(where: { $0.id == session })?.title == root.lastPathComponent }
+        #expect(await send(.command(name: "metadata", arguments: "thinking")) == .ok)
+        try await waitForHost(host) { $0.thinking == "low" }
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func standardStatusAndWidgetKeysHaveIndependentReplacementAndClearing() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        func send(_ action: SessionAction) async -> AppResult {
+            await host.handle(AppRequest(epoch: host.epoch, session: await host.state().selected, action: action), device: device)
+        }
+        #expect(await send(.createSession(directory: directory)) == .ok)
+        #expect(await send(.command(name: "metadata", arguments: "status")) == .ok)
+        try await waitForHost(host) { $0.notices.contains("Status fixture") && $0.notices.contains("Widget fixture") }
+        #expect(await send(.command(name: "metadata", arguments: "clear-status")) == .ok)
+        try await waitForHost(host) { !$0.notices.contains("Status fixture") && $0.notices.contains("Widget fixture") }
+        #expect(await send(.command(name: "metadata", arguments: "clear-widget")) == .ok)
+        try await waitForHost(host) { $0.notices.isEmpty }
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func extensionFailuresAndUnknownUIRequestsDoNotExposePathsOrApproveDialogs() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        func send(_ action: SessionAction) async -> AppResult {
+            await host.handle(AppRequest(epoch: host.epoch, session: await host.state().selected, action: action), device: device)
+        }
+        #expect(await send(.createSession(directory: directory)) == .ok)
+        #expect(await send(.command(name: "metadata", arguments: "extension-error")) == .ok)
+        try await waitForHost(host) { $0.error == .unsupportedFeature }
+        var state = await host.state()
+        #expect(state.messages.isEmpty && state.dialogs.isEmpty && state.phase == "idle")
+        #expect(!String(decoding: try JSONEncoder().encode(state), as: UTF8.self).contains("private-extension-error"))
+        #expect(await send(.command(name: "metadata", arguments: "unknown-ui")) == .ok)
+        // The following correlated query is a barrier after the finite unknown event.
+        guard case .statistics = await send(.statistics) else { Issue.record("Missing state barrier"); await host.shutdown(); return }
+        state = await host.state()
+        #expect(state.messages.isEmpty && state.dialogs.isEmpty && state.notices.isEmpty)
+        #expect(state.phase == "idle")
+        let session = try #require(state.selected)
+        let answers = root.appendingPathComponent("support/pi-sessions/" + session.uuidString + "/answers")
+        #expect(!FileManager.default.fileExists(atPath: answers.path))
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
 @Test(.timeLimit(.minutes(1))) func coreCyclingAndRetryControlsAreDeduplicatedAndProcessScoped() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -224,21 +423,62 @@ if [ -z "$file" ]; then
     printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
 fi
 /bin/pwd -P > "$folder/observed-cwd"
+printf '%s' "$$" > "$folder/rpc-pid"
+messages='[]'
+historyRace=none
 streaming=false
 thinking=off
 steering=one-at-a-time
 followup=one-at-a-time
 compaction=true
+queueCount=0
+queuedSteering='[]'
+queuedFollow='[]'
+namejson=null
+namefile="$folder/$session-name.json"
+if [ -f "$namefile" ]; then namejson=$(/usr/bin/head -c 4096 "$namefile"); fi
 reply() { printf '{"id":"%s","type":"response","command":"%s","success":true,"data":%s}\n' "$id" "$command" "$1"; }
 while IFS= read -r line; do
     id=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
     command=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
     case "$command" in
-        get_state) reply "{\"model\":{\"id\":\"fixture\",\"provider\":\"test\"},\"thinkingLevel\":\"$thinking\",\"steeringMode\":\"$steering\",\"followUpMode\":\"$followup\",\"autoCompactionEnabled\":$compaction,\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"sessionId\":\"$session\",\"sessionFile\":\"$file\"}" ;;
+        get_state) reply "{\"model\":{\"id\":\"fixture\",\"provider\":\"test\"},\"thinkingLevel\":\"$thinking\",\"steeringMode\":\"$steering\",\"followUpMode\":\"$followup\",\"autoCompactionEnabled\":$compaction,\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":$queueCount,\"sessionName\":$namejson,\"sessionId\":\"$session\",\"sessionFile\":\"$file\"}" ;;
+        new_session)
+            session=$(/usr/bin/uuidgen); file="$folder/$session.jsonl"; messages='[]'; namejson=null
+            parent=$(printf '%s' "$line" | /usr/bin/plutil -extract parentSession raw -o - - 2>/dev/null) || parent=''
+            if [ -n "$parent" ]; then ancestry=",\"parentSession\":\"$parent\""; else ancestry=''; fi
+            printf '{"type":"session","version":3,"id":"%s","cwd":"%s"%s}\n' "$session" "$PWD" "$ancestry" > "$file"
+            namefile="$folder/$session-name.json"
+            reply '{"cancelled":false}' ;;
+        switch_session)
+            file=$(printf '%s' "$line" | /usr/bin/plutil -extract sessionPath raw -o - -)
+            session=$(/usr/bin/head -1 "$file" | /usr/bin/plutil -extract id raw -o - -)
+            folder=$(/usr/bin/dirname "$file"); messages='[]'; namejson=null
+            namefile="$folder/$session-name.json"
+            if [ -f "$namefile" ]; then namejson=$(/usr/bin/head -c 4096 "$namefile"); fi
+            reply '{"cancelled":false}' ;;
         get_available_models) reply '{"models":[{"id":"fixture","provider":"test","name":"Fixture"}]}' ;;
         get_available_thinking_levels) reply '{"levels":["off","low"]}' ;;
-        get_commands) reply '{"commands":[{"name":"ask","description":"Fixture dialog","source":"extension"}]}' ;;
-        get_messages) reply '{"messages":[]}' ;;
+        get_commands) reply '{"commands":[{"name":"ask","description":"Fixture dialog","source":"extension"},{"name":"metadata","description":"Fixture metadata","source":"extension"}]}' ;;
+        get_messages)
+            if [ "$historyRace" = once ] || [ "$historyRace" = always ] || [ "$historyRace" = custom ]; then
+                printf R >> "$folder/refresh-reads"
+                customRace=false
+                if [ "$historyRace" = custom ]; then
+                    customRace=true
+                    printf '{"type":"message_start","message":{"role":"custom","display":true,"content":"Visible custom message"}}\n{"type":"message_end","message":{"role":"custom","display":true,"content":"Visible custom message"}}\n'
+                else
+                    printf '{"type":"agent_start"}\n{"type":"agent_settled"}\n'
+                fi
+                if [ "$historyRace" != always ]; then historyRace=done; fi
+                /bin/sleep 0.1
+                reply '{"messages":[{"role":"compactionSummary","summary":"Superseded history"}]}'
+                if [ "$customRace" = true ]; then messages='[{"role":"custom","display":true,"content":"Visible custom message"}]'
+                else messages='[{"role":"compactionSummary","summary":"Current refreshed history"}]'; fi
+            else
+                if [ "$historyRace" = done ]; then printf R >> "$folder/refresh-reads"; historyRace=none; fi
+                reply "{\"messages\":$messages}"
+            fi ;;
         export_html) output=$(printf '%s' "$line" | /usr/bin/plutil -extract outputPath raw -o - -); printf '<!doctype html><html>private fixture</html>' > "$output"; reply "{\"path\":\"$output\"}" ;;
         get_last_assistant_text) reply '{"text":"Fixture complete"}' ;;
         set_steering_mode) printf x >> "$folder/runtime-writes"; steering=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
@@ -251,8 +491,36 @@ while IFS= read -r line; do
         get_session_stats) reply '{"userMessages":1,"assistantMessages":1,"toolCalls":0,"toolResults":0,"totalMessages":2,"tokens":{"input":10,"output":20,"cacheRead":0,"cacheWrite":0,"total":30},"cost":0.01,"contextUsage":{"tokens":30,"contextWindow":200000,"percent":0.015},"sessionFile":"private-fixture-path"}' ;;
         get_entries) entries=$(/usr/bin/tail -n +2 "$file" | /usr/bin/awk 'NF { if (seen++) printf ","; printf "%s", $0 }'); if [ -z "$entries" ]; then reply '{"entries":[],"leafId":null}'; else leaf=$(/usr/bin/tail -1 "$file" | /usr/bin/plutil -extract id raw -o - -); reply "{\"entries\":[$entries],\"leafId\":\"$leaf\"}"; fi ;;
         set_thinking_level) thinking=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"level":"\([^"]*\)".*/\1/p'); reply '{}' ;;
+        compact) printf '{"type":"compaction_start","reason":"manual"}\n{"type":"compaction_end","reason":"manual","aborted":false,"errorMessage":"Private compaction failure"}\n'; printf '{"id":"%s","type":"response","command":"compact","success":false,"error":"Private compaction failure"}\n' "$id" ;;
+        set_session_name)
+            namejson=$(printf '%s' "$line" | /usr/bin/grep -o '"name":"\([^"\\]\|\\.\)*"' | /usr/bin/cut -c 8- | /usr/bin/sed 's/^"[[:space:]]*/"/; s/[[:space:]]*"$/"/')
+            printf '%s' "$namejson" > "$namefile"
+            reply '{}'
+            printf '{"type":"session_info_changed","name":%s}\n' "$namejson" ;;
+        steer|follow_up)
+            printf '%s\n' "$command" >> "$folder/queue-wire"
+            case "$line" in
+                *'/ask'*|*'/metadata'*) printf '{"id":"%s","type":"response","command":"%s","success":false,"error":"Extension commands cannot be queued"}\n' "$id" "$command"; continue ;;
+                *'consume'*) reply '{"disposition":"handled"}'; continue ;;
+                *'race'*) streaming=false; printf '{"type":"agent_settled"}\n' ;;
+            esac
+            if [ "$command" = steer ]; then queuedSteering='["fixture"]'; else queuedFollow='["fixture"]'; fi
+            queueCount=$((queueCount + 1))
+            printf '{"type":"queue_update","steering":%s,"followUp":%s}\n' "$queuedSteering" "$queuedFollow"
+            reply '{"disposition":"queued"}' ;;
+        clear_queue) queueCount=0; queuedSteering='[]'; queuedFollow='[]'; printf '{"type":"queue_update","steering":[],"followUp":[]}\n'; reply '{}' ;;
         prompt)
             case "$line" in
+                *'/metadata extension-error'*) printf '{"type":"extension_error","extensionPath":"/private-extension-error/fixture.js","event":"command","error":"private-extension-error details"}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata unknown-ui'*) printf '{"type":"extension_ui_request","id":"unknown","method":"future-interactive-method"}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata flood'*) reply '{"disposition":"handled"}'; printf F >> "$folder/flood-runs"; i=0; while [ "$i" -lt 100 ]; do printf '{"type":"extension_ui_request","id":"burst","method":"notify","message":"Bounded event fixture"}\n'; i=$((i + 1)); done; /bin/sleep 0.1 ;;
+                *'/metadata refresh-race-'*) case "$line" in *'refresh-race-always'*) historyRace=always ;; *'refresh-race-custom'*) historyRace=custom ;; *) historyRace=once ;; esac; printf '{"type":"compaction_start","reason":"threshold"}\n{"type":"compaction_end","reason":"threshold","result":{"summary":"Refresh race"},"willRetry":true,"aborted":false}\n{"type":"agent_settled"}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata auto-compact'*) messages='[{"role":"compactionSummary","summary":"Compacted fixture"}]'; printf '{"type":"compaction_start","reason":"threshold"}\n{"type":"compaction_end","reason":"threshold","result":{"summary":"Compacted fixture"},"willRetry":true,"aborted":false}\n{"type":"agent_settled"}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata clear-name'*) namejson=null; printf null > "$namefile"; printf '{"type":"session_info_changed"}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata clear-status'*) printf '{"type":"extension_ui_request","id":"clear-status","method":"setStatus","statusKey":"shared"}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata clear-widget'*) printf '{"type":"extension_ui_request","id":"clear-widget","method":"setWidget","widgetKey":"shared"}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata status'*) printf '{"type":"extension_ui_request","id":"status","method":"setStatus","statusKey":"shared","statusText":"Status fixture"}\n{"type":"extension_ui_request","id":"widget","method":"setWidget","widgetKey":"shared","widgetLines":["Widget fixture"]}\n'; reply '{"disposition":"handled"}' ;;
+                *'/metadata thinking'*) thinking=low; printf '{"type":"thinking_level_changed","level":"low"}\n'; reply '{"disposition":"handled"}' ;;
                 *'/ask'*) pending=$id; printf '{"type":"extension_ui_request","id":"question-1","method":"confirm","title":"Fixture confirmation"}\n' ;;
                 *)
                     printf x >> "$folder/accepted"
@@ -261,8 +529,9 @@ while IFS= read -r line; do
                     ;;
             esac ;;
         extension_ui_response)
+            printf A >> "$folder/answers"
             printf '{"id":"%s","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}\n' "$pending" ;;
-        abort) streaming=false; reply '{}' ;;
+        abort) streaming=false; printf '{"type":"agent_settled"}\n'; reply '{}' ;;
         *) reply '{}' ;;
     esac
 done
@@ -1333,16 +1602,40 @@ func directoryReplacementDuringActivationCannotStartRPC(phase: String) async thr
 
 @Test(.timeLimit(.minutes(1))) func utilityCancellationDoesNotWaitForInheritedPipes() async throws {
     let root = try temporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: root) }
+    let pidFile = root.appendingPathComponent("descendant-pid")
+    let launched = ContinuousClock.now
+    var descendant: pid_t?
+    defer {
+        if let descendant, launched.duration(to: .now) < .seconds(10) { kill(descendant, SIGKILL) }
+        try? FileManager.default.removeItem(at: root)
+    }
     let script = root.appendingPathComponent("hold-pipe")
-    try "#!/bin/sh\n/bin/sleep 4 &\nwait\n".write(to: script, atomically: true, encoding: .utf8)
+    let quoted = "'" + pidFile.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    try "#!/bin/sh\n/bin/sleep 10 &\nprintf '%s\\n' \"$!\" > \(quoted)\nwait\n".write(to: script, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-    let start = ContinuousClock.now
     let operation = Task { try await LocalCommand.run(script.path, [], directory: root) }
-    try await Task.sleep(for: .milliseconds(100))
-    operation.cancel()
-    await #expect(throws: RemoteFault.cancelled) { try await operation.value }
-    #expect(ContinuousClock.now - start < .seconds(3))
+    do {
+        for _ in 0..<500 {
+            if let value = try? String(contentsOf: pidFile, encoding: .utf8),
+               let pid = pid_t(value.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 1 {
+                descendant = pid; break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let pid = try #require(descendant)
+        #expect(kill(pid, 0) == 0)
+        // Require at least four seconds of pipe-holder lifetime after cancellation.
+        // Measure cancellation, not launch or cooperative-executor scheduling delay.
+        try #require(launched.duration(to: .now) < .seconds(6))
+        let cancelled = ContinuousClock.now
+        operation.cancel()
+        await #expect(throws: RemoteFault.cancelled) { try await operation.value }
+        #expect(cancelled.duration(to: .now) < .seconds(3))
+    } catch {
+        operation.cancel()
+        _ = try? await operation.value
+        throw error
+    }
 }
 
 @Test(.timeLimit(.minutes(1))) func oversizedDialogsCannotBeApprovedAndExpiredAnswersAreRejected() async throws {

@@ -125,11 +125,13 @@ while IFS= read -r line; do
         get_available_thinking_levels) reply '{"levels":["off","low"]}' ;;
         get_commands) reply '{"commands":[{"name":"ask","source":"extension"}]}' ;;
         get_messages) reply '{"messages":[]}' ;;
+        new_session) session=$(/usr/bin/uuidgen); file="$folder/$session.jsonl"; streaming=false; printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"; reply '{"cancelled":false}' ;;
         prompt)
             case "$line" in
                 *'/ask'*) pending=$id; printf '{"type":"extension_ui_request","id":"local-question","method":"confirm","title":"Test confirmation"}\n' ;;
                 *) printf x >> "$folder/accepted"; streaming=true; reply '{"disposition":"started"}'; printf '{"type":"agent_start"}\n{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Shared state"}]}}\n' ;;
             esac ;;
+        steer|follow_up) printf x >> "$folder/accepted"; reply '{"disposition":"queued"}' ;;
         extension_ui_response) printf '{"id":"%s","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}\n' "$pending" ;;
         abort) streaming=false; reply '{}'; printf '{"type":"agent_settled"}\n' ;;
         *) reply '{}' ;;

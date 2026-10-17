@@ -69,9 +69,39 @@ final class InterfaceTests: XCTestCase {
         let local = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'On My iPhone'")).firstMatch
         XCTAssertTrue(local.waitForExistence(timeout: 5)); local.tap()
         let folder = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "PiRemoteInterfaceFixture")).firstMatch
-        XCTAssertTrue(folder.waitForExistence(timeout: 10)); folder.tap()
+        revealPickerItem(folder, app: app); folder.tap()
         let file = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Import fixture")).firstMatch
-        XCTAssertTrue(file.waitForExistence(timeout: 5)); file.tap()
+        revealPickerItem(file, app: app); file.tap()
+    }
+    private func revealPickerItem(_ item: XCUIElement, app: XCUIApplication) {
+        let files = app.collectionViews["File View"].firstMatch
+        XCTAssertTrue(files.waitForExistence(timeout: 5))
+        if files.value as? String != "List Mode" {
+            let more = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"].buttons["More"]
+            XCTAssertTrue(more.waitForExistence(timeout: 5)); more.tap()
+            capture(app, "Import picker view options")
+            let list = app.buttons["List"]
+            XCTAssertTrue(list.waitForExistence(timeout: 5)); list.tap()
+        }
+        for _ in 0..<20 {
+            let top = app.navigationBars.allElementsBoundByIndex.filter(\.isHittable).map { $0.frame.maxY }.max() ?? 0
+            let bottom = app.tabBars.firstMatch.exists ? app.tabBars.firstMatch.frame.minY : app.frame.maxY
+            if item.exists, item.isHittable, item.frame.minY >= top, item.frame.maxY <= bottom {
+                XCTAssertGreaterThanOrEqual(item.frame.width, 44)
+                XCTAssertGreaterThanOrEqual(item.frame.height, 44)
+                return
+            }
+            let down = item.exists && item.frame.minY < top
+            let middle = (top + bottom) / 2
+            let delta = min(160, (bottom - top) / 2)
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.maxX - 8, dy: middle + (down ? -delta / 2 : delta / 2)))
+            let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.maxX - 8, dy: middle + (down ? delta / 2 : -delta / 2)))
+            start.press(forDuration: 0.1, thenDragTo: end)
+        }
+        capture(app, "Import picker unreachable item")
+        let snapshot = XCTAttachment(string: app.debugDescription)
+        snapshot.name = "Import picker hierarchy"; snapshot.lifetime = .keepAlways; add(snapshot)
+        XCTFail("File picker item is not fully reachable: " + item.label)
     }
     private func chooseImportFolder(_ app: XCUIApplication) {
         let choose = app.buttons["Choose import folder"]
