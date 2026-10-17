@@ -102,6 +102,7 @@ Do not claim normal-launch success from a build or model test alone. Provider ca
 
 - The user authorized implementation from this saved plan on a new branch with a pull request. No repeat approval was requested for the native Pi-like direction or existing security requirements. Final visual acceptance and retained differences have not been approved by inference.
 - Branch: `narumi/feat/pi-like-mac-interface`, from `main` at `ba98b83` (equal to `origin/main` at branch creation). Pre-existing in-scope README/PLAN/draft-plan changes were retained.
+- Implementation commit: `889fe3a`. Delivered as [draft pull request #8](https://github.com/narumiruna/pi-remote/pull/8). The draft state records incomplete attended acceptance, not a completed redesign plan.
 - [Source reference and behavior matrix](../pi-like-mac-reference.md): Pi 1.3.0, dark/regular, thinking collapsed; no live terminal captures. Twenty deterministic library render checks are not screenshots.
 - New Mac surface: `Apps/macOS/PiConversationView.swift`, `PiEditor.swift`, `PiPresentation.swift`, `PiConfigurationPicker.swift` and `PiExtensionDialog.swift`. Existing session management and the iPhone layout remain.
 - Shell and queue recovery: typed session actions, bounded correlated output, repeated cancellation, conservative unknown outcomes, caller-only recovered input and saved shell projection. Security/lifecycle findings were fixed and regression-tested; see the [verification record](../pi-like-mac-verification.md).
