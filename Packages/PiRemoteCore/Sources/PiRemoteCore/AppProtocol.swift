@@ -16,6 +16,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case directories(id: UUID?, cursor: UUID?)
     case preview(id: UUID)
     case createSession(directory: UUID)
+    case importSession(data: Data)
     case resumeSession(id: UUID)
     case prompt(text: String, delivery: Delivery, image: ImageAttachment?)
     case stop
@@ -49,14 +50,14 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var changesSession: Bool {
         switch self {
-        case .createSession, .resumeSession, .fork, .clone, .closeSession: true
+        case .createSession, .importSession, .resumeSession, .fork, .clone, .closeSession: true
         default: false
         }
     }
 
     public var needsSession: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .createSession, .resumeSession: false
+        case .snapshot, .synchronize, .directories, .preview, .createSession, .importSession, .resumeSession: false
         default: true
         }
     }

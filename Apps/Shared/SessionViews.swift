@@ -11,6 +11,10 @@ struct SessionListView: View {
     var body: some View {
         List {
             Button("New session", systemImage: "plus", action: newSession).frame(minHeight: 44).disabled(state.working)
+            if state.capabilities.contains("session-import") {
+                NavigationLink("Import JSONL session") { SessionImportView(request: request, imported: selected) }
+                    .frame(minHeight: 44).disabled(state.working)
+            }
             if let error { Text(error).foregroundStyle(.primary) }
             ForEach(state.sessions) { session in
                 Button {

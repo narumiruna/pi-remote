@@ -129,17 +129,19 @@ private func fakePi(at root: URL, hold: Bool = false, image: Data? = nil) throws
     let script = #"""
 #!/bin/sh
 if [ "${1:-}" = --version ]; then printf '1.3.0\n'; exit 0; fi
-folder=''; session=''
+folder=''; session=''; file=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --session-dir) folder=$2; shift 2 ;;
         --session-id) session=$2; shift 2 ;;
-        --session) file=$2; session=$(/usr/bin/basename "$file" .jsonl); shift 2 ;;
+        --session) file=$2; session=$(/usr/bin/head -1 "$file" | /usr/bin/plutil -extract id raw -o - -); shift 2 ;;
         *) shift ;;
     esac
 done
-file="$folder/$session.jsonl"
-printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+if [ -z "$file" ]; then
+    file="$folder/$session.jsonl"
+    printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+fi
 streaming=false
 thinking=off
 steering=one-at-a-time
@@ -453,6 +455,63 @@ func sessionExportIsBoundedPrivateAndSessionScoped(mode: String) async throws {
     await host.shutdown()
 }
 
+@Test(.timeLimit(.minutes(1)), arguments: ["valid", "malformed", "missing-directory", "denied-directory", "busy", "stale"])
+func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) async throws {
+    let root = try temporaryDirectory()
+    let project = root.appendingPathComponent("project")
+    try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false)
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: project.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let sourceID = UUID().uuidString
+    let header: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(sourceID), "cwd": .string(mode == "missing-directory" ? project.appendingPathComponent("missing").path : project.path)])
+    let entry: JSONValue = .object(["type": .string("message"), "id": .string("user-1"), "parentId": .null,
+                                    "message": .object(["role": .string("user"), "content": .string("Saved private fixture")])])
+    var data = try JSONEncoder().encode(header); data.append(10)
+    data.append(try JSONEncoder().encode(entry)); data.append(10)
+    if mode == "malformed" { data = Data("broken".utf8) }
+    let source = root.appendingPathComponent("source.jsonl")
+    try data.write(to: source)
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: fakePi(at: root, hold: true))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let before = await host.state()
+        if mode == "denied-directory" { try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: project.path) }
+        if mode == "busy" {
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: before.selected, action: .prompt(text: "Hold", delivery: .prompt, image: nil)), device: device) == .ok)
+        }
+        let request = AppRequest(epoch: host.epoch, session: mode == "stale" ? UUID() : before.selected, action: .importSession(data: data))
+        let result = await host.handle(request, device: device)
+        if mode == "valid" {
+            #expect(result == .ok)
+            #expect(await host.handle(request, device: device) == .ok)
+            let state = await host.state(), selected = try #require(state.selected)
+            #expect(selected != before.selected && state.sessions.count == 2)
+            #expect(state.sessions.first(where: { $0.id == selected })?.directory == project.resolvingSymlinksInPath().path)
+            #expect(state.sessions.first(where: { $0.id == selected })?.interrupted == true)
+            let folder = support.appendingPathComponent("pi-sessions/" + selected.uuidString)
+            let copy = folder.appendingPathComponent("imported.jsonl")
+            #expect(try Data(contentsOf: copy) == data)
+            #expect((try FileManager.default.attributesOfItem(atPath: copy.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("accepted").path))
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: selected, action: .closeSession), device: device) == .ok)
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .resumeSession(id: selected)), device: device) == .ok)
+            #expect(try Data(contentsOf: copy) == data)
+        } else {
+            let fault: RemoteFault = mode == "malformed" ? .invalidRequest : mode == "missing-directory" ? .staleDirectory : mode == "denied-directory" ? .permissionDenied : mode == "busy" ? .busy : .conflict
+            #expect(result == .failure(fault))
+            #expect(await host.state().selected == before.selected)
+            #expect(await host.state().sessions.count == 1)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: support.appendingPathComponent("pi-sessions").path).count == 1)
+        }
+        #expect(try Data(contentsOf: source) == data)
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
 @Test(.timeLimit(.minutes(1))) func missingPiReportsFailureWithoutStartingAChild() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -700,7 +759,19 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         #expect(try Data(contentsOf: accepted).count == 1)
         _ = try await client.request(.stop)
         #expect(await !host.state().working)
+        let importHeader: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(UUID().uuidString), "cwd": .string(root.path)])
+        let importEntry: JSONValue = .object(["type": .string("message"), "id": .string("network-user"), "parentId": .null,
+                                            "message": .object(["role": .string("user"), "content": .string("Network import fixture")])])
+        var importData = try JSONEncoder().encode(importHeader); importData.append(10)
+        importData.append(try JSONEncoder().encode(importEntry)); importData.append(10)
+        _ = try await client.request(.importSession(data: importData))
+        let imported = await host.state(), importedID = try #require(imported.selected)
+        #expect(importedID != recovered.selected && imported.sessions.count == 2)
+        let importFolder = root.appendingPathComponent("support/pi-sessions/" + importedID.uuidString)
+        #expect(try Data(contentsOf: importFolder.appendingPathComponent("imported.jsonl")) == importData)
+        #expect(!FileManager.default.fileExists(atPath: importFolder.appendingPathComponent("accepted").path))
         try await server.revoke(mac.device)
+        await #expect(throws: (any Error).self) { try await client.request(.importSession(data: importData)) }
         await #expect(throws: (any Error).self) { try await client.request(.exportSession) }
         await #expect(throws: (any Error).self) { try await client.request(.outputImage(id: reference.id)) }
         await #expect(throws: (any Error).self) { try await client.request(.snapshot) }

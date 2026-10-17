@@ -16,7 +16,7 @@ The export can include the entire session tree, not only the visible transcript 
 - The host rejects empty, invalid UTF-8 and larger-than-2-MiB output. It reads at most the limit plus one byte and never sends a truncated export. The base64-encoded reply fits the existing 4-MiB protocol limit.
 - Temporary host output is removed after success or error. A host crash can leave the private temporary directory on disk, like other companion-owned session data. No crash-proof deletion claim is made.
 - Pi rejects export when no conversation has been saved yet. A session name alone does not create an exportable conversation.
-- This implements HTML export only. JSONL export/import, public sharing, bug reports and terminal custom-renderer parity remain open. It does not complete `PLAN.md`.
+- This implements HTML export only. JSONL export, legacy import migration, public sharing, bug reports and terminal custom-renderer parity remain open. [Reviewed version-3 JSONL import](session-import.md) is verified separately. It does not complete `PLAN.md`.
 
 ## Verified checks
 

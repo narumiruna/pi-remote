@@ -80,6 +80,11 @@ targets:
   PiRemoteInterfaceFixture:
     type: application
     platform: iOS
+    info:
+      path: Tests/InterfaceFixture/Info.plist
+      properties:
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
     sources:
       - path: Apps/iOS
         excludes:

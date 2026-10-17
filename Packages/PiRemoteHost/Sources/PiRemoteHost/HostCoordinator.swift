@@ -209,6 +209,35 @@ public actor HostCoordinator {
             )
             sessions.append(item); try saveSessions()
             try await activate(sessionID)
+        case .importSession(let data):
+            guard request.session == snapshot.selected else { throw RemoteFault.conflict }
+            guard !snapshot.working, sessions.count < 256 else { throw RemoteFault.busy }
+            let imported = try SessionImport(data: data)
+            let directory = try DirectoryRegistry.identify(URL(fileURLWithPath: imported.directory))
+            try DirectoryRegistry.validateDirectory(directory)
+            try await requireIdle()
+            guard !closing, !Task.isCancelled else { throw RemoteFault.cancelled }
+            try DirectoryRegistry.validateDirectory(directory)
+            let sessionID = UUID()
+            let folder = support.appendingPathComponent("pi-sessions/" + sessionID.uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let file = folder.appendingPathComponent("imported.jsonl")
+            do {
+                try data.write(to: file, options: .withoutOverwriting)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+            } catch {
+                try? FileManager.default.removeItem(at: folder)
+                throw RemoteFault.storageFailure
+            }
+            let item = ManagedSession(info: SessionInfo(id: sessionID, title: imported.title, directory: directory.url.path, interrupted: true),
+                                      directory: directory, piID: imported.piID, folder: folder, file: file, hasHistory: true)
+            sessions.append(item)
+            do { try saveSessions() }
+            catch {
+                sessions.removeLast(); try? FileManager.default.removeItem(at: folder)
+                throw RemoteFault.storageFailure
+            }
+            try await activate(sessionID)
         case .resumeSession(let id):
             guard !snapshot.working else { throw RemoteFault.busy }
             try await requireIdle()

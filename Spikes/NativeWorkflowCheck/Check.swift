@@ -10,7 +10,7 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
 /// Real Pi metadata and supported extension dialogs only: no inference prompt or provider request.
 @main struct NativeWorkflowCheck {
     static func main() async {
-        do { try await run(); print("PASS: native host directory, model, thinking, dialogs, Stop and idle restoration checks.") }
+        do { try await run(); print("PASS: native host directory, model, thinking, dialogs, Stop, import, HTML export and restoration checks.") }
         catch {
             if let failure = error as? CheckFailure { print("FAIL: \(failure)") }
             else { print("FAIL: native workflow check could not complete.") }
@@ -150,17 +150,25 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             let closed = await host.state()
             try require(closed.selected == nil && closed.messages.isEmpty)
             try require(await host.state().sessions == catalog)
-            // Seed synthetic history only while Pi is closed. No provider request is needed.
-            let stored = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: root.appendingPathComponent("support/sessions.json")))
-            guard let item = stored.array?.first(where: { $0["info"]?["id"]?.string == selected?.uuidString }),
-                  let path = item["file"]?.string, let file = URL(string: path), let piID = item["piID"]?.string else { throw CheckFailure.assertion(#line) }
+            // Import a private synthetic source through the actual host action. No inference.
+            let piID = UUID().uuidString
+            let file = root.appendingPathComponent("import-source.jsonl")
             let header: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(piID), "cwd": .string(folder.path), "timestamp": .string("2026-10-17T00:00:00.000Z")])
             let entry: JSONValue = .object(["type": .string("message"), "id": .string("fixture-user"), "parentId": .null,
                 "timestamp": .string("2026-10-17T00:00:00.000Z"), "message": .object(["role": .string("user"), "content": .string("Private export fixture"), "timestamp": .number(1_792_195_200_000)])])
             var seeded = try JSONEncoder().encode(header); seeded.append(10)
             seeded.append(try JSONEncoder().encode(entry)); seeded.append(10)
             try seeded.write(to: file)
-            _ = try await send(.resumeSession(id: selected!))
+            _ = try await send(.importSession(data: seeded))
+            let importedState = await host.state()
+            guard let importedID = importedState.selected else { throw CheckFailure.assertion(#line) }
+            try require(importedID != selected && importedState.sessions.count == catalog.count + 1)
+            try require(importedState.messages.contains { $0.role == "user" && $0.text == "Private export fixture" })
+            try require(importedState.sessions.first(where: { $0.id == importedID })?.interrupted == true)
+            try require(try Data(contentsOf: file) == seeded)
+            _ = try await send(.closeSession)
+            _ = try await send(.resumeSession(id: importedID))
+            try require(await host.state().messages.contains { $0.role == "user" && $0.text == "Private export fixture" })
             try require(await host.state().runtime == originalRuntime)
             guard case .exportSession(let exported) = try await send(.exportSession) else { throw CheckFailure.assertion(#line) }
             try exported.validate()

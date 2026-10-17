@@ -191,6 +191,36 @@ final class InterfaceTests: XCTestCase {
         XCTAssertFalse(save.exists)
     }
 
+    func testSessionImportReviewsTheDirectoryAndRequiresConfirmation() throws {
+        let app = launch(["import"])
+        app.buttons["Sessions"].tap()
+        XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
+        app.buttons["Import JSONL session"].tap()
+        XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
+        let choose = app.buttons["Choose session file"]
+        reveal(choose, app: app); choose.tap()
+        let browse = app.tabBars.buttons["Browse"]
+        XCTAssertTrue(browse.waitForExistence(timeout: 5)); browse.tap()
+        let local = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'On My iPhone'")).firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); local.tap()
+        let folder = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "PiRemoteInterfaceFixture")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 10)); folder.tap()
+        let file = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Import fixture")).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 5)); file.tap()
+        reveal(app.staticTexts["/Users/fixture/project"], app: app)
+        XCTAssertTrue(app.staticTexts["/Users/fixture/project"].exists)
+        let open = app.buttons["Import and open"]
+        reveal(open, app: app); open.tap()
+        XCTAssertTrue(app.alerts["Import and open this session?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(app.navigationBars["Import session"].exists)
+        open.tap()
+        app.alerts.buttons["Import and open"].tap()
+        XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Stop"].exists)
+        XCTAssertTrue(app.staticTexts["Imported native fixture"].exists)
+    }
+
     func testRuntimeSettingsRequireConfirmationAndRefreshTheAppliedValue() throws {
         let app = launch(["idle"])
         controls(app)
