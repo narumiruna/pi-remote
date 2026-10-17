@@ -14,7 +14,7 @@ Native core `bash`/`abort_bash` controls are approved but not yet implemented or
 
 ## Implemented foundation
 
-- A light Mac workspace/session sidebar, compact session header, readable conversation and resizable Files/Tools/Activity inspector. Session labels use existing Pi names, saved first-instruction previews or stable IDs, without changing stored names. Files and Commands have labelled composer actions; a bounded multiline editor uses Return for a newline and Command-Return to send. Mac extension diagnostics are in Activity, not the conversation footer. Added workspaces, selection, expansion and unsent drafts persist locally. The iPhone retains its conversation-first layout and touch targets.
+- A light Mac workspace/session sidebar, compact session header, readable conversation and resizable Files/Tools/Activity inspector. Session labels use existing Pi names, saved first-instruction previews or stable IDs, without changing stored names. The conversation has no Conversation/History tabs. Type `/` at the start of the message to filter native and discovered Pi commands. Return/Tab completes a suggestion; Command-Return or Run executes it. With no suggestions open, Return inserts a newline. Files and Commands retain their labelled composer actions. Mac extension diagnostics are in Activity, not the conversation footer. Added workspaces, selection, expansion and unsent drafts persist locally. The iPhone retains its conversation-first layout and touch targets.
 - Authenticated Mac folder browsing with no approved-root list or per-project registration. macOS permissions still apply.
 - One active companion-managed Pi session per Mac, with its working directory saved and checked on resume. [Same-directory lifecycle controls](docs/session-lifecycle.md) use core new/switch hooks, with confirmed optional ancestry and no prompt replay.
 - Streamed text and thinking, native Markdown blocks, fenced code, expandable tool output and authenticated native image viewing.
@@ -58,6 +58,15 @@ Pi **1.3.0** is the tested development runtime. Other Pi versions are unverified
 The companion catalog and managed sessions use `~/Library/Application Support/PiRemote/`. Do not open managed session files for writing in another Pi process. To remove access, open **Devices**, expand the device, select **Revoke access** and confirm. Devices distinguishes saved pairing from an authenticated live connection. To change interfaces, stop the listener, select the new address and restart it; update the saved phone address without changing its certificate pin. If the certificate does not cover the new address, use **Settings → Advanced → Replace connection identity** and pair again. Do not disable TLS checks.
 
 Clean setup evidence: two Mac-model tests pass with new private support storage and isolated preferences, including Start listener, local approval, persisted devices, listener restart and revocation. Thirty-one simulator tests pass with fresh phone preferences and a private local provider fixture, including product-model pairing, saved connections, nested directory selection and coding. These are local model/transport and simulator checks, not signed installation, hardware authentication, camera or off-site evidence. [Repeat the checks](docs/workflow-verification.md#clean-setup-controls).
+
+## Mac slash commands
+
+- `/resume` opens saved companion-managed sessions. Opening the picker does not start or stop Pi; choose a session explicitly while idle. Terminal-owned Pi sessions are not listed.
+- `/tree` opens authoritative session-tree inspection while Pi is idle. Forking remains a separate explicit action.
+- `/history` opens paged saved history. The conversation remains the main view.
+- Other entries come from Pi's discovered commands, skills and templates. Their existing RPC and busy-state restrictions remain. Completing a name only edits the draft; it does not execute a command.
+
+Use Up/Down to select a suggestion, Return or Tab to complete, and Escape to dismiss. Use Command-Return or Run to submit the completed command and any arguments. These three native navigation commands do not accept arguments; use their pickers instead. Unsupported commands show an error and keep the draft. Slashes within ordinary text, nested absolute paths and existing root paths such as `/tmp` remain prompt text unless they match a registered command.
 
 ## Development
 

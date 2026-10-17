@@ -1,5 +1,8 @@
 import PiRemoteCore
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct ConversationView<Extras: View>: View {
     let state: HostSnapshot
@@ -15,6 +18,11 @@ struct ConversationView<Extras: View>: View {
     @State private var userScrolling = false
     #if os(macOS)
     @State private var macEditorHeight: CGFloat = 76
+    @State private var macSelection = NSRange(location: 0, length: 0)
+    @State private var macMarkedText = false
+    @State private var macDismissed = false
+    @State private var macHighlightedID: String?
+    @State private var macFocusRequest = 0
     #endif
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var controlMinimum: CGFloat? {
@@ -51,8 +59,13 @@ struct ConversationView<Extras: View>: View {
                             #endif
                         }
                         if state.hasOlderMessages {
+                            #if os(macOS)
+                            Text("Earlier messages are saved on the Mac. Use /history to inspect them.")
+                                .font(.caption).foregroundStyle(.primary.opacity(0.75))
+                            #else
                             Text("Earlier messages are saved on the Mac. Open History to inspect them.")
                                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
+                            #endif
                         }
                         ForEach(state.messages) { message in
                             if message.role == "tool" {
@@ -186,8 +199,112 @@ struct ConversationView<Extras: View>: View {
     }
 
     #if os(macOS)
+    private var macEditable: Bool {
+        state.selected != nil && !["recovering", "starting", "stopping"].contains(state.phase)
+    }
+
+    private var macIsSlash: Bool {
+        if case .prompt = MacSlashCommands.submission(text, in: state) { return false }
+        return true
+    }
+
     private var macCanSend: Bool {
-        canCompose && !sending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard macEditable, !macMarkedText, !sending, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if macIsSlash {
+            let name = text.trimmingCharacters(in: .whitespacesAndNewlines).dropFirst().prefix { !$0.isWhitespace }
+            if let option = MacSlashCommands.options(in: state).first(where: { $0.name == String(name) }) {
+                return option.isEnabled(in: state)
+            }
+        }
+        switch MacSlashCommands.submission(text, in: state) {
+        case .prompt: return canCompose
+        case .invalid: return true
+        case .native, .command: return false
+        }
+    }
+
+    private var macCompletion: MacSlashCompletion? {
+        guard macEditable, !macMarkedText, !macDismissed else { return nil }
+        if case .prompt = MacSlashCommands.submission(text, in: state) { return nil }
+        return MacSlashCommands.completion(in: text, selection: macSelection)
+    }
+
+    private var macMatches: [MacSlashOption] {
+        guard let completion = macCompletion else { return [] }
+        return MacSlashCommands.matching(in: state, query: completion.query)
+    }
+
+    private var macHighlighted: MacSlashOption? {
+        macMatches.first { $0.id == macHighlightedID } ?? macMatches.first
+    }
+
+    private func macComplete(_ option: MacSlashOption) {
+        guard let completion = macCompletion, option.isEnabled(in: state), !sending else { return }
+        let result = MacSlashCommands.completing(option, in: text, completion: completion)
+        text = result.text
+        macSelection = result.selection
+        macHighlightedID = nil
+        macFocusRequest += 1
+    }
+
+    private func macCompletionKey(_ key: MacComposerKey) -> Bool {
+        switch key {
+        case .up, .down:
+            let options = macMatches
+            guard !options.isEmpty else { return false }
+            let current = options.firstIndex { $0.id == macHighlighted?.id } ?? 0
+            let next = min(options.count - 1, max(0, current + (key == .up ? -1 : 1)))
+            macHighlightedID = options[next].id
+        case .complete:
+            guard let option = macHighlighted, option.isEnabled(in: state), !sending else { return false }
+            macComplete(option)
+        case .dismiss:
+            macDismissed = true
+        }
+        return true
+    }
+
+    private var macSuggestionHeight: CGFloat { min(200, CGFloat(max(1, macMatches.count)) * 66 + 8) }
+
+    private var macSuggestions: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    if macMatches.isEmpty {
+                        Text("No matching commands").foregroundStyle(.secondary).padding(10)
+                    }
+                    ForEach(macMatches) { option in
+                        Button { macComplete(option) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("/" + option.name).font(.system(size: 13, weight: .semibold))
+                                Text(option.detail).font(.caption).foregroundStyle(.secondary)
+                                if !option.isEnabled(in: state) || sending {
+                                    Text(sending ? "A request is being sent." : (option.disabledReason(in: state) ?? "Unavailable in the current session state."))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+                            .background(macHighlighted?.id == option.id ? Color.accentColor.opacity(0.12) : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: 6))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!option.isEnabled(in: state) || sending)
+                        .accessibilityIdentifier("slash-option-" + option.name)
+                        .id(option.id)
+                    }
+                }.padding(4)
+            }
+            .frame(height: macSuggestionHeight)
+            .onChange(of: macHighlightedID) { _, _ in
+                if let option = macHighlighted { proxy.scrollTo(option.id) }
+            }
+        }
+        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.15)) }
+        .shadow(color: .black.opacity(0.12), radius: 8, y: -2)
+        .accessibilityIdentifier("mac-slash-suggestions")
+        .help("Return or Tab completes the selected command. Command-Return runs or sends the draft.")
     }
 
     var macEmptyTitle: String {
@@ -218,8 +335,9 @@ struct ConversationView<Extras: View>: View {
 
     private var macComposer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextEditor(text: $text)
-                .font(.system(size: 15)).scrollContentBackground(.hidden)
+            MacComposerEditor(text: $text, selection: $macSelection, markedText: $macMarkedText,
+                              context: state.context, editable: macEditable, popupShown: macCompletion != nil,
+                              focusRequest: macFocusRequest, completionKey: macCompletionKey)
                 .frame(height: macEditorHeight)
                 .overlay(alignment: .topLeading) {
                     if text.isEmpty {
@@ -237,7 +355,11 @@ struct ConversationView<Extras: View>: View {
                         .onGeometryChange(for: CGFloat.self) { min(180, max(76, $0.size.height)) } action: { macEditorHeight = $0 }
                 }
                 .accessibilityLabel("Instruction").accessibilityIdentifier("instruction")
-                .disabled(!canCompose)
+                .onChange(of: text) { _, _ in macDismissed = false; macHighlightedID = nil }
+                .onChange(of: macSelection) { _, _ in macDismissed = false; macHighlightedID = nil }
+                .onChange(of: state.context) { _, _ in
+                    macDismissed = false; macHighlightedID = nil; macMarkedText = false
+                }
             if state.working {
                 Picker("Send as", selection: $delivery) {
                     Text("Steer now").tag(Delivery.steer)
@@ -260,15 +382,18 @@ struct ConversationView<Extras: View>: View {
                     guard macCanSend else { return }
                     send()
                 } label: {
-                    Label("Send", systemImage: "arrow.up")
+                    Label(macIsSlash ? "Run" : "Send", systemImage: "arrow.up")
                 }
                 .buttonStyle(.borderedProminent)
-                .accessibilityLabel("Send")
+                .accessibilityLabel(macIsSlash ? "Run" : "Send")
+                .help("Command-Return runs a command or sends an instruction. Return and Tab only complete while suggestions are visible.")
                 .disabled(!macCanSend)
                 .keyboardShortcut(.return, modifiers: .command)
             }
             .labelStyle(.titleAndIcon).controlSize(.small)
-            Text("⌘Return to send · Return for a new line")
+            Text(macCompletion == nil
+                 ? "Type / for commands · ⌘Return run/send · Return for a new line"
+                 : "↑↓ select · Tab/Return complete · Esc close · ⌘Return run")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -284,9 +409,167 @@ struct ConversationView<Extras: View>: View {
         .frame(maxWidth: 784)
         .frame(maxWidth: .infinity)
         .padding(16)
+        .overlay(alignment: .top) {
+            if macCompletion != nil {
+                macSuggestions.frame(maxWidth: 784).padding(.horizontal, 16)
+                    .offset(y: -macSuggestionHeight - 8)
+            }
+        }
+        .zIndex(1)
     }
     #endif
 }
+
+#if os(macOS)
+private enum MacComposerKey { case up, down, complete, dismiss }
+
+private struct MacComposerEditor: NSViewRepresentable {
+    @Binding var text: String
+    @Binding var selection: NSRange
+    @Binding var markedText: Bool
+    let context: SessionContext
+    let editable: Bool
+    let popupShown: Bool
+    let focusRequest: Int
+    let completionKey: (MacComposerKey) -> Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        coordinator.applying = true
+        guard let editor = scroll.documentView as? ComposerTextView else { return }
+        editor.delegate = nil
+        editor.completionKey = nil
+        editor.unmarkText()
+        editor.undoManager?.removeAllActions()
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        let editor = ComposerTextView(frame: .zero)
+        editor.delegate = context.coordinator
+        editor.isRichText = false
+        editor.importsGraphics = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.allowsUndo = true
+        editor.isSelectable = true
+        editor.drawsBackground = false
+        editor.font = .systemFont(ofSize: 15)
+        editor.textContainerInset = NSSize(width: 5, height: 8)
+        editor.isHorizontallyResizable = false
+        editor.isVerticallyResizable = true
+        editor.autoresizingMask = [.width]
+        editor.minSize = .zero
+        editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        editor.textContainer?.lineFragmentPadding = 0
+        editor.textContainer?.widthTracksTextView = true
+        editor.textContainer?.containerSize = NSSize(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        editor.setAccessibilityLabel("Instruction")
+        editor.setAccessibilityIdentifier("instruction")
+        scroll.documentView = editor
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let editor = scroll.documentView as? ComposerTextView else { return }
+        let coordinator = context.coordinator
+        let changedContext = coordinator.parent.context != self.context
+        let changedBinding = coordinator.lastBoundText != text
+        coordinator.lastBoundText = text
+        coordinator.parent = self
+        coordinator.applying = true
+        defer { coordinator.applying = false }
+        editor.isEditable = editable
+        editor.popupShown = popupShown
+        editor.completionKey = completionKey
+        if changedContext {
+            editor.unmarkText()
+            editor.undoManager?.removeAllActions()
+        }
+        if editor.hasMarkedText() {
+            // Selection updates can arrive before IME text reaches the binding.
+            // Preserve preedit text unless the draft was explicitly replaced.
+            if !changedBinding || editor.string == text { return }
+            editor.unmarkText()
+        }
+        if editor.string != text {
+            let fullRange = NSRange(location: 0, length: (editor.string as NSString).length)
+            if !changedContext && editor.shouldChangeText(in: fullRange, replacementString: text) {
+                editor.textStorage?.replaceCharacters(in: fullRange, with: text)
+                editor.didChangeText()
+            } else {
+                editor.string = text
+            }
+        }
+        let length = (editor.string as NSString).length
+        let location = min(max(0, selection.location), length)
+        let safeSelection = NSRange(location: location, length: min(max(0, selection.length), length - location))
+        if editor.selectedRange() != safeSelection { editor.setSelectedRange(safeSelection) }
+        if coordinator.focusRequest != focusRequest {
+            coordinator.focusRequest = focusRequest
+            editor.window?.makeFirstResponder(editor)
+            editor.scrollRangeToVisible(safeSelection)
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: MacComposerEditor
+        var applying = false
+        var focusRequest: Int
+        var lastBoundText: String
+        init(_ parent: MacComposerEditor) {
+            self.parent = parent
+            focusRequest = parent.focusRequest
+            lastBoundText = parent.text
+        }
+        func textDidChange(_ notification: Notification) {
+            guard !applying, let editor = notification.object as? NSTextView else { return }
+            parent.text = editor.string
+            parent.selection = editor.selectedRange()
+            parent.markedText = editor.hasMarkedText()
+        }
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !applying, let editor = notification.object as? NSTextView else { return }
+            parent.selection = editor.selectedRange()
+            parent.markedText = editor.hasMarkedText()
+        }
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard let editor = textView as? ComposerTextView, editor.popupShown,
+                  !editor.hasMarkedText() else { return false }
+            let modifiers = NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
+            guard !modifiers.contains(.command), !modifiers.contains(.shift),
+                  !modifiers.contains(.control), !modifiers.contains(.option) else { return false }
+            let key: MacComposerKey
+            switch commandSelector {
+            case #selector(NSResponder.moveUp(_:)): key = .up
+            case #selector(NSResponder.moveDown(_:)): key = .down
+            case #selector(NSResponder.insertTab(_:)): key = .complete
+            case #selector(NSResponder.insertNewline(_:)): key = .complete
+            case #selector(NSResponder.cancelOperation(_:)): key = .dismiss
+            default: return false
+            }
+            return editor.completionKey?(key) ?? false
+        }
+    }
+}
+
+private final class ComposerTextView: NSTextView {
+    var popupShown = false
+    var completionKey: ((MacComposerKey) -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        if (event.keyCode == 36 || event.keyCode == 76), event.modifierFlags.contains(.command), !hasMarkedText() {
+            _ = window?.performKeyEquivalent(with: event)
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+#endif
 
 extension RemoteFault {
     var title: String {

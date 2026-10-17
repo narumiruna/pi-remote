@@ -24,6 +24,148 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         throw RemoteFault.unavailable
     }
 
+    func testSlashCatalogKeepsNativeNamesAndDiscoveredDetails() {
+        var state = HostSnapshot(host: UUID(), epoch: UUID())
+        state.selected = UUID()
+        state.commands = [
+            .init(name: "resume", detail: "Collision", source: "extension"),
+            .init(name: "Review", detail: "Actual detail", source: "extension"),
+            .init(name: "Review", detail: "Duplicate", source: "prompt"),
+            .init(name: "", detail: "Empty", source: "extension"),
+            .init(name: "bad name", detail: "Invalid", source: "extension"),
+            .init(name: "Users/file", detail: "Path", source: "extension")
+        ]
+        let options = MacSlashCommands.options(in: state)
+        XCTAssertEqual(options.map(\.name), ["resume", "tree", "history", "Review"])
+        XCTAssertEqual(options.first?.native, .resume)
+        XCTAssertEqual(options.last?.detail, "Actual detail")
+        XCTAssertEqual(MacSlashCommands.matching(in: state, query: "RE").map(\.name), ["resume", "Review"])
+        XCTAssertEqual(MacSlashCommands.submission("/Review  exact\narguments ", in: state), .command(name: "Review", arguments: " exact\narguments "))
+        guard case .invalid = MacSlashCommands.submission("/review", in: state) else { return XCTFail("Dispatch must use the exact discovered name") }
+    }
+
+    func testSlashCompletionUsesUTF16AndOnlyTheLeadingToken() throws {
+        let text = " \t/😀x argument"
+        let end = (" \t/😀x" as NSString).length
+        let completion = try XCTUnwrap(MacSlashCommands.completion(in: text, selection: NSRange(location: end, length: 0)))
+        XCTAssertEqual(completion.query, "😀x")
+        XCTAssertEqual(completion.tokenRange, NSRange(location: 2, length: 4))
+        XCTAssertNotNil(MacSlashCommands.completion(in: "/", selection: NSRange(location: 1, length: 0)))
+        XCTAssertNil(MacSlashCommands.completion(in: text, selection: NSRange(location: 4, length: 0)), "Reject a caret inside a surrogate pair")
+        XCTAssertNil(MacSlashCommands.completion(in: text, selection: NSRange(location: end + 1, length: 0)))
+        XCTAssertNil(MacSlashCommands.completion(in: text, selection: NSRange(location: end - 1, length: 1)))
+        XCTAssertNil(MacSlashCommands.completion(in: text, selection: NSRange(location: NSNotFound, length: 0)))
+        XCTAssertNil(MacSlashCommands.completion(in: text, selection: NSRange(location: -1, length: 0)))
+        XCTAssertNil(MacSlashCommands.completion(in: text, selection: NSRange(location: Int.max, length: Int.max)))
+        for value in ["Read /tree", "```\n/tree\n```", "/Users/foo", "//server/share"] {
+            XCTAssertNil(MacSlashCommands.completion(in: value, selection: NSRange(location: (value as NSString).length, length: 0)))
+            XCTAssertEqual(MacSlashCommands.submission(value, in: HostSnapshot(host: UUID(), epoch: UUID())), .prompt)
+        }
+        var pathState = HostSnapshot(host: UUID(), epoch: UUID()); pathState.selected = UUID()
+        XCTAssertEqual(MacSlashCommands.submission("/tmp contains the output; inspect it", in: pathState), .prompt)
+        pathState.commands = [.init(name: "tmp", detail: "Known command wins", source: "extension")]
+        XCTAssertEqual(MacSlashCommands.submission("/tmp argument", in: pathState), .command(name: "tmp", arguments: "argument"))
+        let option = MacSlashOption(name: "history", detail: "", native: .history)
+        let replaced = MacSlashCommands.completing(option, in: text, completion: completion)
+        XCTAssertEqual(replaced.text, " \t/history argument")
+        XCTAssertEqual(replaced.selection, NSRange(location: 11, length: 0))
+        let partial = try XCTUnwrap(MacSlashCommands.completion(in: "/hi", selection: NSRange(location: 3, length: 0)))
+        let inserted = MacSlashCommands.completing(option, in: "/hi", completion: partial)
+        XCTAssertEqual(inserted.text, "/history ")
+        XCTAssertEqual(inserted.selection, NSRange(location: 9, length: 0))
+        let invalid = MacSlashCommands.completing(option, in: "changed", completion: partial)
+        XCTAssertEqual(invalid.text, "changed")
+    }
+
+    func testSlashAvailabilityAndArgumentLimits() throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID())
+        state.selected = UUID()
+        state.commands = [.init(name: "ask", detail: "", source: "extension"), .init(name: "template", detail: "", source: "prompt")]
+        func enabled(_ name: String) throws -> Bool {
+            try XCTUnwrap(MacSlashCommands.options(in: state).first { $0.name == name }).isEnabled(in: state)
+        }
+        state.phase = "streaming"
+        XCTAssertTrue(try enabled("resume"))
+        XCTAssertFalse(try enabled("tree"))
+        XCTAssertFalse(try enabled("history"))
+        XCTAssertTrue(try enabled("ask"))
+        XCTAssertFalse(try enabled("template"))
+        for phase in ["starting", "stopping", "recovering"] {
+            state.phase = phase
+            XCTAssertFalse(try enabled("resume"))
+            XCTAssertFalse(try enabled("ask"))
+        }
+        state.phase = "waiting"
+        state.dialogs = [ExtensionDialog(id: "question", method: "confirm", title: "Question", message: "Proceed?", options: [], text: "", expires: nil)]
+        XCTAssertFalse(try enabled("resume"), "Navigation must not replace an unanswered request")
+        state.dialogs = []
+        state.phase = "idle"
+        XCTAssertEqual(MacSlashCommands.submission("/resume", in: state), .native(.resume))
+        for input in ["/resume id", "/tree branch", "/history page", "/unknown", "/ask " + String(repeating: "é", count: 8_193)] {
+            guard case .invalid(let error) = MacSlashCommands.submission(input, in: state) else { XCTFail("Expected invalid command"); continue }
+            XCTAssertFalse(error.isEmpty)
+        }
+        let maximum = String(repeating: "é", count: 8_192)
+        XCTAssertEqual(MacSlashCommands.submission("/ask " + maximum, in: state), .command(name: "ask", arguments: maximum))
+        state.capabilities = []
+        XCTAssertFalse(try enabled("resume"))
+        XCTAssertFalse(try enabled("tree"))
+        XCTAssertFalse(try enabled("history"))
+        state.selected = nil
+        XCTAssertFalse(try enabled("ask"))
+    }
+
+    func testNativeSlashRoutingPreservesInvalidDraftsAndDoesNotExecuteCompletion() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suite = "PiRemote.SlashTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        model.state.selected = UUID()
+        for native in MacNativeSlashCommand.allCases {
+            model.text = "/" + native.rawValue
+            model.send(context: model.state.context)
+            XCTAssertEqual(model.panel, native.rawValue)
+            XCTAssertEqual(model.text, "")
+            XCTAssertFalse(model.sending)
+            XCTAssertFalse(model.needsActionReview)
+        }
+        model.panel = nil
+        model.text = "/tr"
+        let completion = try XCTUnwrap(MacSlashCommands.completion(in: model.text, selection: NSRange(location: 3, length: 0)))
+        let option = try XCTUnwrap(MacSlashCommands.options(in: model.state).first { $0.name == "tree" })
+        model.text = MacSlashCommands.completing(option, in: model.text, completion: completion).text
+        XCTAssertNil(model.panel, "Completion changes text only")
+        model.state.phase = "streaming"
+        model.send()
+        XCTAssertEqual(model.text, "/tree ")
+        XCTAssertNotNil(model.composerError)
+        XCTAssertNil(model.panel)
+        model.text = "/resume"
+        XCTAssertNil(model.composerError)
+        model.send()
+        XCTAssertEqual(model.panel, "resume", "Browsing is allowed while busy")
+        XCTAssertEqual(model.text, "")
+        model.panel = nil
+        model.sending = true
+        model.text = "/resume"
+        model.send()
+        XCTAssertNil(model.panel, "A pending request keeps the existing Send guard")
+        XCTAssertEqual(model.text, "/resume")
+        model.sending = false
+        model.text = "/unknown"
+        model.send()
+        XCTAssertNotNil(model.composerError)
+        XCTAssertEqual(model.text, "/unknown")
+        model.state.epoch = UUID()
+        XCTAssertNil(model.composerError)
+        model.text = "  \n"
+        model.send()
+        XCTAssertFalse(model.sending)
+        await model.shutdown()
+    }
+
     func testClipboardUsesANamedBoardAndRejectsInvalidTextBeforeWriting() throws {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
@@ -249,16 +391,24 @@ done
 
             // A local extension command waits for its dialog response while a
             // remote mutation must observe the same coordinator's busy gate.
-            let command = Task { try await model.request(.command(name: "ask", arguments: "")) }
+            model.text = "/ask"
+            let staleCommandContext = SessionContext(host: model.state.host, epoch: UUID(), session: model.state.selected)
+            model.send(context: staleCommandContext)
+            XCTAssertEqual(model.text, "/ask")
+            XCTAssertEqual(model.fault, .conflict)
+            XCTAssertFalse(model.sending)
+            model.send(context: model.state.context)
             try await waitUntil { model.state.dialogs.first != nil }
+            XCTAssertTrue(model.sending)
+            XCTAssertEqual(model.text, "/ask", "Keep the command draft until acknowledgement")
             do {
                 _ = try await client.request(.thinking(level: "low"))
                 XCTFail("Remote mutation must not bypass the local command")
             } catch { XCTAssertEqual(error as? RemoteFault, .busy) }
             let dialog = try XCTUnwrap(model.state.dialogs.first)
             _ = try await client.request(.answer(dialog: dialog.id, value: nil, confirmed: true, cancelled: false))
-            _ = try await command.value
-            try await waitUntil { model.state.dialogs.isEmpty }
+            try await waitUntil { model.state.dialogs.isEmpty && !model.sending }
+            XCTAssertEqual(model.text, "", "Acknowledged commands use the normal draft-clearing path")
             XCTAssertNil(model.panel)
             let oldAction = model.scopedRequest(for: model.state)
             model.text = "Unsent first-session draft"
@@ -279,7 +429,8 @@ done
             XCTAssertEqual(try Data(contentsOf: accepted).count, 4, "Restoration must not replay prompts")
             model.text = "Busy switching check"; model.send()
             try await waitUntil { !model.sending && model.state.working }
-            await model.openSession(first)
+            let switched = await model.openSession(first)
+            XCTAssertFalse(switched)
             XCTAssertEqual(model.destination, .session(first), "Sidebar selection is independent of execution")
             XCTAssertEqual(model.state.selected, second)
             XCTAssertTrue(model.state.working, "Selecting a saved session must not stop active work")

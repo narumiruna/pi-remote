@@ -124,7 +124,8 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 - On iPhone, open session selection from the header. On Mac, select sessions beneath their workspace in the sidebar. Group model, thinking-level and other secondary controls in a session menu or inspector rather than a permanent toolbar.
 - Resolve Mac display labels from actual Pi names, first meaningful user instructions or stable IDs without changing persisted names. Disambiguate collisions within each workspace, including generated suffix collisions. Read saved metadata through a bounded, local-only, validated file path; do not activate Pi to obtain a label.
 - Keep one prominent Mac New session action in the toolbar, with contextual creation in workspace menus. Keep Add workspace and Import in the workspace actions menu and pin Devices/Settings below the workspace list.
-- Use a bounded multiline Mac composer with labelled controls. Return inserts a newline; Command-Return sends. Disable empty or unavailable Send. Keep extension diagnostics in Activity, outside the conversation footer.
+- Use a bounded multiline Mac composer with labelled controls. Type `/` in the leading message token for command completion. Up/Down selects, Return/Tab completes and Escape dismisses; completion never executes commands. Command-Return submits; Return inserts a newline when suggestions are closed. Disable empty or unavailable submission and protect IME composition. Keep extension diagnostics in Activity, outside the conversation footer.
+- Keep the Mac conversation visible without Conversation/History tabs. `/resume`, `/tree` and `/history` open bounded native workflows; discovered commands use the existing scoped `.command` action and uncertain-outcome guards. Preserve ordinary text and absolute paths. Do not forward terminal-only navigation commands as Pi prompts.
 - Keep the composer and Send action available while idle; while working, keep Stop visible and make the steering or follow-up choice explicit before submitting another instruction.
 - Show concise tool activity in the transcript with expandable output; keep errors and pending extension dialogs visible without requiring users to expand a tool result.
 - Keep the reader's scroll position when new output arrives; follow live output only when already at the bottom and offer a return-to-latest action otherwise.
@@ -284,6 +285,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ### Mac usability refinement
 
 - [x] Refine the existing Mac interface: read-only Pi-name/instruction display labels with stable collision handling, one global New session action, pinned management navigation, a compact session header, readable bounded-width messages, a 76–180-point multiline composer and Activity diagnostics. Existing names/IDs, catalog/JSONL formats, RPC actions, lifecycle, authentication and iPhone layouts remain unchanged. Verification: 35 Mac tests, 16 focused host tests, three primary-phone UI smoke checks and unsigned Mac/iOS builds pass. Real JSONL fixtures verify asynchronous display labels without activating Pi or changing session files. See [behavior, checks and limits](docs/mac-interface.md#mac-usability-refinement-verification). Hosted captures do not complete the separate normal-launch or live accessibility gates.
+
+### Mac slash-command navigation
+
+- [x] Implement inline slash completion and native navigation after removing the Mac Conversation/History tabs. `/resume`, `/tree` and `/history` open native sheets; discovered commands use existing scoped Send and request tracking. Completion edits the draft only. Verification: 48 Mac tests, three primary-phone UI checks and unsigned Mac/iOS builds pass. Native input, IME, undo, path handling, pending-dialog guards and narrow/wide popup hit testing pass. [Evidence and limits](docs/mac-interface.md#mac-slash-command-verification) distinguish hosted/model checks from unverified live operation; the normal-launch gate remains open.
 
 ### 4. Build the iOS client
 

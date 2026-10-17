@@ -5,18 +5,157 @@ import PiRemoteCore
 import PiRemoteHost
 import PiRemoteSecurity
 
+enum MacNativeSlashCommand: String, CaseIterable, Equatable {
+    case resume, tree, history
+}
+
+struct MacSlashOption: Identifiable, Equatable {
+    var name: String
+    var detail: String
+    var id: String { name }
+    var native: MacNativeSlashCommand?
+    private var source: String
+
+    init(name: String, detail: String, native: MacNativeSlashCommand?, source: String = "") {
+        self.name = name; self.detail = detail; self.native = native; self.source = source
+    }
+
+    func isEnabled(in state: HostSnapshot) -> Bool { disabledReason(in: state) == nil }
+
+    func disabledReason(in state: HostSnapshot) -> String? {
+        switch native {
+        case .resume:
+            guard state.capabilities.contains("sessions") else { return "Session browsing is not available." }
+            guard state.dialogs.isEmpty else { return "Answer or cancel the open request first." }
+            return ["starting", "stopping", "recovering"].contains(state.phase) ? "Wait for Pi to finish changing state." : nil
+        case .tree:
+            guard state.capabilities.contains("session-tree") else { return "Session tree is not available." }
+            guard state.selected != nil else { return "Select a session first." }
+            return state.phase == "idle" ? nil : "Wait for the session to become idle."
+        case .history:
+            guard state.capabilities.contains("history-pages") else { return "Session history is not available." }
+            guard state.selected != nil else { return "Select a session first." }
+            return state.working ? "Wait for the session to finish working." : nil
+        case nil:
+            guard state.selected != nil else { return "Select a session first." }
+            guard !["unavailable", "interrupted", "recovering", "starting", "stopping"].contains(state.phase) else { return "This command is not available in the current session state." }
+            return state.working && source != "extension" ? "Wait for the session to become idle." : nil
+        }
+    }
+}
+
+struct MacSlashCompletion: Equatable {
+    var query: String
+    var tokenRange: NSRange
+}
+
+enum MacSlashSubmission: Equatable {
+    case prompt
+    case native(MacNativeSlashCommand)
+    case command(name: String, arguments: String)
+    case invalid(String)
+}
+
+enum MacSlashCommands {
+    static func options(in state: HostSnapshot) -> [MacSlashOption] {
+        var result = [
+            MacSlashOption(name: "resume", detail: "Browse saved sessions", native: .resume),
+            MacSlashOption(name: "tree", detail: "Inspect the session tree", native: .tree),
+            MacSlashOption(name: "history", detail: "Browse session history", native: .history)
+        ]
+        var seen = Set(result.map(\.name))
+        for command in state.commands where validName(command.name) {
+            guard seen.insert(command.name).inserted else { continue }
+            result.append(MacSlashOption(name: command.name, detail: command.detail, native: nil, source: command.source))
+        }
+        return result
+    }
+
+    static func matching(in state: HostSnapshot, query: String) -> [MacSlashOption] {
+        options(in: state).filter { $0.name.lowercased().hasPrefix(query.lowercased()) }
+    }
+
+    private static func validName(_ name: String) -> Bool {
+        !name.isEmpty && !name.unicodeScalars.contains { CharacterSet.whitespacesAndNewlines.contains($0) || CharacterSet.controlCharacters.contains($0) || $0 == "/" }
+    }
+
+    private static func leadingToken(in text: String) -> NSRange? {
+        let string = text as NSString
+        var start = 0
+        while start < string.length, (CharacterSet.whitespacesAndNewlines as NSCharacterSet).characterIsMember(string.character(at: start)) { start += 1 }
+        guard start < string.length, string.character(at: start) == 47 else { return nil }
+        var end = start + 1
+        while end < string.length, !(CharacterSet.whitespacesAndNewlines as NSCharacterSet).characterIsMember(string.character(at: end)) { end += 1 }
+        let range = NSRange(location: start, length: end - start)
+        guard !string.substring(with: NSRange(location: start + 1, length: end - start - 1)).contains("/") else { return nil }
+        return range
+    }
+
+    static func completion(in text: String, selection: NSRange) -> MacSlashCompletion? {
+        let string = text as NSString
+        guard selection.length == 0, selection.location >= 0, selection.location != NSNotFound,
+              selection.location <= string.length,
+              Range(selection, in: text) != nil,
+              let token = leadingToken(in: text),
+              selection.location > token.location, selection.location <= NSMaxRange(token) else { return nil }
+        if selection.location > 0, selection.location < string.length {
+            let previous = string.character(at: selection.location - 1)
+            let next = string.character(at: selection.location)
+            guard !(previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) else { return nil }
+        }
+        return MacSlashCompletion(query: string.substring(with: NSRange(location: token.location + 1, length: selection.location - token.location - 1)), tokenRange: token)
+    }
+
+    static func completing(_ option: MacSlashOption, in text: String, completion: MacSlashCompletion) -> (text: String, selection: NSRange) {
+        let string = text as NSString
+        let fallback = (text: text, selection: NSRange(location: string.length, length: 0))
+        guard validName(option.name), let token = leadingToken(in: text), token == completion.tokenRange else { return fallback }
+        let end = NSMaxRange(token)
+        let hasSeparator = end < string.length
+        let replacement = "/" + option.name + (hasSeparator ? "" : " ")
+        let result = string.replacingCharacters(in: token, with: replacement)
+        return (result, NSRange(location: token.location + ("/" + option.name).utf16.count + 1, length: 0))
+    }
+
+    static func submission(_ text: String, in state: HostSnapshot) -> MacSlashSubmission {
+        guard let token = leadingToken(in: text) else { return .prompt }
+        let string = text as NSString
+        let name = string.substring(with: NSRange(location: token.location + 1, length: token.length - 1))
+        guard let option = options(in: state).first(where: { $0.name == name }) else {
+            // Preserve literal root paths such as /tmp as ordinary prompt text.
+            if validName(name), name.utf8.count <= 255,
+               FileManager.default.fileExists(atPath: string.substring(with: token)) { return .prompt }
+            return .invalid("Unknown slash command. Choose a command from the list.")
+        }
+        let end = NSMaxRange(token)
+        let arguments = end < string.length ? string.substring(from: end + 1) : ""
+        guard arguments.utf8.count <= 16_384 else { return .invalid("Command arguments exceed the 16,384-byte limit.") }
+        if let native = option.native {
+            guard arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .invalid("This command does not accept arguments. Use the native picker to select an item.") }
+            if let reason = option.disabledReason(in: state) { return .invalid(reason) }
+            return .native(native)
+        }
+        if let reason = option.disabledReason(in: state) { return .invalid(reason) }
+        return .command(name: option.name, arguments: arguments)
+    }
+}
+
 @MainActor @Observable
 final class CompanionModel {
     static let shared = CompanionModel()
     var state = HostSnapshot(host: UUID(), epoch: UUID()) {
-        didSet { refreshSessionDisplayMetadata() }
+        didSet {
+            if oldValue.context != state.context { composerError = nil }
+            refreshSessionDisplayMetadata()
+        }
     }
     private(set) var sessionDisplayMetadata: [UUID: SessionDisplayMetadata] = [:]
     @ObservationIgnored private var metadataRefresh: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var metadataCatalog: [SessionDisplayCatalogEntry] = []
     private var displayLabels: [UUID: String] = [:]
     private var presentationMetadata: [UUID: SessionDisplayMetadata] = [:]
-    var text = "" { didSet { scheduleDraftSave() } }
+    var text = "" { didSet { composerError = nil; scheduleDraftSave() } }
+    var composerError: String?
     var destination: MacDestination? = .overview { didSet { saveWorkspacePreferences() } }
     var inspectorVisible = false { didSet { saveWorkspacePreferences() } }
     var addedWorkspaces: [String] = []
@@ -255,11 +394,29 @@ final class CompanionModel {
     func send(context: SessionContext? = nil) {
         guard !sending else { return }
         guard context == nil || context == state.context else { fault = .conflict; return }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let message = text, submittedSession = state.selected
+        let action: SessionAction
+        switch MacSlashCommands.submission(message, in: state) {
+        case .prompt:
+            action = .prompt(text: message, delivery: state.working ? delivery : .prompt, image: nil)
+        case .native(let command):
+            panel = command.rawValue
+            if text == message {
+                text = ""
+                if let submittedSession { drafts[submittedSession] = "" }
+            }
+            return
+        case .command(let name, let arguments):
+            action = .command(name: name, arguments: arguments)
+        case .invalid(let error):
+            composerError = error
+            return
+        }
         if submissions.uncertain && !approvedResend { resendContext = state.context; confirmResend = true; return }
         approvedResend = false
+        composerError = nil
         sending = true
-        let message = text, submittedSession = state.selected
-        let action = SessionAction.prompt(text: message, delivery: state.working ? delivery : .prompt, image: nil)
         Task {
             defer { sending = false }
             do {
@@ -458,14 +615,14 @@ final class CompanionModel {
         saveWorkspacePreferences()
     }
 
-    func openSession(_ id: UUID) async {
+    @discardableResult func openSession(_ id: UUID) async -> Bool {
         destination = .session(id)
-        guard state.selected != id || ["unavailable", "interrupted"].contains(state.phase) else { return }
-        guard !openingSession, !state.working else { fault = .busy; return }
+        guard state.selected != id || ["unavailable", "interrupted"].contains(state.phase) else { return true }
+        guard !openingSession, !state.working else { fault = .busy; return false }
         openingSession = true
         defer { openingSession = false }
-        do { _ = try await request(.resumeSession(id: id)) }
-        catch { fault = error as? RemoteFault ?? .unavailable }
+        do { _ = try await request(.resumeSession(id: id)); return true }
+        catch { fault = error as? RemoteFault ?? .unavailable; return false }
     }
 
     @discardableResult func createSession(in path: String) async -> Bool {

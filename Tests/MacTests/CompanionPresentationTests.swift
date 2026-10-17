@@ -18,7 +18,7 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
     func value(_ name: String) -> Any? {
         let selector = NSSelectorFromString(name)
         if object.responds(to: selector), let value = object.perform(selector)?.takeUnretainedValue() { return value }
-        let attributes = ["accessibilityChildren": "AXChildren", "accessibilityIdentifier": "AXIdentifier", "accessibilityLabel": "AXDescription", "accessibilityValue": "AXValue"]
+        let attributes = ["accessibilityChildren": "AXChildren", "accessibilityIdentifier": "AXIdentifier", "accessibilityLabel": "AXDescription", "accessibilityValue": "AXValue", "accessibilityParent": "AXParent"]
         let legacy = NSSelectorFromString("accessibilityAttributeValue:")
         guard let attribute = attributes[name], object.responds(to: legacy) else { return nil }
         return object.perform(legacy, with: attribute)?.takeUnretainedValue()
@@ -50,6 +50,18 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
         ConversationView(state: state, text: $text, delivery: $delivery, sending: false, send: send, stop: stop) {
             Button("Files", systemImage: "folder") {}
             Button("Commands", systemImage: "slash.circle") {}
+        }
+    }
+}
+
+@MainActor private struct ComposerContextFixture: View {
+    @State var state: HostSnapshot
+    @State private var text = ""
+    @State private var delivery = Delivery.prompt
+    var body: some View {
+        VStack {
+            Button("Switch draft") { state.selected = UUID(); text = "Other session draft" }
+            ConversationView(state: state, text: $text, delivery: $delivery, sending: false, send: {}, stop: {}) { EmptyView() }
         }
     }
 }
@@ -138,7 +150,23 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
     }
 
     private func accessibilityElements(in root: NSView) -> [PresentationAccessibility] {
-        _ = root.accessibilityHitTest(root.window?.convertPoint(toScreen: NSPoint(x: 20, y: 20)) ?? .zero)
+        var hitElements: [NSObject] = []
+        if let window = root.window {
+            for y in stride(from: CGFloat(20), to: root.bounds.height, by: 30) {
+                for x in stride(from: CGFloat(20), to: root.bounds.width, by: 120) {
+                    if let hit = root.accessibilityHitTest(window.convertPoint(toScreen: root.convert(NSPoint(x: x, y: y), to: nil))) as? NSObject {
+                        hitElements.append(hit)
+                    }
+                }
+            }
+        }
+        for scroll in descendants(root).compactMap({ $0 as? NSScrollView }) {
+            guard let window = scroll.window else { continue }
+            for y in stride(from: CGFloat(15), to: scroll.bounds.height, by: 30) {
+                let point = window.convertPoint(toScreen: scroll.convert(NSPoint(x: min(30, scroll.bounds.width / 2), y: y), to: nil))
+                if let hit = scroll.accessibilityHitTest(point) as? NSObject { hitElements.append(hit) }
+            }
+        }
         var visited = Set<ObjectIdentifier>()
         var result: [PresentationAccessibility] = []
         func visit(_ object: NSObject) {
@@ -149,6 +177,15 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
             if let view = object as? NSView { for child in view.subviews { visit(child) } }
         }
         visit(root)
+        for hit in hitElements {
+            visit(hit)
+            var parent = PresentationAccessibility(object: hit).value("accessibilityParent") as? NSObject
+            var ancestors = Set<ObjectIdentifier>()
+            while let object = parent, ancestors.insert(ObjectIdentifier(object)).inserted {
+                visit(object)
+                parent = PresentationAccessibility(object: object).value("accessibilityParent") as? NSObject
+            }
+        }
         return result
     }
 
@@ -170,12 +207,11 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
             case "mac-folder-breadcrumb": return label == "project"
             case "mac-composer-files": return label == "Files"
             case "mac-composer-commands": return label == "Commands"
+            case "slash-run": return label == "Run"
             case "mac-session-actions":
                 return label == "Session actions" || (node.object is NSPopUpButtonCell && node.accessibilityIdentifier() == "ellipsis")
-            case "mac-conversation-tabs":
-                return (node.object as? NSSegmentedControl).map { control in
-                    (0..<control.segmentCount).contains { control.label(forSegment: $0) == "Conversation" }
-                } ?? false
+            case "slash-option-resume", "slash-option-tree", "slash-option-history":
+                return label == "/" + identifier.replacingOccurrences(of: "slash-option-", with: "")
             default: return false
             }
         }
@@ -190,7 +226,10 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
             XCTAssertTrue(native.isEnabled, "Disabled control: \(identifier)")
             native.performClick(nil)
         } else {
-            let control = try element(identifier, in: root)
+            let control: PresentationAccessibility
+            if let title, !accessibilityElements(in: root).contains(where: { $0.accessibilityIdentifier() == identifier }) {
+                control = try labelled(title, in: root)
+            } else { control = try element(identifier, in: root) }
             XCTAssertTrue(control.isAccessibilityEnabled(), "Disabled control: \(identifier)")
             XCTAssertTrue(control.accessibilityPerformPress(), "Control must support native activation: \(identifier)")
         }
@@ -377,11 +416,7 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
                 })
                 XCTAssertEqual((0..<inspectorPicker.segmentCount).compactMap { inspectorPicker.label(forSegment: $0) }, ["Files", "Tools", "Activity"])
                 XCTAssertEqual(inspectorPicker.selectedSegment, 0)
-                let sessionPicker = try XCTUnwrap(pickers.first { control in
-                    (0..<control.segmentCount).contains { control.label(forSegment: $0) == "Conversation" }
-                })
-                XCTAssertEqual((0..<sessionPicker.segmentCount).compactMap { sessionPicker.label(forSegment: $0) }, ["Conversation", "History"])
-                XCTAssertEqual(sessionPicker.selectedSegment, 0)
+                self.assertNoConversationTabs(in: host)
             }
         }
     }
@@ -690,8 +725,12 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
                 try await capture(CompanionWindow(model: model), name: "usability-duplicate-header-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
                     _ = try self.element("mac-session-heading", in: host)
                     _ = try self.element("mac-session-metadata", in: host)
-                    _ = try self.element("mac-conversation-tabs", in: host)
-                    _ = try self.element("mac-session-actions", in: host)
+                    self.assertNoConversationTabs(in: host)
+                    let actions = try self.element("mac-session-actions", in: host)
+                    let heading = try self.element("mac-session-heading", in: host)
+                    let actionFrame = try XCTUnwrap(actions.frame())
+                    let headingFrame = try XCTUnwrap(heading.frame())
+                    XCTAssertLessThan(abs(actionFrame.midY - headingFrame.midY), 36, "Session actions belong in the headline")
                     let nodes = self.accessibilityElements(in: host)
                     XCTAssertEqual(nodes.filter { ($0.value("accessibilityLabel") as? String) == "New session" }.count, 1,
                                    "Only the global New session button must appear outside menus")
@@ -763,6 +802,314 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
             XCTAssertGreaterThan(viewport.bounds.height, shortHeight, "The editor grows for multiline input")
             XCTAssertLessThanOrEqual(viewport.bounds.height, 180, "Long drafts scroll inside a bounded editor")
             XCTAssertEqual(editor.string, longDraft)
+        }
+    }
+
+    private func assertNoConversationTabs(in root: NSView, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertFalse(accessibilityElements(in: root).contains { $0.accessibilityIdentifier() == "mac-conversation-tabs" }, file: file, line: line)
+        XCTAssertFalse(descendants(root).compactMap { $0 as? NSSegmentedControl }.contains { control in
+            (0..<control.segmentCount).contains { ["Conversation", "History"].contains(control.label(forSegment: $0) ?? "") }
+        }, file: file, line: line)
+    }
+
+    private func nativeEditor(in root: NSView) throws -> NSTextView {
+        try XCTUnwrap(descendants(root).compactMap { $0 as? NSTextView }.first { $0.isEditable && !$0.isFieldEditor })
+    }
+
+    private func key(_ characters: String, code: UInt16 = 0, modifiers: NSEvent.ModifierFlags = [], in editor: NSTextView) async throws {
+        let window = try XCTUnwrap(editor.window)
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+        window.sendEvent(event)
+        try await Task.sleep(for: .milliseconds(120))
+        window.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func hasLabel(_ label: String, in root: NSView) -> Bool {
+        accessibilityElements(in: root).contains {
+            let description = $0.value("accessibilityLabel") as? String ?? ""
+            return description == label || description.hasPrefix(label + ", ") || ($0.value("accessibilityValue") as? String) == label
+        }
+    }
+
+    func testSlashNativeTypingFilteringCompletionAndEscapeAtNarrowWidth() async throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID()); state.selected = UUID()
+        state.commands = [CommandOption(name: "fixture", detail: "Discovered fixture", source: "extension")]
+        var sends = 0
+        try await capture(ComposerFixture(state: state, send: { sends += 1 }, stop: {}), name: "slash-keyboard-400", width: 400, height: 600) { host, window in
+            let editor = try self.nativeEditor(in: host)
+            _ = try self.element("instruction", in: host)
+            try await self.key("/", in: editor)
+            XCTAssertEqual(editor.string, "/")
+            _ = try self.element("slash-option-resume", in: host)
+            _ = try self.element("slash-option-tree", in: host)
+            _ = try self.element("slash-option-history", in: host)
+            XCTAssertTrue(self.hasLabel("/fixture", in: host))
+            let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+            // SwiftUI does not export the overlay group, but public hit testing exports its visible rows.
+            let rowFrames = self.accessibilityElements(in: host).filter { $0.accessibilityIdentifier()?.hasPrefix("slash-option-") == true }.compactMap { $0.frame() }
+            XCTAssertEqual(rowFrames.count, 4)
+            let popup = try XCTUnwrap(rowFrames.reduce(nil as NSRect?) { $0?.union($1) ?? $1 })
+            XCTAssertLessThanOrEqual(popup.height, 200)
+            let input = window.convertToScreen(editor.enclosingScrollView!.convert(editor.enclosingScrollView!.bounds, to: nil))
+            XCTAssertTrue(viewport.contains(popup), "Popup fits a 400-point conversation: \(popup)")
+            XCTAssertGreaterThanOrEqual(popup.minY, input.maxY, "Popup is above the editor")
+            try await self.key("tr", in: editor)
+            XCTAssertTrue(self.hasLabel("/tree", in: host))
+            XCTAssertFalse(self.hasLabel("/resume", in: host))
+            try await self.key("\t", code: 48, in: editor)
+            XCTAssertEqual(editor.string, "/tree ")
+            XCTAssertEqual(sends, 0, "Completion must not execute")
+            try self.enter("/", placeholder: "Message Pi", in: host)
+            try await Task.sleep(for: .milliseconds(120))
+            try await self.key("\u{f701}", code: 125, in: editor)
+            try await self.key("\r", code: 36, in: editor)
+            XCTAssertEqual(editor.string, "/tree ", "Down selects the second native option; Return completes")
+            XCTAssertEqual(sends, 0)
+            try self.enter("/", placeholder: "Message Pi", in: host)
+            try await Task.sleep(for: .milliseconds(120))
+            try await self.key("\u{1b}", code: 53, in: editor)
+            XCTAssertFalse(self.hasLabel("/tree", in: host))
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertFalse(self.hasLabel("/tree", in: host), "Escape remains closed without an edit")
+            try await self.key("t", in: editor)
+            XCTAssertTrue(self.hasLabel("/tree", in: host))
+            XCTAssertEqual(sends, 0)
+            try self.enter("/", placeholder: "Message Pi", in: host)
+            try await Task.sleep(for: .milliseconds(150))
+            try await self.key("\u{f701}", code: 125, in: editor)
+            try await self.key("\u{f700}", code: 126, in: editor)
+            try await self.key("\t", code: 48, in: editor)
+            XCTAssertEqual(editor.string, "/resume ", "Up returns to the first option")
+            try self.enter("/fi", placeholder: "Message Pi", in: host)
+            try await Task.sleep(for: .milliseconds(150))
+            try await self.key("\t", code: 48, in: editor)
+            XCTAssertEqual(editor.string, "/fixture ")
+            XCTAssertEqual(sends, 0, "Discovered completion also edits only")
+            try self.enter("/", placeholder: "Message Pi", in: host)
+            try await Task.sleep(for: .milliseconds(150))
+        }
+    }
+
+    func testSlashMouseCompletionSelectionCaretAndLiteralGuards() async throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID()); state.selected = UUID()
+        var sends = 0
+        try await capture(ComposerFixture(state: state, send: { sends += 1 }, stop: {}), name: "slash-caret-click-400", width: 400, height: 600) { host, _ in
+            let editor = try self.nativeEditor(in: host)
+            try await self.key("/tr", in: editor)
+            try await self.press("slash-option-tree", in: host)
+            XCTAssertEqual(editor.string, "/tree ")
+            XCTAssertEqual(sends, 0)
+            for literal in ["/tmp/nested/file", "Discuss /tree", "plain prose"] {
+                try self.enter(literal, placeholder: "Message Pi", in: host)
+                try await Task.sleep(for: .milliseconds(120))
+                XCTAssertFalse(self.hasLabel("/tree", in: host), literal)
+            }
+            try self.enter("/tr", placeholder: "Message Pi", in: host)
+            try await Task.sleep(for: .milliseconds(120))
+            editor.setSelectedRange(NSRange(location: 1, length: 1))
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertFalse(self.hasLabel("/tree", in: host), "A selection prevents completion")
+            XCTAssertEqual(editor.string, "/tr")
+            try await self.key("\u{f703}", code: 124, in: editor)
+            editor.setSelectedRange(NSRange(location: 3, length: 0))
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertTrue(self.hasLabel("/tree", in: host), "Caret movement restores completion")
+            try await self.key("\u{1b}", code: 53, in: editor)
+            try await self.key("\u{f702}", code: 123, in: editor)
+            try await Task.sleep(for: .milliseconds(120))
+            XCTAssertTrue(self.hasLabel("/tree", in: host), "Caret movement clears Escape dismissal")
+            XCTAssertEqual(sends, 0)
+        }
+    }
+
+    func testSlashRootRoutesOpenNativeSheetsWithoutTabs() async throws {
+        for (command, title) in [("resume", "Resume session"), ("tree", "Session tree"), ("history", "History")] {
+            try await withModel { model in
+                let session = SessionInfo(id: UUID(), title: "Named saved session", directory: "/tmp/slash-fixture")
+                model.state.sessions = [session]; model.state.selected = session.id
+                model.destination = .session(session.id); model.inspectorVisible = false
+                try await capture(CompanionWindow(model: model), name: "slash-root-\(command)-900", width: 900, height: 600, sheet: true) { host, window in
+                    self.assertNoConversationTabs(in: host)
+                    let editor = try self.nativeEditor(in: host)
+                    try await self.key("/" + command, in: editor)
+                    XCTAssertNil(model.panel, "Typing cannot open navigation")
+                    try await self.key("\t", code: 48, in: editor)
+                    XCTAssertEqual(model.text, "/" + command + " ")
+                    XCTAssertNil(model.panel, "Completion cannot open navigation")
+                    if command == "tree" {
+                        try await self.key("\r", code: 36, modifiers: .command, in: editor)
+                    } else {
+                        try await self.press("slash-run", in: host, title: "Run")
+                    }
+                    XCTAssertEqual(model.panel, command)
+                    let sheet = try XCTUnwrap(window.sheets.first)
+                    let content = try XCTUnwrap(sheet.contentView)
+                    XCTAssertTrue(self.hasLabel(title, in: content), "Real native sheet title: \(title)")
+                    self.assertNoConversationTabs(in: host)
+                    XCTAssertTrue(model.text.isEmpty)
+                    XCTAssertTrue(model.state.messages.isEmpty, "Native navigation is not a prompt")
+                }
+            }
+        }
+    }
+
+    func testSlashPopupFitsMinimumAndWideRootWindows() async throws {
+        try await withModel { model in
+            let session = SessionInfo(id: UUID(), title: "Slash layout fixture", directory: "/tmp/slash-layout")
+            model.state.selected = session.id; model.state.sessions = [session]
+            model.state.commands = [CommandOption(name: "fixture", detail: "Discovered fixture", source: "extension")]
+            model.destination = .session(session.id); model.inspectorVisible = false
+            for (width, height) in [(900, 600), (1300, 800)] {
+                model.text = ""
+                try await capture(CompanionWindow(model: model), name: "slash-popup-root-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, window in
+                    let editor = try self.nativeEditor(in: host)
+                    try await self.key("/", in: editor)
+                    self.assertNoConversationTabs(in: host)
+                    // The root's transcript can hide overflow AX rows. Use the native popup viewport for layout and mouse events.
+                    let suggestions = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSScrollView }.first {
+                        abs($0.bounds.height - 200) < 1 && ($0.documentView?.bounds.height ?? 0) > 200
+                    })
+                    let popup = window.convertToScreen(suggestions.convert(suggestions.bounds, to: nil))
+                    let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+                    let scroll = try XCTUnwrap(editor.enclosingScrollView)
+                    let input = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+                    XCTAssertTrue(viewport.contains(popup))
+                    XCTAssertGreaterThanOrEqual(popup.minY, input.maxY)
+                    XCTAssertLessThanOrEqual(popup.height, 200)
+                    XCTAssertNil(model.panel)
+                    XCTAssertEqual(model.text, "/")
+                    let rowY: CGFloat = suggestions.isFlipped ? 75 : suggestions.bounds.height - 75
+                    let point = suggestions.convert(NSPoint(x: suggestions.bounds.midX, y: rowY), to: nil)
+                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                        let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                            context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                        window.sendEvent(event)
+                    }
+                    try await Task.sleep(for: .milliseconds(150))
+                    XCTAssertEqual(editor.string, "/tree ", "Native mouse events complete the visible row")
+                    XCTAssertNil(model.panel, "A mouse completion cannot execute")
+                    try self.enter("/", placeholder: "Message Pi", in: host)
+                    try await Task.sleep(for: .milliseconds(150))
+                }
+            }
+        }
+    }
+
+    func testSlashBusyNativeOptionsDoNotCompleteOrDispatch() async throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID()); state.selected = UUID(); state.phase = "working"
+        var sends = 0
+        try await capture(ComposerFixture(state: state, send: { sends += 1 }, stop: {}), name: "slash-busy-disabled-400", width: 400, height: 600) { host, _ in
+            let editor = try self.nativeEditor(in: host)
+            try await self.key("/tree", in: editor)
+            let option = try self.element("slash-option-tree", in: host)
+            _ = option.accessibilityPerformPress()
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(editor.string, "/tree", "Disabled option cannot complete by click")
+            XCTAssertFalse(try self.labelled("Run", in: host).isAccessibilityEnabled())
+            try await self.key("\r", code: 36, in: editor)
+            XCTAssertEqual(editor.string, "/tree\n", "Disabled completion must leave Return as a newline")
+            XCTAssertEqual(sends, 0)
+            try self.enter("/resume", placeholder: "Message Pi", in: host)
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertTrue(try self.element("slash-option-resume", in: host).isAccessibilityEnabled(), "Busy state permits opening the read-only resume panel")
+            XCTAssertEqual(sends, 0)
+        }
+    }
+
+    func testSlashNativeInspectionViewsLoadTypedRequestsAndForkOnlyExplicitly() async throws {
+        for tree in [true, false] {
+            var actions: [SessionAction] = []; var forks = 0
+            let request: (SessionAction) async throws -> AppResult = { action in
+                actions.append(action)
+                switch action {
+                case .sessionTree(cursor: nil):
+                    return .sessionTree(SessionTreePage(items: [SessionTreeItem(node: SessionTreeNode(
+                        id: "fixture-entry", parentID: nil, kind: "message", label: "Saved branch", labelTimestamp: nil,
+                        text: "Tree fixture message", truncated: false, canFork: true), preview: nil)], leafID: "fixture-entry", next: nil))
+                case .historyPage(cursor: nil):
+                    return .historyPage(HistoryPage(items: [HistoryItem(id: "fixture-entry", parent: nil, kind: "message",
+                        text: "History fixture message", canFork: true)], next: nil))
+                case .fork(entry: "fixture-entry"): return .ok
+                default: XCTFail("Unexpected inspection action: \(action)"); throw RemoteFault.unsupportedFeature
+                }
+            }
+            let view = Group {
+                if tree { SessionTreeView(request: request, forked: { forks += 1 }) }
+                else { HistoryView(request: request, paged: true, forked: { forks += 1 }) }
+            }
+            try await capture(view, name: tree ? "slash-tree-typed-data" : "slash-history-typed-data", width: 650, height: 600) { host, _ in
+                XCTAssertEqual(actions, [tree ? .sessionTree(cursor: nil) : .historyPage(cursor: nil)])
+                XCTAssertEqual(forks, 0, "Inspection alone cannot fork")
+                XCTAssertTrue(self.hasLabel(tree ? "Tree fixture message" : "History fixture message", in: host))
+                if tree {
+                    XCTAssertTrue(self.hasLabel("Label: Saved branch", in: host))
+                    XCTAssertTrue(self.hasLabel("Active leaf", in: host))
+                }
+                try await self.press("fixture-fork", in: host, title: "Fork from this message")
+                XCTAssertEqual(actions.last, .fork(entry: "fixture-entry"))
+                XCTAssertEqual(forks, 1)
+            }
+        }
+    }
+
+    func testSlashNativeEditorClearsUndoAcrossSessionContext() async throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID()); state.selected = UUID()
+        try await capture(ComposerContextFixture(state: state), name: "slash-editor-context-undo", width: 700, height: 600) { host, _ in
+            let editor = try self.nativeEditor(in: host)
+            try await self.key("First private draft", in: editor)
+            XCTAssertTrue(editor.undoManager?.canUndo == true)
+            try await self.press("switch-draft", in: host, title: "Switch draft")
+            XCTAssertEqual(editor.string, "Other session draft")
+            XCTAssertFalse(editor.undoManager?.canUndo == true, "Undo must not restore another session's draft")
+        }
+    }
+
+    func testSlashNativeMarkedTextDoesNotCompleteOrSend() async throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID()); state.selected = UUID()
+        var sends = 0
+        try await capture(ComposerFixture(state: state, send: { sends += 1 }, stop: {}), name: "slash-editor-marked-text", width: 400, height: 600) { host, window in
+            let editor = try self.nativeEditor(in: host)
+            XCTAssertTrue(window.makeFirstResponder(editor))
+            editor.setMarkedText("/tr", selectedRange: NSRange(location: 3, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+            XCTAssertTrue(editor.hasMarkedText(), "Native input method starts marked composition")
+            XCTAssertEqual(editor.string, "/tr")
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertTrue(editor.hasMarkedText())
+            XCTAssertFalse(self.hasLabel("/tree", in: host), "IME marked text must not open completion")
+            try await self.key("\r", code: 36, modifiers: .command, in: editor)
+            XCTAssertEqual(sends, 0, "Command-Return must not submit marked text")
+            XCTAssertNotEqual(editor.string, "/tree ", "IME input must not complete a slash command")
+            editor.unmarkText()
+            editor.didChangeText()
+            try await Task.sleep(for: .milliseconds(150))
+            XCTAssertFalse(editor.hasMarkedText())
+            XCTAssertTrue(self.hasLabel("/tree", in: host))
+            XCTAssertEqual(editor.string, "/tr")
+            XCTAssertEqual(sends, 0)
+        }
+    }
+
+    func testSlashResumeEmptyAndBusyRowsAreReadOnly() async throws {
+        try await withModel { model in
+            model.panel = "resume"
+            try await capture(CompanionWindow(model: model), name: "slash-resume-empty", width: 900, height: 600, sheet: true) { _, window in
+                let host = try XCTUnwrap(window.sheets.first?.contentView)
+                XCTAssertTrue(self.hasLabel("No saved sessions. Use New session in the toolbar to create one.", in: host))
+            }
+            let session = SessionInfo(id: UUID(), title: "Saved task", directory: "/tmp/slash-saved")
+            model.state.sessions = [session]; model.state.selected = session.id; model.state.phase = "working"
+            try await capture(MacResumeSessionView(model: model), name: "slash-resume-busy", width: 650, height: 420) { host, _ in
+                let row = try self.element("mac-resume-session-" + session.id.uuidString, in: host)
+                XCTAssertFalse(row.isAccessibilityEnabled())
+                let label = row.value("accessibilityLabel") as? String ?? ""
+                XCTAssertTrue(label.contains("Saved task"))
+                XCTAssertTrue(label.contains(session.directory))
+                XCTAssertTrue(self.hasLabel("Pi is working. Wait or use Stop before switching sessions.", in: host))
+            }
         }
     }
 
