@@ -1,5 +1,9 @@
 # Simulator interface verification
 
+## Historical record — not an active development gate
+
+The user removed iPhone SE (3rd generation), iOS 26.5, and PiRemoteCompact from the active test matrix. Do not run this suite during current early feature development unless explicitly requested. Keep the test source, commands and results below as historical records. Prioritize real Mac usability and focused checks; use the primary iPhone 17 Pro simulator only for relevant smoke checks.
+
 ## Result
 
 All 27 current interface tests pass in 14 accepted batches, with zero failures or skips in that set; see the [current acceptance checkpoint](core-rpc-acceptance.md#delegated-compact-interface-audit). Earlier failed attempts and test-navigation fixes remain recorded. The original six also passed twice in sequence before usage, image-output, text-attachment and runtime-control checks were added. They run the production phone views in a separate test app on an iPhone SE (3rd generation) simulator, iOS 26.5, at 375 × 667 points with accessibility-extra-large text. Captures were inspected in light and dark appearance.

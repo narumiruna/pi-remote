@@ -24,6 +24,8 @@ The authenticated `directoryAtPath` action returns the existing bounded director
 
 ## Verified checks
 
+These are results from the earlier verification work. The user has since removed iPhone SE/PiRemoteCompact from the active matrix and deferred broad UI/E2E runs during early development. Do not repeat these suites as a routine development gate. Normal Mac launch and basic local Pi operation remain the priority; these model/layout results do not prove that workflow works.
+
 - All 138 root tests pass with explicit serial scheduling, normally and with Thread Sanitizer. New cases cover canonical direct paths, aliases, spaces/literal shell punctuation, home prefixes, malformed/missing/non-directory/loop targets, read-only typed protocol round trips and lookup without starting Pi. Production TLS tests reject unauthenticated direct-path requests.
 - All 50 shared-package tests pass normally and with Thread Sanitizer.
 - All 11 Mac tests pass with no failures or skips. Eight presentation cases cover independent server/session status, stopped/listening empty states, an active session, paired-access settings, large-text environment input and real folder/control sheet bounds. The controls test finds the form's scroll viewport and scrolls toward its lower controls. The existing model tests still cover approval, persistence, revocation and shared local/remote control.
