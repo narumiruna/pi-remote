@@ -6,7 +6,7 @@ Choose a Mac directory from your phone, start a managed session, watch output an
 
 ## Status
 
-**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Twenty-nine iOS simulator app tests pass with the explicit local provider fixture on LAN and Tailscale, including coding, image output, reconnection and host restart. Sixteen separate compact-interface UI tests also pass in bounded batches. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
+**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Thirty-one iOS simulator app tests pass with the explicit local provider fixture on LAN and Tailscale, including coding, image output, reconnection and host restart. Eighteen compact-interface tests have passing evidence across bounded checkpoints; see [system sharing checks](docs/session-export.md#system-sharing-checkpoint). The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
 
 The full Pi workflow review remains open. Local model/transport setup checks pass; signed installation remains unverified. Compact simulator checks now cover the real keyboard, large text, readable controls, error recovery and live scroll position. Signed physical-device coding, off-site Tailscale and hardware unlock are unverified limits, not completion gates for the current local plan. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
 
@@ -19,7 +19,7 @@ The full Pi workflow review remains open. Local model/transport setup checks pas
 - Native prompts, steering, follow-up, Stop, model/thinking controls, confirmed queue/compaction settings, command discovery and supported extension dialogs.
 - Paged, read-only [installed Pi release notes](docs/release-notes.md), without starting Pi or opening links.
 - Explicit last-response copy and idle-session close/reopen controls; copying uses local-device clipboard options.
-- Consent-based HTML (full tree) and JSONL (active branch) export through the native file picker, with no automatic upload; see [export limits and checks](docs/session-export.md).
+- Consent-based HTML (full tree) and JSONL (active branch) export through the native file picker, plus separately reviewed system sharing with no automatic upload; see [export limits and checks](docs/session-export.md).
 - Explicit reviewed JSONL import (versions 1–3) into companion-owned storage with Pi-managed legacy migration, with validated saved or explicitly chosen directories and no prompt replay; see [import limits and checks](docs/session-import.md).
 - Paged session history and entry inspection, fork/clone controls, real manual compaction, image/text input, explicit Mac-file text attachment, bounded file previews, working-tree diff and native session-usage statistics.
 - Saved Mac connections, QR-code or pasted-code pairing, explicit local approval, per-device credentials and revocation.
@@ -55,7 +55,7 @@ Pi **1.3.0** is the tested development runtime. Other Pi versions are unverified
 
 The companion catalog and managed sessions use `~/Library/Application Support/PiRemote/`. Do not open managed session files for writing in another Pi process. To remove access, select **Revoke** beside the device on the Mac. To change interfaces, stop the listener, select the new address and restart it; update the saved phone address without changing its certificate pin. If the certificate does not cover the new address, use **Replace connection identity** and pair again. Do not disable TLS checks.
 
-Clean setup evidence: two Mac-model tests pass with new private support storage and isolated preferences, including Start listener, local approval, persisted devices, listener restart and revocation. Twenty-nine simulator tests pass with fresh phone preferences and a private local provider fixture, including product-model pairing, saved connections, nested directory selection and coding. These are local model/transport and simulator checks, not signed installation, hardware authentication, camera or off-site evidence. [Repeat the checks](docs/workflow-verification.md#clean-setup-controls).
+Clean setup evidence: two Mac-model tests pass with new private support storage and isolated preferences, including Start listener, local approval, persisted devices, listener restart and revocation. Thirty-one simulator tests pass with fresh phone preferences and a private local provider fixture, including product-model pairing, saved connections, nested directory selection and coding. These are local model/transport and simulator checks, not signed installation, hardware authentication, camera or off-site evidence. [Repeat the checks](docs/workflow-verification.md#clean-setup-controls).
 
 ## Development
 

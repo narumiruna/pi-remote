@@ -238,6 +238,73 @@ final class InterfaceTests: XCTestCase {
         XCTAssertFalse(save.exists)
     }
 
+    func testSystemSharingRequiresConsentAndCancelKeepsTheExport() throws {
+        verifySystemSharing(jsonl: false)
+    }
+
+    func testJSONLSystemSharingPreservesTheFilenameAndResetsConsent() throws {
+        verifySystemSharing(jsonl: true)
+    }
+
+    private func verifySystemSharing(jsonl: Bool) {
+        let app = launch(["idle"])
+        controls(app)
+        let link = app.buttons["Review and export session"]
+        reveal(link, app: app); link.tap()
+        if jsonl {
+            let format = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Export format")).firstMatch
+            XCTAssertTrue(format.waitForExistence(timeout: 5)); format.tap()
+            app.buttons["JSONL (.jsonl)"].tap()
+        }
+        let consent = app.switches["export-consent"]
+        reveal(consent.switches.firstMatch, app: app); consent.switches.firstMatch.tap()
+        let prepare = app.buttons[jsonl ? "Prepare JSONL export" : "Prepare HTML export"]
+        reveal(prepare, app: app); prepare.tap()
+        let review = app.buttons["Review sharing options"]
+        reveal(review, app: app); review.tap()
+        XCTAssertTrue(app.navigationBars["Share export"].waitForExistence(timeout: 5))
+        let service = app.buttons["share-service"]
+        reveal(service, app: app)
+        XCTAssertFalse(service.isEnabled)
+        let sharing = app.switches["share-consent"].switches.firstMatch
+        reveal(sharing, app: app, towardTop: true); sharing.tap()
+        reveal(service, app: app); reachable(service, app: app); service.tap()
+        let activity = app.otherElements["ActivityListView"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars[jsonl ? "pi-session.jsonl" : "pi-session.html"].exists)
+        capture(app, jsonl ? "compact-jsonl-system-share-picker" : "compact-system-share-picker")
+        app.otherElements["PopoverDismissRegion"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        XCTAssertTrue(activity.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(service.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["export-saved"].exists)
+        app.navigationBars["Share export"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Export session"].waitForExistence(timeout: 5))
+        reveal(review, app: app, towardTop: true); review.tap()
+        reveal(service, app: app)
+        XCTAssertFalse(service.isEnabled, "Leaving the sharing review must reset consent.")
+        capture(app, jsonl ? "compact-jsonl-system-share-consent" : "compact-system-share-consent")
+        if jsonl {
+            reveal(sharing, app: app, towardTop: true); sharing.tap()
+            reveal(service, app: app); service.tap()
+            let localFiles = app.cells["Save to Files"]
+            XCTAssertTrue(localFiles.waitForExistence(timeout: 10)); localFiles.tap()
+            let filename = app.textFields["DOCPicker.filenameTextField"]
+            XCTAssertTrue(filename.waitForExistence(timeout: 5)); filename.tap()
+            filename.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (filename.value as? String ?? "").count))
+            filename.typeText("pi-system-share-" + UUID().uuidString)
+            app.buttons["Save"].tap()
+            XCTAssertTrue(filename.waitForNonExistence(timeout: 10))
+            XCTAssertFalse(app.staticTexts["export-saved"].exists, "System sharing must not report the app's separate Save action as completed.")
+        } else {
+            reveal(sharing, app: app, towardTop: true); sharing.tap()
+            reveal(service, app: app); service.tap()
+            XCTAssertTrue(activity.waitForExistence(timeout: 10))
+            XCUIDevice.shared.press(.home); app.activate()
+            XCTAssertTrue(activity.waitForNonExistence(timeout: 5))
+            XCTAssertFalse(app.navigationBars["Share export"].exists)
+        }
+    }
+
     func testJSONLExportSavesThroughTheNativeFilePicker() throws {
         let app = launch(["idle"])
         controls(app)
