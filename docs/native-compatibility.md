@@ -2,7 +2,7 @@
 
 ## Result
 
-The user confirmed that app compatibility targets only the RPC protocol supplied by upstream Pi core packages. The earlier complete-terminal and installed-extension parity requirement is superseded. The upstream Pi core RPC coverage audit remains incomplete; this scope correction is not evidence that every RPC operation is implemented or tested.
+The user confirmed that app compatibility targets only the RPC protocol supplied by upstream Pi core packages. The earlier complete-terminal and installed-extension parity requirement is superseded. The upstream Pi core RPC coverage audit remains incomplete. The newer Mac interface target follows terminal Pi layout and interaction in Swift; it does not add arbitrary terminal extension transport. See the [reference](pi-like-mac-reference.md) and [new implementation evidence](pi-like-mac-verification.md).
 
 ## Accepted boundary
 
@@ -26,12 +26,12 @@ The following groups list the operations in installed Pi 1.3.0's `docs/rpc-comma
 | State and history | `get_state`, `get_messages`, `get_fork_messages`, `get_entries`, `get_tree`, `get_last_assistant_text`, `get_session_stats` | Native state/transcript, authoritative paged tree/fork options, copy and usage; installed-Pi [inspection](session-inspection.md), copy and statistics checks pass. All 27 compact-interface tests and 31 product tests on each local network pass |
 | Models and thinking | `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels` | Native selection/cycling and discovered choices; installed-Pi and compact-interface [checks pass](runtime-controls.md#core-model-cycling-and-retry-checkpoint) |
 | Runtime controls | `set_steering_mode`, `set_follow_up_mode`, `compact`, `set_auto_compaction`, `set_auto_retry`, `abort_retry` | Confirmed native settings, compaction and retry cancellation; [settings checks](runtime-controls.md) and [active retry/compaction checks](core-event-verification.md) pass |
-| Shell and export | `bash`, `abort_bash`, `export_html` | Reviewed HTML export passes installed, native and product checks. Native `bash`/`abort_bash` controls are approved but remain unimplemented and unverified; no embedded terminal or PTY is permitted |
+| Shell and export | `bash`, `abort_bash`, `export_html` | Reviewed HTML export passes installed, native and product checks. Mac `!`/`!!` review, typed shell actions, bounded streaming, cancellation and saved-result projection are implemented. Controlled and isolated Pi 1.3.0 checks pass; [evidence and limits](pi-like-mac-verification.md). Phone entry and attended normal Mac use remain open; no embedded terminal or PTY is permitted |
 | Discovery | `get_commands` | Native generic command list and dispatch; private startup/resource checks and active extension-dialog dispatch pass |
 
 ### Event mapping
 
-The 24 event types in Pi 1.3.0's `json.md` have the following app mappings. This table does not close the pending shell-stream check.
+The 24 event types in Pi 1.3.0's `json.md` have the following app mappings. The new shell-stream checks are recorded separately from older checkpoints.
 
 | Events | App behavior | Direct checks |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ The 24 event types in Pi 1.3.0's `json.md` have the following app mappings. This
 | `compaction_start`, `compaction_end` | Phase/error handling and deferred authoritative history refresh | Installed manual compaction and host automatic-compaction regression |
 | `auto_retry_start`, `auto_retry_end` | Retry state, bounded final failure and event-driven settlement | Installed `NativeRetryCheck` and reducer checks |
 | `summarization_retry_scheduled`, `summarization_retry_attempt_start`, `summarization_retry_finished` | Retry/compaction phases restored between attempts | Manual-compaction and branch-summary reducer cases |
-| `bash_execution_update` | Approved native shell output mapping remains unimplemented | Open |
+| `bash_execution_update` | Correlated 64 KiB output with coalesced state, explicit final/cancel/unknown state | New shell correlation, truncation, delayed-admission cancellation and isolated installed-Pi checks pass; [evidence](pi-like-mac-verification.md) |
 | `extension_error` | Generic unsupported-feature error without publishing extension paths or supplied error text | `extensionFailuresAndUnknownUIRequestsDoNotExposePathsOrApproveDialogs` |
 
 ### Standard extension UI mapping
@@ -56,7 +56,7 @@ Installed `NativeWorkflowCheck` verifies the four dialog methods, prefill, timeo
 
 Keep authenticated typed app actions, opaque filesystem/session identities, deduplication and bounded output; upstream Pi core RPC scope does not mean exposing an arbitrary raw RPC endpoint.
 
-A host regression verifies that an unknown UI method creates no dialog and sends no automatic response. The remaining open operation/event mappings concern shell controls.
+A host regression verifies that an unknown UI method creates no dialog and sends no automatic response. Shell operation/event mappings now have focused host and runtime evidence. Native phone shell entry and attended Mac acceptance remain open.
 
 The current installed runtime is Pi 1.3.0 at `/Users/narumi/.bun/bin/pi`. The executable is a Node.js entry point. `pi auth check --provider openai-codex --model gpt-6.1-sol --json --no-refresh` reports ready with OAuth, without exposing credentials. This is the only runtime version exercised here; it is not a supported-version range.
 
@@ -148,4 +148,4 @@ At the earlier checkpoint, managed-session activation always started a new child
 
 Pi 1.3.0's RPC `custom()` returns `undefined`, and terminal-input registration is a no-op. Installed btw, file-context, inspect and llama commands explicitly reject RPC. Those observations remain valid protocol limits, but the user-confirmed scope no longer requires adapting these workflows.
 
-No adapter approval is pending for this plan. Do not treat an extension's unsupported terminal UI as a failed app acceptance check. Remaining work is the upstream Pi core RPC audit and implementation/verification of its in-scope gaps, not installed-extension or terminal-feature parity.
+No adapter approval is pending for this plan. Do not treat an extension's unsupported terminal UI as a failed app acceptance check. Remaining work includes the upstream Pi core RPC audit, native phone shell entry and the [Mac interface acceptance checks](plans/2026-10-18_pi-like-mac-interface-plan.md). The Mac presentation target does not require individual terminal extension interfaces.

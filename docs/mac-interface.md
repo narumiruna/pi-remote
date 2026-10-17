@@ -1,6 +1,12 @@
 # Mac interface and folder-path verification
 
-## Implemented behavior
+## Current Pi-like interface
+
+The Mac coding surface now uses a dark native transcript, ruled editor and status footer based on installed Pi 1.3.0. The workspace sidebar starts hidden; the inspector and management features remain accessible. Enter submits, modified Enter adds a newline, and Return/Tab with suggestions completes only. Reviewed `!`/`!!` shell execution and local queued-input recovery use typed upstream RPC actions. See [current behavior, verification and remaining acceptance](pi-like-mac-verification.md) and the [terminal reference](pi-like-mac-reference.md).
+
+The sections below record earlier workspace-first behavior and verification. Their white surfaces, persistent-sidebar default, session-header layout and Return/Command-Return editor map are superseded by the Pi-like Mac change. They remain historical evidence, not proof of current normal-launch behavior.
+
+## Earlier implemented behavior
 
 The Mac app uses a persistent workspace/session sidebar, a conversation area and an optional Files/Session/Activity inspector. The native split panes resize independently; the conversation stays wider than either secondary pane. The minimum window is 900 × 600 points. White surfaces, native controls and the existing blue accent remain; there is no theme setting.
 

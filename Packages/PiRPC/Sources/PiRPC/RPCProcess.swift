@@ -29,6 +29,9 @@ public final class RPCProcess: @unchecked Sendable {
     private var closed = false
     private var stopping = false
     private var pending: [String: Pending] = [:]
+    // Explicit IDs must never match a late response from a previous request.
+    private var usedExplicitIDs: Set<String> = []
+    private static let maximumExplicitIDs = 4_096
     // Admission includes both queued blocks and the write currently blocked on stdin.
     // Timeout/cancellation ends response tracking, not ownership of queued bytes.
     private static let maximumQueuedWrites = 64
@@ -42,6 +45,7 @@ public final class RPCProcess: @unchecked Sendable {
 
     private struct Pending {
         let command: String
+        let token: UUID
         let continuation: CheckedContinuation<JSONValue, any Error>
         let deadline: DispatchWorkItem
     }
@@ -131,9 +135,11 @@ public final class RPCProcess: @unchecked Sendable {
     public func request(
         _ command: String,
         fields: [String: JSONValue] = [:],
-        timeout: TimeInterval = 30
+        timeout: TimeInterval = 30,
+        id: String? = nil,
+        onEnqueued: (@Sendable () -> Void)? = nil
     ) async throws -> JSONValue {
-        try await enqueue(command, fields: fields, wireID: nil, expectsResponse: true, timeout: timeout)
+        try await enqueue(command, fields: fields, wireID: id, expectsResponse: true, timeout: timeout, onEnqueued: onEnqueued)
     }
 
     public func answerDialog(id: String, value: String?, confirmed: Bool?, cancelled: Bool) async throws {
@@ -144,32 +150,40 @@ public final class RPCProcess: @unchecked Sendable {
     }
 
     private func enqueue(
-        _ command: String, fields: [String: JSONValue], wireID: String?, expectsResponse: Bool, timeout: TimeInterval
+        _ command: String, fields: [String: JSONValue], wireID: String?, expectsResponse: Bool, timeout: TimeInterval,
+        onEnqueued: (@Sendable () -> Void)? = nil
     ) async throws -> JSONValue {
         guard !command.isEmpty, fields["type"] == nil, fields["id"] == nil,
               timeout.isFinite, timeout > 0, timeout <= 300 else {
             throw RPCFailure.invalidCommand
         }
-        let id = UUID().uuidString
+        let id = expectsResponse ? (wireID ?? UUID().uuidString) : UUID().uuidString
+        guard !id.isEmpty, id.utf8.count <= 256 else { throw RPCFailure.invalidCommand }
         var record = fields
         record["type"] = .string(command)
         record["id"] = .string(wireID ?? id)
         var data = try JSONEncoder().encode(JSONValue.object(record))
         guard data.count <= 4 * 1_024 * 1_024 else { throw RPCFailure.invalidCommand }
         data.append(0x0A)
-        let bytes = data
+        let bytes = data, token = UUID()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let deadline = DispatchWorkItem { [weak self] in
-                    self?.failRequest(id, error: RPCFailure.unknownOutcome)
+                    self?.failRequest(id, token: token, error: RPCFailure.unknownOutcome)
                 }
                 let failure: RPCFailure? = lock.withLock {
                     if closed || stopping { return .closed }
                     if Task.isCancelled { return .unknownOutcome }
+                    guard pending[id] == nil else { return .invalidCommand }
+                    if expectsResponse, wireID != nil {
+                        guard !usedExplicitIDs.contains(id) else { return .invalidCommand }
+                        guard usedExplicitIDs.count < Self.maximumExplicitIDs else { return .tooManyRequests }
+                    }
                     guard pending.count < 64, queuedWrites < Self.maximumQueuedWrites,
                           bytes.count <= Self.maximumQueuedWriteBytes - queuedWriteBytes else { return .tooManyRequests }
                     queuedWrites += 1; queuedWriteBytes += bytes.count
-                    pending[id] = Pending(command: command, continuation: continuation, deadline: deadline)
+                    pending[id] = Pending(command: command, token: token, continuation: continuation, deadline: deadline)
+                    if expectsResponse, wireID != nil { usedExplicitIDs.insert(id) }
                     return nil
                 }
                 if let failure {
@@ -186,7 +200,7 @@ public final class RPCProcess: @unchecked Sendable {
                         }
                     }
                     guard self.lock.withLock({
-                        guard self.pending[id] != nil, !self.stopping, !self.closed else { return false }
+                        guard self.pending[id]?.token == token, !self.stopping, !self.closed else { return false }
                         self.writing = true
                         return true
                     }) else { return }
@@ -197,12 +211,14 @@ public final class RPCProcess: @unchecked Sendable {
                             entry.continuation.resume(returning: .null)
                         }
                     }
-                    catch { self.failRequest(id, error: RPCFailure.unknownOutcome) }
+                    catch { self.failRequest(id, token: token, error: RPCFailure.unknownOutcome) }
                 }
+                // The serial writer owns this record. Cancellation cannot overtake it.
+                onEnqueued?()
             }
         } onCancel: { [weak self] in
             // Dispatch may already have happened; never promise that cancellation unsent it.
-            self?.failRequest(id, error: RPCFailure.unknownOutcome)
+            self?.failRequest(id, token: token, error: RPCFailure.unknownOutcome)
         }
     }
 
@@ -276,8 +292,11 @@ public final class RPCProcess: @unchecked Sendable {
         }
     }
 
-    private func failRequest(_ id: String, error: any Error) {
-        guard let entry = lock.withLock({ pending.removeValue(forKey: id) }) else { return }
+    private func failRequest(_ id: String, token: UUID, error: any Error) {
+        guard let entry = lock.withLock({
+            guard pending[id]?.token == token else { return nil as Pending? }
+            return pending.removeValue(forKey: id)
+        }) else { return }
         entry.deadline.cancel()
         entry.continuation.resume(throwing: error)
     }

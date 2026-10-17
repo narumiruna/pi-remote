@@ -24,6 +24,9 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case resumeSession(id: UUID)
     case prompt(text: String, delivery: Delivery, image: ImageAttachment?)
     case stop
+    case recoverQueue(stop: Bool)
+    case bash(command: String, excludeFromContext: Bool, confirmed: Bool)
+    case abortBash(id: UUID)
     case model(provider: String, id: String)
     case thinking(level: String)
     case cycleModel
@@ -110,6 +113,7 @@ public enum AppResult: Codable, Sendable, Equatable {
     case exportSession(SessionExport)
     case image(ImageAttachment)
     case runtimeSettings(RuntimeSettings)
+    case recoveredQueue(text: String)
     case failure(RemoteFault)
 }
 

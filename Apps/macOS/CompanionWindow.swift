@@ -5,7 +5,6 @@ import SwiftUI
 
 struct CompanionWindow: View {
     @Bindable var model: CompanionModel
-    @SceneStorage("macWorkspaceSidebarVisible") private var sidebarVisible = true
     @SceneStorage("macWorkspaceSidebarWidth") private var sidebarWidth = 240.0
     @SceneStorage("macWorkspaceInspectorWidth") private var inspectorWidth = 320.0
     @State private var inspectorSection = "Files"
@@ -24,7 +23,7 @@ struct CompanionWindow: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { toolbarHeight = $0 }
                 Divider()
                 HSplitView {
-                    if sidebarVisible {
+                    if model.sidebarVisible {
                         sidebar.frame(minWidth: 210, idealWidth: sidebarWidth, maxWidth: 320)
                             .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { value in
                                 if value >= 210, value <= 320, abs(sidebarWidth - value) > 1 { sidebarWidth = value }
@@ -43,7 +42,7 @@ struct CompanionWindow: View {
                     }
                 }
             }
-            .background(.white)
+            .background(PiPalette.background)
             .sheet(isPresented: Binding(get: { model.panel != nil }, set: { if !$0 { model.panel = nil } }), onDismiss: {
                 if let target = sheetFocusTarget, let window = target.window { window.makeFirstResponder(target) }
                 sheetFocusTarget = nil
@@ -53,7 +52,7 @@ struct CompanionWindow: View {
                            height: min(640, max(360, geometry.size.height - 40)))
             }
         }
-        .preferredColorScheme(.light)
+        .preferredColorScheme(.dark)
         .modifier(InterfaceAppearance())
         .modifier(EditorOfferPrompt(offer: $model.editorOffer, replace: model.acceptEditorOffer))
         .confirmationDialog("Send this prompt again?", isPresented: $model.confirmResend) {
@@ -83,19 +82,37 @@ struct CompanionWindow: View {
             if old == nil, new != nil { sheetFocusTarget = NSApp.mainWindow?.firstResponder as? NSView }
         }
         .onChange(of: model.state.context) { _, _ in
-            if let panel = model.panel, ["commands", "rename", "resume", "tree", "history"].contains(panel) { model.panel = nil }
+            // A sheet must never silently retarget an action to a different loaded session.
+            if let panel = model.panel, !["pairingQR", "hotkeys"].contains(panel) { model.panel = nil }
+            if !model.state.dialogs.isEmpty { model.panel = "dialog" }
             renamingSession = nil
         }
     }
 
     private func toolbar(compact: Bool) -> some View {
         HStack(spacing: 12) {
-                Button("Sidebar", systemImage: "sidebar.left") { sidebarVisible.toggle() }
+                Button("Sidebar", systemImage: "sidebar.left") { model.sidebarVisible.toggle() }
                     .labelStyle(.iconOnly).keyboardShortcut("s", modifiers: [.command, .option])
-                if !compact { Text("Pi Remote for Mac").font(.headline).lineLimit(1) }
+                if !compact { Button("Pi") { model.destination = .conversation }.buttonStyle(.plain).font(.system(.body, design: .monospaced)).foregroundStyle(PiPalette.accent) }
+                Menu("Actions") {
+                    Button("Files") { showInspector("Files") }
+                    Button("Session controls") { showInspector("Session") }
+                    Button("Commands") { model.panel = "commands" }
+                    Button("Keyboard shortcuts") { model.panel = "hotkeys" }
+                    Divider()
+                    Button("Overview") { model.destination = .overview }
+                    Button("Add workspace") { model.panel = "workspace" }
+                    Button("Import session") { model.panel = "import" }
+                    Button("Settings") { model.destination = .settings }
+                    Button("Devices") { model.destination = .devices }
+                }.menuStyle(.borderlessButton).fixedSize()
+                Button("Files") { showInspector("Files") }.buttonStyle(.plain)
+                    .accessibilityIdentifier("mac-files")
+                Button("Commands") { model.panel = "commands" }.buttonStyle(.plain)
+                    .accessibilityIdentifier("mac-commands")
                 Spacer(minLength: 8)
                 status
-                if let active = model.state.selected, model.destination != .session(active) {
+                if let active = model.state.selected, !model.showingLoadedSession {
                     Button("Active session") { model.destination = .session(active) }
                 }
                 if model.state.working { Button("Stop", role: .destructive) { model.stopWork() }.help("Stop active Pi work and clear queued messages. File changes are not undone.") }
@@ -118,7 +135,7 @@ struct CompanionWindow: View {
                     .accessibilityIdentifier("mac-command-palette-toggle")
                     .help("Command palette (Command-Shift-P)")
                 Button("Close Session", systemImage: "xmark") {
-                    if case .session(let id) = model.destination { beginClose(id) }
+                    if let id = focusedSession { beginClose(id) }
                 }
                     .labelStyle(.iconOnly).disabled(focusedCloseDisabled)
                     .keyboardShortcut("w", modifiers: [.command, .shift])
@@ -137,6 +154,7 @@ struct CompanionWindow: View {
             Button { remoteDetailsVisible.toggle() } label: {
                 Label(model.listening ? "iPhone access on" : (model.starting ? "iPhone access updating" : "iPhone access off"), systemImage: "iphone")
             }
+            .labelStyle(.iconOnly)
             .accessibilityIdentifier("mac-remote-access")
             .help("Show listener and authenticated device status")
             .popover(isPresented: $remoteDetailsVisible) {
@@ -168,6 +186,7 @@ struct CompanionWindow: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: sidebarSelection) {
+                Label("Pi", systemImage: "text.alignleft").tag(MacDestination.conversation)
                 Label("Overview", systemImage: "house").tag(MacDestination.overview)
                 Section {
                     ForEach(model.workspaces) { workspace in
@@ -232,7 +251,7 @@ struct CompanionWindow: View {
             }
             .listStyle(.sidebar).scrollContentBackground(.hidden).frame(height: 116)
         }
-        .background(.white).accessibilityIdentifier("mac-workspace-sidebar")
+        .background(PiPalette.background).accessibilityIdentifier("mac-workspace-sidebar")
     }
 
     private func sessionRow(_ session: SessionInfo) -> some View {
@@ -277,8 +296,13 @@ struct CompanionWindow: View {
             .first(where: { $0.native == .resume })?.isEnabled(in: model.state) == true
     }
 
+    private var focusedSession: UUID? {
+        if case .session(let id) = model.destination { return id }
+        return model.destination == .conversation ? model.state.selected : nil
+    }
+
     private var focusedCloseDisabled: Bool {
-        guard case .session(let id) = model.destination else { return true }
+        guard let id = focusedSession else { return true }
         return model.closeSessionDisabledReason(id) != nil
     }
 
@@ -305,6 +329,21 @@ struct CompanionWindow: View {
         guard canRename(id) else { return }
         renamingSession = id
         model.panel = "rename"
+    }
+
+    private func openPiControl(_ name: String) {
+        guard model.state.dialogs.isEmpty else { model.composerError = "Answer or cancel the open request first."; return }
+        let idleOnly = ["new", "compact", "fork", "clone", "settings", "name", "export", "import"]
+        guard !idleOnly.contains(name) || !model.state.working else { model.composerError = "Wait for Pi to become idle."; return }
+        switch name {
+        case "session", "clone": showInspector("Session")
+        case "settings": model.panel = "runtime"
+        case "fork": model.openNativeWorkflow(.tree)
+        case "name": if let id = model.state.selected { beginRename(id) }
+        case "files": showInspector("Files")
+        case "commands": model.panel = "commands"
+        default: model.panel = name
+        }
     }
 
     private func showInspector(_ tab: String) {
@@ -348,6 +387,8 @@ struct CompanionWindow: View {
 
     @ViewBuilder private var detail: some View {
         switch model.destination {
+        case .conversation:
+            PiConversationView(model: model, openControls: openPiControl)
         case .devices: CompanionDevicesView(model: model)
         case .settings: CompanionConnectionSettings(model: model)
         case .workspace(let path): workspaceDetail(path)
@@ -440,8 +481,7 @@ struct CompanionWindow: View {
     @ViewBuilder private func sessionDetail(_ id: UUID) -> some View {
         if let session = model.state.sessions.first(where: { $0.id == id }) {
             VStack(spacing: 0) {
-                sessionHeader(session)
-                Divider()
+                if id != model.state.selected { sessionHeader(session); Divider() }
                 if id == model.state.selected {
                     if ["unavailable", "interrupted"].contains(model.state.phase) {
                         HStack {
@@ -453,14 +493,8 @@ struct CompanionWindow: View {
                         ProgressView("Opening session…").frame(maxWidth: .infinity, maxHeight: .infinity)
                             .accessibilityIdentifier("mac-session-loading")
                     } else {
-                        let displayedState = model.state
-                        ConversationView(state: displayedState, text: $model.text, delivery: $model.delivery, sending: model.sending,
-                                         send: { model.send(context: displayedState.context) }, stop: { model.stopWork() }, request: model.scopedRequest(for: displayedState)) {
-                            Button("Files", systemImage: "folder") { showInspector("Files") }
-                                .help("Browse files and attach text from a file preview").accessibilityIdentifier("mac-composer-files")
-                            Button("Commands", systemImage: "slash.circle") { model.panel = "commands" }
-                                .help("Open Pi commands").accessibilityIdentifier("mac-composer-commands")
-                        }.disabled(model.closingSession != nil)
+                        PiConversationView(model: model, openControls: openPiControl)
+                            .disabled(model.closingSession != nil)
                     }
                 } else {
                     VStack(spacing: 16) {
@@ -548,7 +582,7 @@ struct CompanionWindow: View {
             Divider()
             switch inspectorSection {
             case "Session":
-                if case .session(let id) = model.destination, id == model.state.selected {
+                if let id = focusedSession, id == model.state.selected {
                     NavigationStack {
                         SessionControls(state: model.state, request: model.scopedRequest(for: model.state), closed: { model.destination = .overview },
                                         closeSession: { beginClose(id) }, closeSessionDisabledReason: model.closeSessionDisabledReason(id)) {
@@ -560,7 +594,7 @@ struct CompanionWindow: View {
             case "Activity":
                 List {
                     Text(model.piStatus).font(.headline)
-                    if case .session(let id) = model.destination, id == model.state.selected {
+                    if model.showingLoadedSession {
                         ForEach(model.state.messages.filter { $0.role == "tool" }) { message in
                             DisclosureGroup {
                                 Text(message.text).font(.caption.monospaced()).textSelection(.enabled)
@@ -582,15 +616,15 @@ struct CompanionWindow: View {
                 if let path = model.selectedWorkspace { files(path: path) }
                 else { ContentUnavailableView("Choose a workspace", systemImage: "folder") }
             }
-        }.frame(maxHeight: .infinity, alignment: .top).background(.white)
+        }.frame(maxHeight: .infinity, alignment: .top).background(PiPalette.background)
     }
 
     private func files(path: String) -> some View {
         let state = model.state
         let attach: ((FilePreview) throws -> Void)? = {
-            guard case .session(let id) = model.destination, id == state.selected else { return nil }
+            guard let id = focusedSession, id == state.selected else { return nil }
             return { preview in
-                guard model.destination == .session(id) else { throw RemoteFault.conflict }
+                guard focusedSession == id, model.showingLoadedSession else { throw RemoteFault.conflict }
                 try model.attachText(preview, context: state.context)
             }
         }()
@@ -620,9 +654,7 @@ struct CompanionWindow: View {
             }
             case "dialog":
                 if let dialog = state.dialogs.first {
-                    ExtensionDialogView(dialog: dialog) { value, confirmed, cancelled in
-                        Task { _ = try? await model.scopedRequest(for: state)(.answer(dialog: dialog.id, value: value, confirmed: confirmed, cancelled: cancelled)) }
-                    }.id(dialog.id)
+                    PiExtensionDialog(dialog: dialog, request: model.scopedRequest(for: state)).id(dialog.id)
                 }
             case "rename":
                 if let id = renamingSession, id == state.selected,
@@ -642,6 +674,16 @@ struct CompanionWindow: View {
             case "history": HistoryView(request: model.scopedRequest(for: state), paged: true) {
                 if model.panel == "history" { model.panel = nil }
             }
+            case "model", "thinking":
+                PiConfigurationPicker(state: state, thinking: model.panel == "thinking", request: model.scopedRequest(for: state)) { model.panel = nil }
+            case "runtime": RuntimeSettingsView(request: model.scopedRequest(for: state))
+            case "statistics": SessionStatisticsView(request: model.scopedRequest(for: state))
+            case "compact": CompactionView(request: model.scopedRequest(for: state))
+            case "new": NewManagedSessionView(state: state, request: model.scopedRequest(for: state)) { model.panel = nil }
+            case "copy": LastAssistantView(request: model.scopedRequest(for: state))
+            case "export": SessionExportView(request: model.scopedRequest(for: state))
+            case "changelog": ReleaseNotesView(request: model.scopedRequest(for: state))
+            case "hotkeys": PiHotkeysView()
             case "commands": SessionCommandsView(state: state, request: model.scopedRequest(for: state))
             case "pairingQR": PairingQRView(code: model.code)
             case "preview": if let preview = model.preview { FilePreviewView(preview: preview) }
@@ -908,7 +950,7 @@ private struct MacCommandPaletteView: View {
         if action == "New session" { return newSessionDisabledReason }
         if action == "Rename session" {
             guard renameContext == model.state.context else { return "Reopen the palette for the current session." }
-            guard let id = renameContext?.session, model.destination == .session(id) else { return "Display the loaded session to rename it." }
+            guard let id = renameContext?.session, model.showingLoadedSession else { return "Display the loaded session to rename it." }
             return macRenameSessionDisabledReason(id, model: model)
         }
         return nil

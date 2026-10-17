@@ -43,6 +43,9 @@ public actor HostCoordinator {
     private var sessions: [ManagedSession]
     private var snapshot: HostSnapshot
     private var reducer = TranscriptReducer()
+    private var bashTask: Task<Void, Never>?
+    private var bashEnqueued: Task<Void, Never>?
+    private var bashCancellation: Task<Void, Never>?
     private var outputImages = OutputImages()
     private let history = SessionHistory()
     private struct InspectionContext {
@@ -120,6 +123,25 @@ public actor HostCoordinator {
     }
 
     public func state() -> HostSnapshot { snapshot }
+
+    /// Local footer reads must not reserve foreground action admission or publish read faults.
+    public func displayStatistics(context: SessionContext) async throws -> SessionStatistics {
+        guard snapshot.context == context, context.session != nil, !snapshot.working,
+              mutations.isEmpty, !closing else { throw RemoteFault.conflict }
+        let token = generation, work = workGeneration, mutation = mutationRevision
+        let data = try await requireRPC().request("get_session_stats")
+        guard snapshot.context == context, generation == token, workGeneration == work,
+              mutationRevision == mutation, mutations.isEmpty, !snapshot.working, !closing else { throw RemoteFault.conflict }
+        return try Self.decodeStatistics(data)
+    }
+
+    private static func decodeStatistics(_ data: JSONValue) throws -> SessionStatistics {
+        let statistics: SessionStatistics
+        do { statistics = try JSONDecoder().decode(SessionStatistics.self, from: JSONEncoder().encode(data)) }
+        catch { throw RemoteFault.incompatiblePi }
+        try statistics.validate()
+        return statistics
+    }
 
     /// Local, read-only display hints for a saved session. Does not activate Pi.
     public func sessionDisplayMetadata(sessionID: UUID) async -> SessionDisplayMetadata? {
@@ -249,8 +271,8 @@ public actor HostCoordinator {
             let result = try await perform(request, closeConfirmation: closeConfirmation)
             // Explicit Stop or a confirmed lifecycle change ends interruption risk
             // from the previous uncertain mutation. Other reads/actions do not.
-            if request.action == .stop || request.action == .closeSession || request.action.changesSession {
-                unresolvedQuitOutcome = false
+            if request.action == .stop || request.action == .recoverQueue(stop: true) || request.action == .closeSession || request.action.changesSession {
+                if request.action != .recoverQueue(stop: true) || !recoveringEvents { unresolvedQuitOutcome = false }
             }
             if request.action.mutates {
                 journal.finish(device: device, request: request, fault: nil)
@@ -296,7 +318,7 @@ public actor HostCoordinator {
         if recoveringEvents, action.mutates, action != .stop { throw RemoteFault.busy }
         if action.mutates || action.needsSession {
             let priority: Bool
-            switch action { case .stop, .answer, .abortRetry: priority = true; default: priority = false }
+            switch action { case .stop, .answer, .abortRetry, .abortBash: priority = true; default: priority = false }
             guard priority || mutations.isEmpty else { throw RemoteFault.busy }
             mutations.insert(request.id)
         }
@@ -362,6 +384,7 @@ public actor HostCoordinator {
             }
             rpc = nil; reducer = TranscriptReducer(); outputImages = OutputImages()
             recoveringEvents = false; recoveryNotice = nil
+            snapshot.bash = nil
             snapshot.selected = nil; snapshot.phase = "idle"; snapshot.messages = []; snapshot.dialogs = []
             snapshot.model = ""; snapshot.thinking = ""; snapshot.models = []; snapshot.thinkingLevels = []; snapshot.commands = []
             snapshot.runtime = nil; snapshot.pendingMessages = nil; snapshot.draft = nil; snapshot.draftID = nil; snapshot.notices = []; snapshot.hasOlderMessages = false
@@ -378,11 +401,7 @@ public actor HostCoordinator {
             return .exportSession(try SessionExporter.branch(response, piID: item.piID, directory: item.directory.url.path))
         case .statistics:
             let data = try await requireRPC().request("get_session_stats")
-            let statistics: SessionStatistics
-            do { statistics = try JSONDecoder().decode(SessionStatistics.self, from: JSONEncoder().encode(data)) }
-            catch { throw RemoteFault.incompatiblePi }
-            try statistics.validate()
-            return .statistics(statistics)
+            return .statistics(try Self.decodeStatistics(data))
         case .synchronize(let epoch, let after):
             return .synchronized(replay.synchronize(current: snapshot, epoch: epoch, after: after))
         case .directories(let id, let cursor): return .directories(try await directories.list(id: id, cursor: cursor))
@@ -420,6 +439,7 @@ public actor HostCoordinator {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || image != nil,
                   text.utf8.count <= 256 * 1_024 else { throw RemoteFault.invalidRequest }
             guard snapshot.phase != "starting", snapshot.phase != "stopping" else { throw RemoteFault.busy }
+            guard snapshot.bash?.working != true else { throw RemoteFault.busy }
             if text.hasPrefix("/") {
                 let name = String(text.dropFirst().prefix { !$0.isWhitespace })
                 guard snapshot.commands.contains(where: { $0.name == name }) else { throw RemoteFault.unsupportedFeature }
@@ -468,32 +488,79 @@ public actor HostCoordinator {
                 }
                 try markInterrupted(false)
             }
-        case .stop:
-            guard snapshot.phase != "starting" || lifecycleTransition != nil else { throw RemoteFault.busy }
-            let child = try requireRPC()
+        case .bash(let command, let excludeFromContext, let confirmed):
+            guard confirmed else { throw RemoteFault.permissionDenied }
+            guard !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !command.contains("\0"), command.utf8.count <= BashExecution.commandLimit else { throw RemoteFault.invalidRequest }
+            guard !snapshot.working, bashCancellation == nil, snapshot.dialogs.isEmpty, snapshot.error != .unknownOutcome else { throw RemoteFault.busy }
+            let lifecycle = generation, work = workGeneration
+            try await requireIdle()
+            guard lifecycle == generation, work == workGeneration, !closing, !snapshot.working else { throw RemoteFault.conflict }
+            let child = try requireRPC(), token = generation
+            try retainInterruptedState()
             workGeneration = UUID()
-            if lifecycleTransition != nil {
-                // A hook can ignore dialog cancellation. Fence its pending reply and stop the
-                // child; only confirmed termination can settle this unknown replacement.
-                lifecycleTransition = nil; lifecycleUI = []; lifecycleUIOverflow = false
-                generation = UUID(); observer?.cancel(); observer = nil
-                let stopping = generation
-                snapshot.phase = "stopping"; publish()
-                for dialog in snapshot.dialogs { try? await child.answerDialog(id: dialog.id, value: nil, confirmed: nil, cancelled: true) }
-                guard await interruptEventStream(child, generation: stopping) else { throw RemoteFault.unavailable }
-                return .ok
+            bashCancellation = nil
+            snapshot.bash = BashExecution(id: request.id, command: command, excludeFromContext: excludeFromContext)
+            snapshot.phase = "bash"; publish()
+            let enqueued = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            bashEnqueued = Task { for await _ in enqueued.stream { return } }
+            // Accepted work belongs to the host, not the caller's connection or task.
+            bashTask = Task { [weak self] in
+                defer { enqueued.continuation.finish() }
+                do {
+                    let result = try await child.request("bash", fields: ["command": .string(command),
+                        "excludeFromContext": .bool(excludeFromContext)], timeout: 300, id: request.id.uuidString,
+                        onEnqueued: { enqueued.continuation.yield(()) })
+                    await self?.finishBash(id: request.id, generation: token, result: result, error: nil)
+                } catch {
+                    await self?.finishBash(id: request.id, generation: token, result: nil, error: error)
+                }
             }
-            if recoveringEvents {
-                let token = generation
-                guard await interruptEventStream(child, generation: token) else { throw RemoteFault.unavailable }
-                return .ok
+        case .abortBash(let id):
+            guard snapshot.bash?.id == id, snapshot.bash?.working == true else { throw RemoteFault.conflict }
+            try await abortBash(id: id)
+        case .recoverQueue(let stop):
+            guard !["starting", "stopping", "recovering"].contains(snapshot.phase), snapshot.dialogs.isEmpty else { throw RemoteFault.busy }
+            let child = try requireRPC(), token = generation
+            workGeneration = UUID()
+            let result = try await child.request("clear_queue")
+            guard generation == token, snapshot.selected == request.session else { throw RemoteFault.conflict }
+            snapshot.pendingMessages = 0
+            let text: String
+            do {
+                guard let steering = result["steering"]?.array, let followUp = result["followUp"]?.array else { throw RemoteFault.incompatiblePi }
+                let messages = steering + followUp
+                guard messages.allSatisfy({ $0.string != nil }) else { throw RemoteFault.incompatiblePi }
+                text = messages.compactMap(\.string).joined(separator: "\n\n")
+                guard text.utf8.count <= 256 * 1_024 else { throw RemoteFault.tooLarge }
+            } catch {
+                // clear_queue already removed these messages. Do not pretend a
+                // truncated draft is complete or automatically queue anything again.
+                recoveryNotice = "Pi cleared queued instructions, but their text could not be recovered within the display limit. Do not assume the draft contains them."
+                refreshNotices()
+                if stop { try await stopWork() }
+                throw error
             }
-            snapshot.phase = "stopping"; publish()
-            _ = try await child.request("clear_queue")
-            for dialog in snapshot.dialogs { try await child.answerDialog(id: dialog.id, value: nil, confirmed: nil, cancelled: true) }
-            snapshot.dialogs = []; dialogDeadlines = [:]
-            try await child.stopWork()
-            snapshot.pendingMessages = 0; snapshot.phase = "idle"; try markInterrupted(false)
+            if stop {
+                do { try await stopWork() }
+                catch {
+                    // Queue recovery succeeded. Do not lose that text because
+                    // the separate abort or settlement check failed afterwards.
+                    snapshot.error = .unknownOutcome; unresolvedQuitOutcome = true
+                    if let child = rpc {
+                        _ = await interruptEventStream(child, generation: generation)
+                    } else {
+                        recoveringEvents = false; snapshot.phase = "interrupted"
+                    }
+                    recoveryNotice = rpc == nil
+                        ? "Queued input was recovered, but Pi did not confirm Stop. The child is no longer running. Reopen explicitly and inspect saved history; recovered text remains unsent."
+                        : "Queued input was recovered, but Pi did not confirm Stop. Use Stop again before changing sessions; recovered text remains unsent."
+                    refreshNotices()
+                }
+            }
+            return .recoveredQueue(text: text)
+        case .stop:
+            try await stopWork()
         case .model(let provider, let id):
             guard !snapshot.working, snapshot.models.contains(where: { $0.provider == provider && $0.model == id }) else { throw RemoteFault.busy }
             try await requireIdle()
@@ -593,6 +660,7 @@ public actor HostCoordinator {
             try await requireIdle()
             try await replaceBranch("clone", fields: [:])
         case .command(let name, let arguments):
+            guard snapshot.bash?.working != true, bashCancellation == nil else { throw RemoteFault.busy }
             guard let command = snapshot.commands.first(where: { $0.name == name }), arguments.utf8.count <= 16_384 else {
                 throw RemoteFault.unsupportedFeature
             }
@@ -772,7 +840,126 @@ public actor HostCoordinator {
         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
 
+    private func stopWork() async throws {
+        guard snapshot.phase != "starting" || lifecycleTransition != nil else { throw RemoteFault.busy }
+        let child = try requireRPC()
+        workGeneration = UUID()
+        if lifecycleTransition != nil {
+            lifecycleTransition = nil; lifecycleUI = []; lifecycleUIOverflow = false
+            generation = UUID(); observer?.cancel(); observer = nil
+            let stopping = generation
+            snapshot.phase = "stopping"; publish()
+            for dialog in snapshot.dialogs { try? await child.answerDialog(id: dialog.id, value: nil, confirmed: nil, cancelled: true) }
+            guard await interruptEventStream(child, generation: stopping) else { throw RemoteFault.unavailable }
+            return
+        }
+        if recoveringEvents {
+            guard await interruptEventStream(child, generation: generation) else { throw RemoteFault.unavailable }
+            return
+        }
+        snapshot.phase = "stopping"; publish()
+        _ = try await child.request("clear_queue")
+        if recoveringEvents || snapshot.bash?.status == .unknownOutcome {
+            guard await interruptEventStream(child, generation: generation) else { throw RemoteFault.unavailable }
+            return
+        }
+        for dialog in snapshot.dialogs { try await child.answerDialog(id: dialog.id, value: nil, confirmed: nil, cancelled: true) }
+        snapshot.dialogs = []; dialogDeadlines = [:]
+        if let bash = snapshot.bash, bash.working {
+            try await abortBash(id: bash.id)
+            for _ in 0..<100 {
+                if snapshot.bash?.working != true { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
+        if recoveringEvents || snapshot.bash?.working == true || snapshot.bash?.status == .unknownOutcome {
+            guard await interruptEventStream(child, generation: generation) else { throw RemoteFault.unavailable }
+            return
+        }
+        await bashCancellation?.value
+        let token = generation
+        try await child.stopWork()
+        guard generation == token, rpc === child else { throw RemoteFault.unknownOutcome }
+        if recoveringEvents || snapshot.bash?.working == true || snapshot.bash?.status == .unknownOutcome {
+            guard await interruptEventStream(child, generation: token) else { throw RemoteFault.unavailable }
+            return
+        }
+        snapshot.pendingMessages = 0; snapshot.phase = "idle"; try markInterrupted(false)
+    }
+
+    private func abortBash(id: UUID) async throws {
+        await bashEnqueued?.value
+        guard snapshot.bash?.id == id, snapshot.bash?.working == true else { return }
+        guard bashCancellation == nil else { return }
+        snapshot.bash?.status = .cancelling; publish()
+        let token = generation
+        bashCancellation = Task { [weak self] in await self?.repeatBashCancellation(id: id, generation: token) }
+    }
+
+    private func repeatBashCancellation(id: UUID, generation token: UUID) async {
+        defer {
+            if snapshot.bash?.id == id {
+                bashCancellation = nil
+                if generation == token, snapshot.phase == "bash" { snapshot.phase = displayPhase }
+                scheduleHistoryRefresh()
+                publish()
+            }
+        }
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        // Upstream handles commands concurrently and awaits user_bash hooks before
+        // registering its abort controller. An early acknowledgement can do nothing.
+        while generation == token, snapshot.bash?.id == id, snapshot.bash?.working == true,
+              !closing, ProcessInfo.processInfo.systemUptime < deadline {
+            _ = try? await rpc?.request("abort_bash", timeout: 1)
+            if snapshot.bash?.working != true { return }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        guard generation == token, snapshot.bash?.id == id, snapshot.bash?.working == true, !closing else { return }
+        snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome
+        snapshot.error = .unknownOutcome; unresolvedQuitOutcome = true; recoveringEvents = true
+        recoveryNotice = "Pi did not confirm shell cancellation. Use Stop before changing sessions; do not resend the command."
+        if snapshot.phase != "stopping" { snapshot.phase = "recovering" }
+        refreshNotices(); publish()
+    }
+
+    private func finishBash(id: UUID, generation token: UUID, result: JSONValue?, error: (any Error)?) {
+        guard token == generation, snapshot.bash?.id == id else { return }
+        bashTask = nil; bashEnqueued = nil
+        do {
+            if let error { throw error }
+            guard let result else { throw RemoteFault.incompatiblePi }
+            try snapshot.bash?.finish(result)
+            runRevision &+= 1
+            try retainHistoryPresence()
+            try markInterrupted(false)
+            historyNeedsRefresh = true
+        } catch {
+            // Upstream can reject after execution when recording the result fails.
+            // No failed bash response proves that side effects did not happen.
+            snapshot.bash?.status = .unknownOutcome
+            snapshot.bash?.fault = .unknownOutcome
+            snapshot.error = .unknownOutcome
+            unresolvedQuitOutcome = true
+            recoveringEvents = true
+            recoveryNotice = "Shell outcome is uncertain. Use Stop, then inspect saved history. Do not resend the command."
+            refreshNotices()
+        }
+        if snapshot.phase != "stopping" { snapshot.phase = displayPhase }
+        scheduleHistoryRefresh()
+        publish()
+    }
+
+    private func scheduleBashPublish() {
+        if ContinuousClock.now - lastPublish > .milliseconds(100) { publish() }
+        else if scheduledPublish == nil {
+            scheduledPublish = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(100)); await self?.publishScheduled()
+            }
+        }
+    }
+
     private func requireIdle() async throws {
+        guard snapshot.bash?.working != true, bashCancellation == nil else { throw RemoteFault.busy }
         guard let rpc else { return }
         let state = try await rpc.request("get_state")
         guard state["isStreaming"]?.bool == false, state["isCompacting"]?.bool == false,
@@ -913,6 +1100,7 @@ public actor HostCoordinator {
             else { guard sessions.count < 256 else { throw RemoteFault.capacity }; sessions.append(item) }
             committed = true
             snapshot.selected = item.info.id
+            snapshot.bash = nil
             reducer = TranscriptReducer(); outputImages = OutputImages()
             snapshot.messages = []; snapshot.hasOlderMessages = false; snapshot.dialogs = []
             snapshot.draft = nil; snapshot.draftID = nil; snapshot.notices = []; snapshot.pendingMessages = 0
@@ -1023,6 +1211,7 @@ public actor HostCoordinator {
         let activation = generation
         historyRefresh?.cancel(); historyRefresh = nil; historyNeedsRefresh = false
         observer?.cancel(); rpc = nil
+        snapshot.bash = nil
         snapshot.phase = "starting"; snapshot.selected = id; snapshot.messages = []; snapshot.dialogs = []
         snapshot.draft = nil; snapshot.draftID = nil; snapshot.runtime = nil; snapshot.pendingMessages = nil
         reducer = TranscriptReducer(); outputImages = OutputImages()
@@ -1184,11 +1373,9 @@ public actor HostCoordinator {
             if generation == token { historyRefresh = nil }
             return
         }
-        let mutation = UUID()
-        mutations.insert(mutation)
+        let work = workGeneration, mutation = mutationRevision
         var supersededRun = false
         defer {
-            mutations.remove(mutation)
             if generation == token {
                 historyRefresh = nil
                 if supersededRun && allowRetry { scheduleHistoryRefresh(allowRetry: false) }
@@ -1197,8 +1384,11 @@ public actor HostCoordinator {
         do {
             let data = try await requireRPC().request("get_messages")
             guard generation == token, snapshot.selected == session else { return }
-            guard runRevision == revision, !snapshot.working else {
-                supersededRun = runRevision != revision
+            // This is a background read. Do not reserve foreground admission;
+            // discard the result if any work or mutation crossed the read.
+            guard runRevision == revision, workGeneration == work, mutationRevision == mutation,
+                  mutations.isEmpty, !snapshot.working, !closing else {
+                supersededRun = runRevision != revision || workGeneration != work || mutationRevision != mutation
                 return
             }
             let messages = (data["messages"]?.array ?? []).map { outputImages.message($0) }
@@ -1208,7 +1398,10 @@ public actor HostCoordinator {
             historyNeedsRefresh = false
             publish()
         } catch {
-            if generation == token { snapshot.error = .unavailable; publish() }
+            if generation == token, snapshot.selected == session, workGeneration == work,
+               mutationRevision == mutation, !snapshot.working, !closing {
+                snapshot.error = .unavailable; publish()
+            }
         }
     }
 
@@ -1272,6 +1465,7 @@ public actor HostCoordinator {
                                   hasHistory: persisted, parentFile: persisted ? nil : source.file)
         try validateManaged(item)
         sessions.append(item)
+        snapshot.bash = nil
         snapshot.selected = info.id; reducer = TranscriptReducer(); outputImages = OutputImages()
         snapshot.messages = []; snapshot.hasOlderMessages = false; snapshot.dialogs = []; snapshot.notices = []; snapshot.pendingMessages = 0
         dialogDeadlines = [:]; statuses = [:]; notifications = []
@@ -1286,10 +1480,12 @@ public actor HostCoordinator {
 
     private var displayPhase: String {
         if recoveringEvents { return "recovering" }
+        if snapshot.bash?.working == true || bashCancellation != nil { return "bash" }
         return reducer.phase == "idle" && (snapshot.pendingMessages ?? 0) > 0 ? "queued" : reducer.phase
     }
 
     private func preserveUnconfirmedShutdown(_ child: RPCProcess, selected: UUID?) {
+        if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
         rpc = child; snapshot.selected = selected
         recoveringEvents = true; snapshot.phase = "recovering"; snapshot.error = .unknownOutcome
         snapshot.dialogs = []; dialogDeadlines = [:]; snapshot.pendingMessages = nil
@@ -1308,6 +1504,7 @@ public actor HostCoordinator {
 
     private func recoverEventStream(_ child: RPCProcess, generation token: UUID) async -> Bool {
         guard generation == token, rpc === child, !closing else { return false }
+        if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
         recoveringEvents = true
         recoveryNotice = "Live events were lost. Recovery is in progress; do not resend accepted work."
         snapshot.phase = "recovering"; snapshot.error = .unknownOutcome
@@ -1331,6 +1528,7 @@ public actor HostCoordinator {
 
     @discardableResult private func interruptEventStream(_ child: RPCProcess, generation token: UUID) async -> Bool {
         guard generation == token, rpc === child else { return false }
+        if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
         generation = UUID()
         snapshot.phase = "stopping"; publish()
         let stopped = await child.shutdown()
@@ -1429,6 +1627,13 @@ public actor HostCoordinator {
             }
             return
         }
+        if event["type"]?.string == "bash_execution_update" {
+            guard let id = snapshot.bash?.id, event["id"]?.string == id.uuidString,
+                  let delta = event["delta"]?.string else { return }
+            snapshot.bash?.append(delta)
+            scheduleBashPublish()
+            return
+        }
         // Custom messages can complete without an agent run. Fence history reads
         // against these transcript changes as well as agent boundaries.
         if event["type"]?.string == "message_end" {
@@ -1463,7 +1668,8 @@ public actor HostCoordinator {
         if event["type"]?.string == "agent_settled" {
             workGeneration = UUID()
             runRevision &+= 1
-            do { try markInterrupted((snapshot.pendingMessages ?? 0) > 0) } catch { snapshot.error = .storageFailure }
+            do { try markInterrupted((snapshot.pendingMessages ?? 0) > 0 || snapshot.bash?.working == true || snapshot.bash?.status == .unknownOutcome || recoveringEvents) }
+            catch { snapshot.error = .storageFailure }
         }
         if event["type"]?.string == "extension_ui_request" { extensionEvent(event) }
         if event["type"]?.string == "extension_error" { snapshot.error = .unsupportedFeature }
@@ -1557,7 +1763,8 @@ public actor HostCoordinator {
         guard token == generation else { return }
         workGeneration = UUID()
         runRevision &+= 1
-        rpc = nil; snapshot.phase = "interrupted"; snapshot.error = .unavailable
+        if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
+        rpc = nil; recoveringEvents = false; snapshot.phase = "interrupted"; snapshot.error = .unavailable
         snapshot.dialogs = []; dialogDeadlines = [:]
         do { try markInterrupted(true) } catch { snapshot.error = .storageFailure }
         publish()
@@ -1582,6 +1789,7 @@ public actor HostCoordinator {
         if snapshot.working { try? markInterrupted(true) }
         let child = rpc; rpc = nil
         if let child { _ = await child.shutdown() }
+        if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
         snapshot.phase = "unavailable"; publish()
     }
 }

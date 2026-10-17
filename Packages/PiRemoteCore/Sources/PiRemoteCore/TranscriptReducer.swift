@@ -116,6 +116,20 @@ public struct TranscriptReducer: Sendable {
     public static func message(_ value: JSONValue) -> TranscriptMessage? {
         guard let role = value["role"]?.string, role != "system",
               !(role == "custom" && value["display"]?.bool == false) else { return nil }
+        if role == "bashExecution" {
+            let command = value["command"]?.string ?? "Command unavailable"
+            let output = value["output"]?.string ?? ""
+            let excluded = value["excludeFromContext"]?.bool == true
+            let cancelled = value["cancelled"]?.bool == true
+            let exit: Double?
+            if case .number(let code) = value["exitCode"], code.isFinite { exit = code }
+            else { exit = nil }
+            let status = cancelled ? "cancelled" : exit.map { "exit " + String(format: "%.0f", $0) } ?? "exit unavailable"
+            let body = (excluded ? "!! " : "! ") + command + "\n" + output + "\n[" + status + (excluded ? " · excluded from model context" : "") + "]"
+            return TranscriptMessage(role: "bash", text: DisplayLimit.text(body, bytes: 16_384),
+                                     isError: !cancelled && exit.map { $0 != 0 } == true,
+                                     truncated: value["truncated"]?.bool == true || body.utf8.count > 16_384)
+        }
         let text = content(value["content"])
         let fallback = value["summary"]?.string ?? value["output"]?.string ?? value["errorMessage"]?.string ?? ""
         let toolPrefix = role == "toolResult" ? value["toolName"]?.string.flatMap { $0.isEmpty ? nil : $0 + "\n" } ?? "" : ""
