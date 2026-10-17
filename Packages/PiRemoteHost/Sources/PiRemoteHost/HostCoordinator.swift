@@ -11,6 +11,18 @@ public struct LocalCloseConfirmation: Sendable, Equatable {
     fileprivate let work: UUID
 }
 
+/// Local-only consent for ordinary app termination. Never sent to a phone.
+public struct LocalQuitConfirmation: Sendable, Equatable {
+    public let requiresConfirmation: Bool
+    fileprivate let context: SessionContext
+    fileprivate let lifecycle: UUID
+    fileprivate let work: UUID
+    fileprivate let mutationRevision: UInt64
+    fileprivate let pending: Set<UUID>
+    fileprivate let dialogs: [String]
+    fileprivate let transition: UUID?
+}
+
 public actor HostCoordinator {
     private struct ManagedSession: Codable {
         var info: SessionInfo
@@ -62,6 +74,10 @@ public actor HostCoordinator {
     private var journal: RequestJournal
     private var replay = StateReplay()
     private var mutations: Set<UUID> = []
+    private var mutationRevision: UInt64 = 0
+    private var pendingQuitMutations: Set<UUID> = []
+    // Displayed read errors must not hide an unresolved state-changing outcome.
+    private var unresolvedQuitOutcome = false
     private var closing = false
     private var utility: Task<(Data, Bool), any Error>?
     private var dialogDeadlines: [String: TimeInterval] = [:]
@@ -144,6 +160,28 @@ public actor HostCoordinator {
     }
     private func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
 
+    public func quitConfirmation() throws -> LocalQuitConfirmation {
+        guard !closing else { throw RemoteFault.busy }
+        return currentQuitConfirmation()
+    }
+
+    private func currentQuitConfirmation() -> LocalQuitConfirmation {
+        LocalQuitConfirmation(
+            requiresConfirmation: snapshot.working || unresolvedQuitOutcome || snapshot.error == .unknownOutcome ||
+                !pendingQuitMutations.isEmpty || lifecycleTransition != nil || recoveringEvents,
+            context: snapshot.context, lifecycle: generation, work: workGeneration,
+            mutationRevision: mutationRevision, pending: pendingQuitMutations,
+            dialogs: snapshot.dialogs.map(\.id), transition: lifecycleTransition)
+    }
+
+    /// Validate consent and stop admitting local/remote actions in one actor turn.
+    /// The caller must then finish normal shutdown, including listener cleanup.
+    public func reserveShutdown(confirmation: LocalQuitConfirmation, confirmed: Bool) throws {
+        guard !closing, confirmation == currentQuitConfirmation() else { throw RemoteFault.conflict }
+        guard confirmed || !confirmation.requiresConfirmation else { throw RemoteFault.busy }
+        closing = true
+    }
+
     public func closeConfirmation(for context: SessionContext) throws -> LocalCloseConfirmation {
         guard context == snapshot.context, context.session != nil, !closing, rpc != nil else { throw RemoteFault.conflict }
         guard snapshot.working, !["starting", "stopping", "recovering"].contains(snapshot.phase),
@@ -209,6 +247,11 @@ public actor HostCoordinator {
                 throw RemoteFault.conflict
             }
             let result = try await perform(request, closeConfirmation: closeConfirmation)
+            // Explicit Stop or a confirmed lifecycle change ends interruption risk
+            // from the previous uncertain mutation. Other reads/actions do not.
+            if request.action == .stop || request.action == .closeSession || request.action.changesSession {
+                unresolvedQuitOutcome = false
+            }
             if request.action.mutates {
                 journal.finish(device: device, request: request, fault: nil)
                 try saveJournal()
@@ -228,8 +271,14 @@ public actor HostCoordinator {
                 }
             } else { fault = .unavailable }
             if request.action.mutates {
+                if fault == .unknownOutcome { unresolvedQuitOutcome = true }
                 journal.finish(device: device, request: request, fault: fault)
-                do { try saveJournal() } catch { return .failure(.unknownOutcome) }
+                do { try saveJournal() }
+                catch {
+                    unresolvedQuitOutcome = true
+                    snapshot.error = .unknownOutcome; publish()
+                    return .failure(.unknownOutcome)
+                }
             }
             if snapshot.phase == "starting" && rpc == nil { snapshot.phase = "unavailable" }
             if snapshot.phase == "compacting", fault == .invalidRequest || fault == .providerAuthenticationRequired {
@@ -251,8 +300,12 @@ public actor HostCoordinator {
             guard priority || mutations.isEmpty else { throw RemoteFault.busy }
             mutations.insert(request.id)
         }
-        defer { mutations.remove(request.id) }
-        if action.mutates { snapshot.error = nil }
+        defer { mutations.remove(request.id); pendingQuitMutations.remove(request.id) }
+        if action.mutates {
+            mutationRevision &+= 1
+            pendingQuitMutations.insert(request.id)
+            snapshot.error = nil
+        }
         switch action {
         case .snapshot: return .snapshot(snapshot)
         case .releaseNotes(let offset, let revision):

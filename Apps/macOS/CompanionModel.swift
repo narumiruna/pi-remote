@@ -243,6 +243,8 @@ final class CompanionModel {
     @ObservationIgnored private var server: AppServer?
     @ObservationIgnored private var startup: Task<Void, Never>?
     @ObservationIgnored private var shuttingDown = false
+    @ObservationIgnored private var terminationTask: Task<Void, Never>?
+    @ObservationIgnored private var terminationFinished = false
     @ObservationIgnored private var identity: ServerIdentity?
     @ObservationIgnored private var observation: Task<Void, Never>?
     @ObservationIgnored private var pairingObservation: Task<Void, Never>?
@@ -596,6 +598,60 @@ final class CompanionModel {
         picker.message = "Grant Mac folder access. This does not register or restrict the iPhone's working directories."
         _ = picker.runModal()
     }
+    static func terminationAlert(workChanged: Bool) -> NSAlert {
+        let alert = NSAlert()
+        alert.messageText = workChanged ? "Pi work changed. Stop work and quit?" : "Stop Pi work and quit?"
+        alert.informativeText = "Quitting disconnects phones and stops managed Pi, including waiting or uncertain work. File changes cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Stop work and quit")
+        alert.buttons[0].keyEquivalent = "\u{1b}"
+        alert.buttons[1].keyEquivalent = ""
+        alert.window.initialFirstResponder = alert.buttons[0]
+        return alert
+    }
+
+    // Both native Quit and menu-bar Quit enter through the application delegate.
+    func requestTermination(confirm: @escaping @MainActor (_ workChanged: Bool) async -> Bool,
+                            reply: @escaping @MainActor (Bool) -> Void) -> NSApplication.TerminateReply {
+        if terminationFinished { return .terminateNow }
+        guard terminationTask == nil else { return .terminateLater }
+        terminationTask = Task {
+            var workChanged = false
+            do {
+                if let startup { await startup.value }
+                if let coordinator {
+                    while true {
+                        let consent = try await coordinator.quitConfirmation()
+                        let confirmed: Bool
+                        if consent.requiresConfirmation {
+                            confirmed = await confirm(workChanged)
+                            guard confirmed else {
+                                terminationTask = nil; reply(false); return
+                            }
+                        } else { confirmed = false }
+                        do {
+                            try await coordinator.reserveShutdown(confirmation: consent, confirmed: confirmed)
+                            break
+                        } catch RemoteFault.conflict {
+                            // A phone or Pi may have changed work while the dialog was open.
+                            workChanged = true
+                        }
+                    }
+                }
+                await shutdown()
+                terminationFinished = true
+                terminationTask = nil
+                reply(true)
+            } catch {
+                fault = error as? RemoteFault ?? .unavailable
+                terminationTask = nil
+                reply(false)
+            }
+        }
+        return .terminateLater
+    }
+
     func shutdown() async {
         shuttingDown = true
         startup?.cancel()

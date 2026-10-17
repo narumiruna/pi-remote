@@ -9,6 +9,7 @@ struct CompanionWindow: View {
     @SceneStorage("macWorkspaceSidebarWidth") private var sidebarWidth = 240.0
     @SceneStorage("macWorkspaceInspectorWidth") private var inspectorWidth = 320.0
     @State private var inspectorSection = "Files"
+    @State private var toolbarHeight: CGFloat = 44
     @State private var removingWorkspace: String?
     @State private var remoteDetailsVisible = false
     @State private var renamingSession: UUID?
@@ -20,6 +21,7 @@ struct CompanionWindow: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 toolbar(compact: geometry.size.width < 1100)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { toolbarHeight = $0 }
                 Divider()
                 HSplitView {
                     if sidebarVisible {
@@ -31,7 +33,8 @@ struct CompanionWindow: View {
                     VStack(spacing: 0) {
                         notices
                         detail
-                    }.frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity).layoutPriority(1)
+                    }.frame(minWidth: 400, maxWidth: .infinity,
+                            minHeight: max(0, geometry.size.height - toolbarHeight - 1), maxHeight: .infinity).layoutPriority(1)
                     if model.inspectorVisible {
                         inspector.frame(minWidth: 260, idealWidth: min(inspectorWidth, 320), maxWidth: 320)
                             .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { value in
@@ -124,7 +127,7 @@ struct CompanionWindow: View {
                 Button("Inspector", systemImage: "sidebar.right") { model.inspectorVisible.toggle() }
                     .accessibilityIdentifier("mac-inspector-toggle")
                     .labelStyle(.iconOnly).keyboardShortcut("i", modifiers: [.command, .option])
-                    .help("Show or hide Files, Tools and Activity")
+                    .help("Show or hide Files, Session and Activity")
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
     }
@@ -262,7 +265,7 @@ struct CompanionWindow: View {
                 .disabled(model.closeSessionDisabledReason(session.id) != nil)
             Button("Copy session ID") { model.copy(session.id.uuidString) }
             if session.id == model.state.selected {
-                Button("Session controls") { model.destination = .session(session.id); showInspector("Tools") }
+                Button("Session controls") { model.destination = .session(session.id); showInspector("Session") }
                 Button("History and fork options") { showSessionWorkflow(.history, session: session, context: context) }
                     .disabled(model.state.working)
             }
@@ -295,7 +298,7 @@ struct CompanionWindow: View {
     }
 
     private func canRename(_ id: UUID) -> Bool {
-        id == model.state.selected && model.state.phase == "idle" && !model.openingSession
+        macRenameSessionDisabledReason(id, model: model) == nil
     }
 
     private func beginRename(_ id: UUID) {
@@ -384,8 +387,12 @@ struct CompanionWindow: View {
                                 }.font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("Open") { Task { await model.openSession(session.id) } }
-                                .disabled(model.openingSession || model.state.working)
+                            Button(session.id == model.state.selected ? "View conversation" : "Open") {
+                                if session.id == model.state.selected { model.destination = .session(session.id) }
+                                else if !model.openingSession, !model.state.working { Task { await model.openSession(session.id) } }
+                            }
+                                .disabled(session.id != model.state.selected && (model.openingSession || model.state.working))
+                                .accessibilityIdentifier("mac-overview-open-" + session.id.uuidString)
                             Button("Close") { beginClose(session.id) }
                                 .disabled(model.closeSessionDisabledReason(session.id) != nil)
                                 .help(model.closeSessionDisabledReason(session.id) ?? "Close Session; keep history and draft")
@@ -511,7 +518,7 @@ struct CompanionWindow: View {
         let context = model.state.context
         let commands = MacSlashCommands.options(in: model.state)
         return Menu {
-            Button("Session controls") { showInspector("Tools") }
+            Button("Session controls") { showInspector("Session") }
             Button("Rename…") { beginRename(session.id) }.disabled(!canRename(session.id))
             Button("Close Session") { beginClose(session.id) }
                 .disabled(model.closeSessionDisabledReason(session.id) != nil)
@@ -535,14 +542,18 @@ struct CompanionWindow: View {
     @ViewBuilder private var inspector: some View {
         VStack(spacing: 0) {
             Picker("Inspector", selection: $inspectorSection) {
-                Text("Files").tag("Files"); Text("Tools").tag("Tools"); Text("Activity").tag("Activity")
-            }.pickerStyle(.segmented).padding(12).accessibilityIdentifier("mac-inspector-sections")
+                Text("Files").tag("Files"); Text("Session").tag("Session"); Text("Activity").tag("Activity")
+            }.pickerStyle(.segmented).labelsHidden().padding(12)
+                .accessibilityLabel("Inspector").accessibilityIdentifier("mac-inspector-sections")
             Divider()
             switch inspectorSection {
-            case "Tools":
+            case "Session":
                 if case .session(let id) = model.destination, id == model.state.selected {
                     NavigationStack {
-                        SessionControls(state: model.state, request: model.scopedRequest(for: model.state), closed: { model.destination = .overview }) { model.preview = $0; model.panel = "preview" }
+                        SessionControls(state: model.state, request: model.scopedRequest(for: model.state), closed: { model.destination = .overview },
+                                        closeSession: { beginClose(id) }, closeSessionDisabledReason: model.closeSessionDisabledReason(id)) {
+                            model.preview = $0; model.panel = "preview"
+                        }
                             .formStyle(.grouped)
                     }.id(model.state.context)
                 } else { ContentUnavailableView("No loaded session", systemImage: "slider.horizontal.3", description: Text("Open a session to use its Pi controls.")) }
@@ -571,7 +582,7 @@ struct CompanionWindow: View {
                 if let path = model.selectedWorkspace { files(path: path) }
                 else { ContentUnavailableView("Choose a workspace", systemImage: "folder") }
             }
-        }.background(.white)
+        }.frame(maxHeight: .infinity, alignment: .top).background(.white)
     }
 
     private func files(path: String) -> some View {
@@ -616,12 +627,15 @@ struct CompanionWindow: View {
             case "rename":
                 if let id = renamingSession, id == state.selected,
                    let session = state.sessions.first(where: { $0.id == id }) {
-                    MacRenameSessionView(initialName: session.title, state: state, request: model.scopedRequest(for: state)) {
+                    MacRenameSessionView(initialName: session.title, state: state, request: { action in
+                        guard canRename(id) else { throw RemoteFault.conflict }
+                        return try await model.scopedRequest(for: state)(action)
+                    }) {
                         model.panel = nil; renamingSession = nil
                     }
                 }
             case "resume": MacResumeSessionView(model: model)
-            case "palette": MacCommandPaletteView(model: model)
+            case "palette": MacCommandPaletteView(model: model, renameSession: beginRename)
             case "tree": SessionTreeView(request: model.scopedRequest(for: state)) {
                 if model.panel == "tree" { model.panel = nil }
             }
@@ -864,16 +878,42 @@ struct MacResumeSessionView: View {
     }
 }
 
+@MainActor func macRenameSessionDisabledReason(_ id: UUID?, model: CompanionModel) -> String? {
+    guard let id, model.state.selected == id,
+          model.state.sessions.contains(where: { $0.id == id }) else { return "Open the loaded session to rename it." }
+    guard model.state.phase == "idle" else { return "Wait for Pi to become idle." }
+    return model.closeSessionDisabledReason(id)
+}
+
 private struct MacCommandPaletteView: View {
     @Bindable var model: CompanionModel
+    let renameSession: (UUID) -> Void
     @State private var query = ""
     @State private var selection: String?
-    private let appActions = ["Overview", "New session", "Toggle Inspector"]
+    @State private var renameContext: SessionContext?
+    private let appActions = ["Overview", "New session", "Add workspace", "Settings", "Devices", "Rename session", "Toggle Inspector"]
     private var nativeOptions: [MacSlashOption] {
         MacSlashCommands.options(in: model.state).filter { $0.native != nil && matches($0.name + " " + $0.detail) }
     }
     private var actions: [String] { appActions.filter { matches($0) } }
     private var ids: [String] { actions + nativeOptions.map { "/" + $0.name } }
+    private var unavailableReason: String? {
+        if !model.state.dialogs.isEmpty { return "Answer or cancel the open request first." }
+        if model.closingSession != nil { return "Wait for the session change to finish." }
+        return nil
+    }
+
+    private func disabledReason(_ action: String) -> String? {
+        if let unavailableReason { return unavailableReason }
+        if action == "New session" { return newSessionDisabledReason }
+        if action == "Rename session" {
+            guard renameContext == model.state.context else { return "Reopen the palette for the current session." }
+            guard let id = renameContext?.session, model.destination == .session(id) else { return "Display the loaded session to rename it." }
+            return macRenameSessionDisabledReason(id, model: model)
+        }
+        return nil
+    }
+
     private var newSessionDisabledReason: String? {
         if model.startupError != nil { return "Resolve the startup error first." }
         return model.state.working || model.openingSession || model.closingSession != nil ? "Wait for Pi to become idle." : nil
@@ -893,23 +933,26 @@ private struct MacCommandPaletteView: View {
                     Button { run(action) } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(action)
-                            if action == "New session", let reason = newSessionDisabledReason {
+                            if let reason = disabledReason(action) {
                                 Text(reason).font(.caption).foregroundStyle(.secondary)
                             }
-                        }
+                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }
-                    .disabled(action == "New session" && newSessionDisabledReason != nil)
+                    .buttonStyle(.plain)
+                    .disabled(disabledReason(action) != nil)
                     .tag(action)
+                    .accessibilityIdentifier("mac-palette-" + action.lowercased().replacingOccurrences(of: " ", with: "-"))
                 }
                 ForEach(nativeOptions) { option in
                     Button { run("/" + option.name) } label: {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("/" + option.name)
-                            Text(option.disabledReason(in: model.state) ?? option.detail)
+                            Text(unavailableReason ?? option.disabledReason(in: model.state) ?? option.detail)
                                 .font(.caption).foregroundStyle(.secondary)
-                        }
+                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }
-                    .disabled(!option.isEnabled(in: model.state))
+                    .buttonStyle(.plain)
+                    .disabled(unavailableReason != nil || !option.isEnabled(in: model.state))
                     .tag("/" + option.name)
                     .accessibilityIdentifier("mac-palette-" + option.name)
                 }
@@ -920,7 +963,7 @@ private struct MacCommandPaletteView: View {
         }
         .navigationTitle("Command palette")
         .accessibilityIdentifier("mac-command-palette")
-        .onAppear { selection = ids.first }
+        .onAppear { selection = ids.first; renameContext = model.state.context }
         .onChange(of: query) { _, _ in selection = ids.first }
     }
 
@@ -929,7 +972,7 @@ private struct MacCommandPaletteView: View {
     }
 
     private func run(_ id: String) {
-        guard model.panel == "palette", model.state.dialogs.isEmpty, model.closingSession == nil else { return }
+        guard model.panel == "palette", ids.contains(id), unavailableReason == nil, disabledReason(id) == nil else { return }
         switch id {
         case "Overview": model.panel = nil; model.destination = .overview
         case "New session":
@@ -938,6 +981,11 @@ private struct MacCommandPaletteView: View {
                 model.panel = nil
                 Task { await model.createSession(in: path) }
             } else { model.panel = "directory" }
+        case "Add workspace": model.panel = "workspace"
+        case "Settings": model.panel = nil; model.destination = .settings
+        case "Devices": model.panel = nil; model.destination = .devices
+        case "Rename session":
+            if let id = renameContext?.session { renameSession(id) }
         case "Toggle Inspector": model.panel = nil; model.inspectorVisible.toggle()
         default:
             guard let option = MacSlashCommands.options(in: model.state).first(where: { "/" + $0.name == id }),

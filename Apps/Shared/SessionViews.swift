@@ -59,6 +59,10 @@ struct SessionControls: View {
     let state: HostSnapshot
     let request: (SessionAction) async throws -> AppResult
     var closed: () -> Void = {}
+    #if os(macOS)
+    var closeSession: (() -> Void)? = nil
+    var closeSessionDisabledReason: String? = nil
+    #endif
     let preview: (FilePreview) -> Void
     @State private var confirmClose = false
     @State private var name = ""
@@ -136,9 +140,11 @@ struct SessionControls: View {
                 Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
                 NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: sessionControlMinimum)
                 Button("Clone current branch") { perform(.clone) }
+                #if !os(macOS)
                 if state.capabilities.contains("close-session") {
                     Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: sessionControlMinimum)
                 }
+                #endif
                 Button("Working tree diff") {
                     Task {
                         do { if case .preview(let value) = try await request(.diff) { preview(value) } }
@@ -154,6 +160,20 @@ struct SessionControls: View {
             SessionCommandActions(state: state, request: request)
         }
         .navigationTitle("Session controls")
+        #if os(macOS)
+        .safeAreaInset(edge: .bottom) {
+            if state.capabilities.contains("close-session") {
+                HStack {
+                    Spacer()
+                    Button("Close Session", role: .destructive) { closeSession?() }
+                        .disabled(closeSession == nil || state.selected == nil || closeSessionDisabledReason != nil)
+                        .help(closeSessionDisabledReason ?? "Close Session; keep saved history and draft")
+                        .accessibilityIdentifier("mac-inspector-close-session")
+                }.padding(12).background(.bar)
+            }
+        }
+        #endif
+        #if !os(macOS)
         .alert("Close this Pi session?", isPresented: $confirmClose) {
             Button("Close Pi session", role: .destructive) {
                 Task {
@@ -163,6 +183,7 @@ struct SessionControls: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This stops the idle Pi process, not the listener. Saved history remains on the Mac. Reopen it from Sessions; no prompt is resent.") }
+        #endif
     }
     private func perform(_ action: SessionAction) {
         Task {

@@ -24,6 +24,271 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         throw RemoteFault.unavailable
     }
 
+    private func withTerminationModel(_ body: (CompanionModel, HostCoordinator, URL) async throws -> Void) async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pi-quit-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("fake-pi")
+        let script = #"""
+        #!/bin/sh
+        if [ "${1:-}" = --version ]; then printf '1.3.0\n'; exit 0; fi
+        while [ "$#" -gt 0 ]; do
+          case "$1" in
+            --session-dir) folder=$2; shift 2 ;;
+            --session-id) session=$2; shift 2 ;;
+            *) shift ;;
+          esac
+        done
+        file="$folder/$session.jsonl"; streaming=false
+        printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+        reply() { printf '{"id":"%s","type":"response","command":"%s","success":true,"data":%s}\n' "$id" "$command" "$1"; }
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | /usr/bin/plutil -extract id raw -o - -)
+          command=$(printf '%s' "$line" | /usr/bin/plutil -extract type raw -o - -)
+          printf '%s\n' "$command" >> "$PWD/commands"
+          case "$command" in
+            get_state) reply "{\"sessionId\":\"$session\",\"sessionFile\":\"$file\",\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0}" ;;
+            get_available_models) reply '{"models":[]}' ;;
+            get_available_thinking_levels) reply '{"levels":["off"]}' ;;
+            get_commands) reply '{"commands":[]}' ;;
+            get_messages) reply '{"messages":[]}' ;;
+            new_session)
+              session=$(/usr/bin/uuidgen); file="$folder/$session.jsonl"; streaming=false
+              printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+              reply '{"cancelled":false}' ;;
+            prompt) streaming=true; printf '{"type":"agent_start"}\n'; reply '{}' ;;
+            abort) streaming=false; reply '{}'; printf '{"type":"agent_settled"}\n' ;;
+            *) reply '{}' ;;
+          esac
+        done
+        """#
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let suite = "PiRemote.QuitTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(executable.path, forKey: "piExecutable")
+        let model = CompanionModel(support: root.appendingPathComponent("support"), secrets: MemorySecrets(), defaults: defaults)
+        let host = try XCTUnwrap(model.coordinator)
+        model.observe()
+        do {
+            let directory = try await host.directories.register(root)
+            _ = try await model.request(.createSession(directory: directory))
+            try await waitUntil { model.state.phase == "idle" }
+            _ = try await model.request(.prompt(text: "Controlled work", delivery: .prompt, image: nil))
+            try await waitUntil { model.state.working }
+            try await body(model, host, root)
+            await model.shutdown()
+        } catch { await model.shutdown(); throw error }
+    }
+
+    func testQuitCancelAndDuplicateRequestsLeaveWorkRunningThenConfirmOnce() async throws {
+        try await withTerminationModel { model, host, root in
+            let context = model.state.context
+            model.text = "Unsent draft"
+            var pending: CheckedContinuation<Bool, Never>?
+            var replies: [Bool] = []
+            XCTAssertEqual(model.requestTermination(confirm: { changed in
+                XCTAssertFalse(changed)
+                return await withCheckedContinuation { pending = $0 }
+            }, reply: { replies.append($0) }), .terminateLater)
+            try await waitUntil { pending != nil }
+            XCTAssertEqual(model.requestTermination(confirm: { _ in XCTFail("Duplicate confirmation"); return true },
+                                                    reply: { _ in XCTFail("Duplicate reply") }), .terminateLater)
+            pending?.resume(returning: false); pending = nil
+            try await waitUntil { replies == [false] }
+            XCTAssertEqual(model.state.context, context)
+            XCTAssertTrue(model.state.working)
+            XCTAssertEqual(model.text, "Unsent draft")
+            let commands = try String(contentsOf: root.appendingPathComponent("commands"), encoding: .utf8)
+            XCTAssertFalse(commands.split(separator: "\n").contains("abort"))
+            let authoritative = await host.state()
+            XCTAssertEqual(authoritative.context, context)
+            XCTAssertTrue(authoritative.working)
+            XCTAssertEqual(model.requestTermination(confirm: { _ in true }, reply: { replies.append($0) }), .terminateLater)
+            try await waitUntil { replies == [false, true] }
+            let stopped = await host.state()
+            XCTAssertEqual(stopped.phase, "unavailable")
+            XCTAssertEqual(model.requestTermination(confirm: { _ in XCTFail("Already terminated"); return true },
+                                                    reply: { _ in XCTFail("Already replied") }), .terminateNow)
+        }
+    }
+
+    func testQuitRefreshesConsentForAcceptedWorkWithoutRunEvents() async throws {
+        try await withTerminationModel { model, host, _ in
+            var confirmations = 0
+            var replies: [Bool] = []
+            _ = model.requestTermination(confirm: { changed in
+                confirmations += 1
+                if confirmations == 1 {
+                    XCTAssertFalse(changed)
+                    _ = try? await model.request(.prompt(text: "Next work", delivery: .followUp, image: nil))
+                    return true
+                }
+                XCTAssertTrue(changed)
+                return false
+            }, reply: { replies.append($0) })
+            try await waitUntil { !replies.isEmpty }
+            XCTAssertEqual(confirmations, 2)
+            XCTAssertEqual(replies, [false])
+            let current = await host.state()
+            XCTAssertTrue(current.working)
+        }
+    }
+
+    func testQuitRefreshesConsentForChangedSession() async throws {
+        try await withTerminationModel { model, host, root in
+            let original = model.state.selected
+            var confirmations = 0
+            var replies: [Bool] = []
+            _ = model.requestTermination(confirm: { changed in
+                confirmations += 1
+                if confirmations == 1 {
+                    do {
+                        _ = try await model.request(.stop)
+                        try await self.waitUntil { model.state.phase == "idle" }
+                        let directory = try await host.directories.register(root)
+                        _ = try await model.request(.createSession(directory: directory))
+                        try await self.waitUntil { model.state.selected != original && model.state.phase == "idle" }
+                        _ = try await model.request(.prompt(text: "New session work", delivery: .prompt, image: nil))
+                    } catch { XCTFail("Could not change work: \(error)") }
+                    return true
+                }
+                XCTAssertTrue(changed)
+                return false
+            }, reply: { replies.append($0) })
+            try await waitUntil { !replies.isEmpty }
+            XCTAssertEqual(confirmations, 2)
+            XCTAssertEqual(replies, [false])
+            XCTAssertNotEqual(model.state.selected, original)
+        }
+    }
+
+    func testQuitAfterWorkCompletesNeedsNoSecondConfirmation() async throws {
+        try await withTerminationModel { model, host, _ in
+            var confirmations = 0
+            var replies: [Bool] = []
+            _ = model.requestTermination(confirm: { _ in
+                confirmations += 1
+                _ = try? await model.request(.stop)
+                return true
+            }, reply: { replies.append($0) })
+            try await waitUntil { !replies.isEmpty }
+            XCTAssertEqual(confirmations, 1)
+            XCTAssertEqual(replies, [true])
+            let current = await host.state()
+            XCTAssertEqual(current.phase, "unavailable")
+        }
+    }
+
+    func testTerminationDelegateSharesOneReplyForRepeatedNativeCallbacks() async throws {
+        try await withTerminationModel { model, host, _ in
+            var decision: CheckedContinuation<Bool, Never>?
+            var replies: [Bool] = []
+            let application = NSApplication.shared
+            let delegate = CompanionDelegate(model: model, confirm: { sender, _ in
+                XCTAssertTrue(sender === application)
+                return await withCheckedContinuation { decision = $0 }
+            }, reply: { sender, allowed in
+                XCTAssertTrue(sender === application)
+                replies.append(allowed)
+            })
+            XCTAssertEqual(delegate.applicationShouldTerminate(application), .terminateLater)
+            try await waitUntil { decision != nil }
+            XCTAssertEqual(delegate.applicationShouldTerminate(application), .terminateLater)
+            decision?.resume(returning: false); decision = nil
+            try await waitUntil { replies == [false] }
+            XCTAssertTrue(model.state.working)
+            XCTAssertEqual(delegate.applicationShouldTerminate(application), .terminateLater)
+            try await waitUntil { decision != nil }
+            decision?.resume(returning: true); decision = nil
+            try await waitUntil { replies == [false, true] }
+            let stopped = await host.state()
+            XCTAssertEqual(stopped.phase, "unavailable")
+            XCTAssertEqual(delegate.applicationShouldTerminate(application), .terminateNow)
+            XCTAssertEqual(replies, [false, true])
+        }
+    }
+
+    func testQuitPresentationIsResponsiveWithNoWindowFreeWindowAndExistingSheet() async throws {
+        let application = NSApplication.shared
+        for mode in ["no-window", "free-window", "existing-sheet"] {
+            for allowed in [false, true] {
+                let parent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
+                                      styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                parent.isReleasedWhenClosed = false
+                let extensionSheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 240),
+                                              styleMask: [.titled], backing: .buffered, defer: false)
+                extensionSheet.isReleasedWhenClosed = false
+                if mode != "no-window" { parent.makeKeyAndOrderFront(nil) }
+                if mode == "existing-sheet" { parent.beginSheet(extensionSheet, completionHandler: nil) }
+                let presenter = CompanionQuitAlert()
+                let decision = Task { await presenter.present(application: application,
+                    parent: mode == "no-window" ? nil : parent, workChanged: false) }
+                defer {
+                    presenter.alert?.buttons[0].performClick(nil)
+                    if let sheet = parent.attachedSheet { parent.endSheet(sheet, returnCode: .alertFirstButtonReturn) }
+                    extensionSheet.orderOut(nil); parent.orderOut(nil)
+                }
+                try await waitUntil { presenter.alert?.window.isVisible == true }
+                var responsive = false
+                Task { responsive = true }
+                try await waitUntil { responsive }
+                let alert = try XCTUnwrap(presenter.alert)
+                if mode == "existing-sheet" {
+                    XCTAssertTrue(parent.attachedSheet === extensionSheet)
+                    XCTAssertNil(alert.window.sheetParent, "Quit must not queue behind the extension sheet")
+                } else if mode == "free-window" { XCTAssertTrue(alert.window.sheetParent === parent) }
+                alert.buttons[allowed ? 1 : 0].performClick(nil)
+                let result = await decision.value
+                XCTAssertEqual(result, allowed, mode)
+                XCTAssertFalse(alert.window.isVisible)
+                if mode == "existing-sheet" { XCTAssertTrue(parent.attachedSheet === extensionSheet) }
+            }
+        }
+    }
+
+    func testStandaloneQuitEscapeCancelsWithoutBlockingMainActor() async throws {
+        let presenter = CompanionQuitAlert()
+        let decision = Task { await presenter.present(application: .shared, parent: nil, workChanged: true) }
+        defer { presenter.alert?.buttons[0].performClick(nil) }
+        try await waitUntil { presenter.alert?.window.isVisible == true }
+        let alert = try XCTUnwrap(presenter.alert)
+        let escape = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: alert.window.windowNumber, context: nil,
+            characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
+        XCTAssertTrue(alert.window.performKeyEquivalent(with: escape))
+        let result = await decision.value
+        XCTAssertFalse(result)
+    }
+
+    func testQuitAlertDefaultsToCancelAndExplainsShutdownEffects() {
+        for changed in [false, true] {
+            let alert = CompanionModel.terminationAlert(workChanged: changed)
+            XCTAssertEqual(alert.buttons.map(\.title), ["Cancel", "Stop work and quit"])
+            XCTAssertEqual(alert.buttons[0].keyEquivalent, "\u{1b}")
+            XCTAssertEqual(alert.buttons[1].keyEquivalent, "")
+            XCTAssertTrue(alert.window.initialFirstResponder === alert.buttons[0])
+            XCTAssertTrue(alert.informativeText.contains("disconnects phones"))
+            XCTAssertTrue(alert.informativeText.contains("File changes cannot be undone"))
+            XCTAssertEqual(alert.messageText.contains("changed"), changed)
+        }
+    }
+
+    func testIdleQuitDoesNotPresentConfirmation() async throws {
+        try await withTerminationModel { model, host, _ in
+            _ = try await model.request(.stop)
+            try await waitUntil { model.state.phase == "idle" }
+            var replies: [Bool] = []
+            _ = model.requestTermination(confirm: { _ in XCTFail("Idle Quit must be direct"); return false },
+                                         reply: { replies.append($0) })
+            try await waitUntil { !replies.isEmpty }
+            XCTAssertEqual(replies, [true])
+            let current = await host.state()
+            XCTAssertEqual(current.phase, "unavailable")
+        }
+    }
+
     func testSlashCatalogKeepsNativeNamesAndDiscoveredDetails() {
         var state = HostSnapshot(host: UUID(), epoch: UUID())
         state.selected = UUID()
@@ -557,6 +822,16 @@ done
                 XCTFail("Working session must not switch")
             } catch { XCTAssertEqual(error as? RemoteFault, .busy) }
             _ = try await client.request(.prompt(text: "Remote steering", delivery: .steer, image: nil))
+            var quitReply: Bool?
+            _ = model.requestTermination(confirm: { _ in false }, reply: { quitReply = $0 })
+            try await waitUntil { quitReply != nil }
+            XCTAssertEqual(quitReply, false)
+            XCTAssertTrue(connected.contains(phoneID))
+            let runningAfterCancel = await server.isRunning()
+            XCTAssertTrue(runningAfterCancel)
+            guard case .snapshot(let afterQuitCancel) = try await client.request(.snapshot) else { throw RemoteFault.invalidRequest }
+            XCTAssertTrue(afterQuitCancel.working)
+            XCTAssertEqual(afterQuitCancel.context, remote.context)
             model.delivery = .followUp; model.text = "Local follow-up"; model.send()
             try await waitUntil { !model.sending }
             let accepted = support.appendingPathComponent("pi-sessions/" + first.uuidString + "/accepted")
@@ -584,6 +859,12 @@ done
                 XCTFail("Remote mutation must not bypass the local command")
             } catch { XCTAssertEqual(error as? RemoteFault, .busy) }
             let dialog = try XCTUnwrap(model.state.dialogs.first)
+            quitReply = nil
+            _ = model.requestTermination(confirm: { _ in false }, reply: { quitReply = $0 })
+            try await waitUntil { quitReply != nil }
+            XCTAssertEqual(quitReply, false)
+            XCTAssertTrue(model.state.dialogs.contains { $0.id == dialog.id })
+            XCTAssertTrue(connected.contains(phoneID))
             _ = try await client.request(.answer(dialog: dialog.id, value: nil, confirmed: true, cancelled: false))
             try await waitUntil { model.state.dialogs.isEmpty && !model.sending }
             XCTAssertEqual(model.text, "", "Acknowledged commands use the normal draft-clearing path")

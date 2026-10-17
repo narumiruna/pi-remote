@@ -110,7 +110,7 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 ### Design principles
 
 - Use a clean native interface with the conversation as the primary work area; do not reproduce a terminal or web dashboard.
-  - On Mac, use a persistent workspace/session sidebar and an optional Files/Tools/Activity inspector. Keep the conversation wider than either secondary pane. Preserve the white appearance and blue accent; do not add themes.
+  - On Mac, use a persistent workspace/session sidebar and an optional Files/Session/Activity inspector. Keep the conversation wider than either secondary pane. Preserve the white appearance and blue accent; do not add themes.
   - Keep the iPhone conversation-first layout and existing core RPC contracts.
 - Use system typography, consistent spacing, restrained color, and standard SwiftUI controls; reserve monospaced text for code, paths, and tool output.
 - Support light and dark appearance, Dynamic Type, VoiceOver and sufficient contrast. Use touch targets of at least 44 × 44 points on iPhone and native system control sizes on Mac.
@@ -281,6 +281,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ### Mac UI/UX review follow-up
 
 - [ ] Finish acceptance for the five Mac UI/UX corrections. Direct Commands access, one Files destination, native Mac control density, consolidated header status and compact folder navigation are implemented. All 22 Mac tests, nine phone directory-model tests, four focused phone UI checks and unsigned Mac/iOS builds pass. [Evidence and limits](docs/mac-interface.md#uiux-correction-verification) distinguish automated/layout checks from normal launch. The [tracked plan](docs/plans/2026-10-17_mac-uiux-plan.md) remains open for normal local Mac operation, manual breadcrumb-menu selection and full Mac keyboard/accessibility review.
+
+### Mac review follow-up: Quit and session actions
+
+- [ ] Complete the [review follow-up plan](docs/plans/2026-10-17_mac-review-follow-up-plan.md): guard ordinary Quit with authoritative consent, unify Mac Close Session, keep Overview access to active work, rename the inspector tab to Session and add common palette actions. Implementation passes 81 Mac tests, 168 root tests, 19 focused host tests with Thread Sanitizer, three primary-phone product checks and unsigned Mac/iOS simulator builds. The required normal-launch/provider, live keyboard/VoiceOver and actual Session controls menu checks remain open because an attended desktop review is unavailable. The plan is not complete; see [evidence and limits](docs/mac-interface.md#mac-review-follow-up).
 
 ### Mac usability refinement
 
