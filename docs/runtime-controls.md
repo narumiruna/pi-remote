@@ -4,7 +4,7 @@
 
 Native last-response copying, queue delivery settings, automatic compaction and idle-session closing now pass local checks with Pi 1.3.0. This does not complete the accepted native-workflow scope.
 
-The current checks pass 72 root tests, 27 shared tests, three macOS tests, 29 product simulator tests and eleven interface tests. Root and shared suites also pass with Thread Sanitizer. Product simulator tests pass on local LAN and Tailscale. Unsigned Mac, simulator and iOS device-SDK builds pass. These checks do not establish hardware, off-site or release support.
+The current checks pass 74 root tests, 27 shared tests, three macOS tests, 29 product simulator tests and eleven interface tests. Root and shared suites also pass with Thread Sanitizer. Product simulator tests pass on local LAN and Tailscale. Unsigned Mac, simulator and iOS device-SDK builds pass. These checks do not establish hardware, off-site or release support.
 
 ## Copy last response
 
@@ -42,9 +42,22 @@ Fake-process tests verify idle-only closing, retained catalog and explicit resum
 - One concurrent sanitizer run crashed inside Swift's string allocation while constructing the existing oversized-frame fixture. Its cause is unproven; it was not a reported product data race. Two subsequent standalone runs pass all 72 tests. The failure remains recorded in `/tmp/pi-remote-runtime-tsan-final.log`; it is not counted as passing evidence.
 - A simulator host restart encountered the exclusive catalog lease while cancelled socket/observer tasks still retained the old host. The test fixture now waits for host release and probes the actual lock before constructing the next host. It does not weaken or release the production lease early. Two complete LAN runs and the subsequent Tailscale run pass both restarts and shutdown after this barrier change.
 
+## Shutdown fixture safety
+
+The sanitizer crash left two shutdown-test shells running under PID 1. Both deliberately ignored TERM and used unbounded busy loops, consuming about one CPU core each. The crashed runner could not finish forced shutdown or execute destructors. Subsequent passing tests did not remove these earlier processes. Both were explicitly killed after their command lines were checked.
+
+The two fixtures now ignore stdin and TERM while sleeping between owner checks. They exit when their original owner disappears or when their 15-second lifetime expires. This preserves the forced-shutdown tests without continuous CPU use. The finite lifetime also bounds the PID-reuse case. A sleep subprocess can survive shell termination for at most its 50-millisecond interval. Production process behavior is unchanged.
+
+Two regression tests verify cleanup after SIGKILL of a disposable owner and expiration while the owner remains alive. All 18 RPC tests and all 74 root tests pass; all 74 also pass with Thread Sanitizer. A focused live sample measured the replacement shell at 0.6–1.1% CPU with 0.01 seconds of accumulated CPU time. Process scans after the suites and focused run found no remaining shutdown fixtures. These results do not establish the cause of the earlier Swift sanitizer crash.
+
+After any runner crash, inspect processes for surviving test fixtures before retrying. Check PID, parent PID and the full command before terminating a process; do not kill unrelated shells or Pi processes.
+
 ## Local evidence
 
-- `/tmp/pi-remote-runtime-root-final.log` (72 tests)
+- `/tmp/pi-remote-fixture-tests.log` (18 RPC tests)
+- `/tmp/pi-remote-fixture-root.log` and `/tmp/pi-remote-fixture-tsan.log` (74 tests each)
+- `/tmp/pi-remote-fixture-cpu-test.log` (focused forced-shutdown rerun)
+- `/tmp/pi-remote-runtime-root-final.log` (historical 72-test checkpoint)
 - `/tmp/pi-remote-runtime-tsan-repeat-1.log` and `/tmp/pi-remote-runtime-tsan-repeat-2.log` (72 tests each)
 - `/tmp/pi-remote-runtime-core.log` and `/tmp/pi-remote-runtime-core-tsan.log` (27 tests)
 - `/tmp/pi-remote-runtime-installed-final.log` and `/tmp/pi-remote-runtime-provider.log`

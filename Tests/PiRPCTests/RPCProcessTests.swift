@@ -9,9 +9,9 @@ while IFS= read -r line; do
     command=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
 """# + "\n"
 
-private func fake(_ body: String, eventCapacity: Int = 256) throws -> RPCProcess {
+private func fake(_ body: String, eventCapacity: Int = 256, executable: String = "/bin/sh") throws -> RPCProcess {
     try RPCProcess(
-        executable: URL(fileURLWithPath: "/bin/sh"),
+        executable: URL(fileURLWithPath: executable),
         arguments: ["-c", body],
         workingDirectory: FileManager.default.temporaryDirectory,
         eventCapacity: eventCapacity
@@ -163,12 +163,12 @@ done
 }
 
 @Test func shutsDownChildThatIgnoresTERM() async throws {
-    let child = try fake("trap '' TERM; while IFS= read -r line; do :; done; while :; do :; done")
+    let child = try fake(shutdownFixtureScript(), executable: "/bin/bash")
     #expect(await child.shutdown())
 }
 
 @Test func shutdownIsBoundedWhenStdinIsNotDrained() async throws {
-    let child = try fake("trap '' TERM; while :; do :; done")
+    let child = try fake(shutdownFixtureScript(), executable: "/bin/bash")
     let request = Task {
         try await child.request("prompt", fields: ["message": .string(String(repeating: "x", count: 60_000))])
     }
