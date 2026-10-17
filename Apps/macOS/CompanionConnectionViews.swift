@@ -47,6 +47,7 @@ struct CompanionConnectionSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Pi and folder access") {
+                LabeledContent("Pi version", value: model.state.piVersion == "Not running" ? "Not checked" : model.state.piVersion)
                 LabeledContent("Pi executable") {
                     Text(model.piPath).font(.caption.monospaced()).textSelection(.enabled)
                 }

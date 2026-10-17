@@ -1,6 +1,12 @@
 import PiRemoteCore
 import SwiftUI
 
+#if os(iOS)
+private let directoryControlMinimum: CGFloat? = 44
+#else
+private let directoryControlMinimum: CGFloat? = nil
+#endif
+
 struct DirectoryBrowser: View {
     var selecting: Bool
     var request: (SessionAction) async throws -> AppResult
@@ -11,18 +17,30 @@ struct DirectoryBrowser: View {
     var relativeTo: String? = nil
     var reveal: ((UUID, Bool) -> Void)? = nil
     var selected: (UUID, String) async throws -> Void
+    @Environment(\.clipboardWriter) private var copy
     @State private var typedPath = ""
     @FocusState private var editingPath: Bool
     @State private var browser = DirectoryBrowserModel()
     @State private var error: String?
     @State private var selectingSession = false
     @State private var pathStartsClipped = false
+    @State private var showingPathEditor = false
+    private var showsPathEditor: Bool {
+        #if os(macOS)
+        pathEntry && showingPathEditor
+        #else
+        pathEntry
+        #endif
+    }
     private var page: DirectoryPage? { browser.page }
     private var loading: Bool { browser.loading || selectingSession }
 
     var body: some View {
         VStack(spacing: 0) {
-            if pathEntry {
+            #if os(macOS)
+            folderNavigation
+            #endif
+            if showsPathEditor {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         TextField("Mac folder path", text: $typedPath, prompt: Text("~/src/project"))
@@ -34,7 +52,7 @@ struct DirectoryBrowser: View {
                             .submitLabel(.go)
                             #endif
                             .onSubmit { openPath() }
-                        Button(action: openPath) { Text("Go").frame(minWidth: 44, minHeight: 44) }
+                        Button(action: openPath) { Text("Go").frame(minWidth: directoryControlMinimum, minHeight: directoryControlMinimum) }
                             .disabled(loading || typedPath.isEmpty || typedPath.utf8.count > 4_096)
                             .accessibilityIdentifier("mac-folder-go")
                             .accessibilityHint("Open this folder without starting Pi. Review the resolved path before selecting it.")
@@ -47,11 +65,13 @@ struct DirectoryBrowser: View {
                     }
                 }.padding(.horizontal).padding(.top, 8)
             }
+            #if os(iOS)
             if let page {
                 HStack {
                     Button { openDirectory(page.parent) } label: {
                         Label("Parent folder", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                     }.disabled(page.parent == nil || loading)
+                        .accessibilityIdentifier("mac-folder-parent")
                     HStack(spacing: 0) {
                         Text("…").font(.caption.monospaced()).opacity(pathStartsClipped ? 1 : 0).accessibilityHidden(true)
                         ScrollView(.horizontal) {
@@ -65,6 +85,7 @@ struct DirectoryBrowser: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.padding(.horizontal)
             }
+            #endif
             List {
                 if let error = error ?? browser.fault?.explanation {
                     Text(error).foregroundStyle(.primary)
@@ -80,9 +101,11 @@ struct DirectoryBrowser: View {
                 }
                 if error != nil || browser.fault != nil {
                     Button("Retry") { Task { error = nil; await browser.retry(request: request) } }.disabled(loading)
+                        .accessibilityIdentifier("mac-folder-retry")
                 }
                 if !browser.previousPages.isEmpty {
-                    Button("Previous page") { browser.previous() }.frame(minHeight: 44).disabled(loading)
+                    Button("Previous page") { browser.previous() }.frame(minHeight: directoryControlMinimum).disabled(loading)
+                        .accessibilityIdentifier("mac-folder-previous-page")
                 }
                 ForEach(Array((page?.items ?? []).enumerated()), id: \.offset) { _, item in
                     Group {
@@ -90,13 +113,15 @@ struct DirectoryBrowser: View {
                         VStack(alignment: .leading) {
                             Label(item.name, systemImage: "exclamationmark.triangle")
                             Text(fault.explanation).font(.caption).foregroundStyle(.primary.opacity(0.75))
-                        }.frame(minHeight: 44)
+                        }.frame(minHeight: directoryControlMinimum)
                     } else if item.isDirectory {
                         Button { openDirectory(item.id) } label: { Label(item.name, systemImage: "folder") }
-                            .frame(minHeight: 44)
+                            .frame(minHeight: directoryControlMinimum)
+                            .accessibilityIdentifier("mac-folder-row-\(item.id)")
                     } else if !selecting {
                         Button { Task { await browser.openPreview(item.id, request: request) } } label: { Label(item.name, systemImage: "doc") }
-                            .frame(minHeight: 44)
+                            .frame(minHeight: directoryControlMinimum)
+                            .accessibilityIdentifier("mac-file-row-\(item.id)")
                     }
                     }
                     .contextMenu {
@@ -105,7 +130,7 @@ struct DirectoryBrowser: View {
                             let prefix = relativeTo.map { $0 == "/" ? "/" : $0 + "/" }
                             let relative = prefix.flatMap { full.hasPrefix($0) ? String(full.dropFirst($0.count)) : nil }
                             Button(relative == nil ? "Copy path" : "Copy relative path") {
-                                do { try LocalClipboard.copy(relative ?? full) }
+                                do { try copy(relative ?? full) }
                                 catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
                             }
                             if let reveal { Button("Show in Finder") { reveal(item.id, item.isDirectory) } }
@@ -113,7 +138,8 @@ struct DirectoryBrowser: View {
                     }
                 }
                 if page?.next != nil {
-                    Button("Next page") { Task { await browser.next(request: request) } }.frame(minHeight: 44).disabled(loading)
+                    Button("Next page") { Task { await browser.next(request: request) } }.frame(minHeight: directoryControlMinimum).disabled(loading)
+                        .accessibilityIdentifier("mac-folder-next-page")
                 }
             }
             .disabled(loading)
@@ -127,9 +153,10 @@ struct DirectoryBrowser: View {
                             catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
                         }
                     }
-                } label: { Text(selectionTitle).frame(minHeight: 44) }
+                } label: { Text(selectionTitle).frame(minHeight: directoryControlMinimum) }
                     .buttonStyle(.borderedProminent).foregroundStyle(.background).padding()
                     .disabled(loading || page == nil || (pathEntry && typedPath != page?.path))
+                    .accessibilityIdentifier("mac-folder-select")
             }
         }
         .navigationTitle(selecting ? "Choose a Mac folder" : "Mac files")
@@ -142,6 +169,95 @@ struct DirectoryBrowser: View {
             if let preview = browser.preview { FilePreviewView(preview: preview, request: request, attach: attach) }
         }
     }
+    #if os(macOS)
+    private var folderNavigation: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let page {
+                HStack {
+                    Button { openDirectory(page.parent) } label: {
+                        Label("Parent folder", systemImage: "arrow.up").labelStyle(.iconOnly)
+                    }
+                    .disabled(page.parent == nil || loading)
+                    .accessibilityIdentifier("mac-folder-parent")
+                    Menu {
+                        ForEach(ancestorPaths(page.path), id: \.self) { path in
+                            Button(path) { openResolvedPath(path) }
+                                .disabled(!pathEntry || loading)
+                        }
+                    } label: {
+                        Label(page.path == "/" ? "/" : URL(fileURLWithPath: page.path).lastPathComponent,
+                              systemImage: "folder")
+                            .lineLimit(1).truncationMode(.middle)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(loading)
+                    .accessibilityLabel("Resolved folder")
+                    .accessibilityValue(page.path)
+                    .accessibilityIdentifier("mac-folder-breadcrumb")
+                }
+                HStack {
+                    Button("Copy full path") {
+                        do { try copy(page.path) }
+                        catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                    }
+                    .accessibilityIdentifier("mac-folder-copy-path")
+                    editPathButton
+                }
+                if selecting {
+                    Text("Resolved Mac folder").font(.caption).foregroundStyle(.secondary)
+                    canonicalPath(page.path)
+                } else {
+                    DisclosureGroup("Full canonical path") { canonicalPath(page.path) }
+                        .accessibilityIdentifier("mac-folder-path-details")
+                }
+            } else {
+                editPathButton
+            }
+        }
+        .padding(.horizontal).padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private var editPathButton: some View {
+        if pathEntry {
+            Button(showingPathEditor ? "Hide path" : "Edit path") {
+                showingPathEditor.toggle()
+                editingPath = showingPathEditor
+            }
+            .disabled(loading || (showingPathEditor && typedPath != page?.path))
+            .help("Edit the folder path. Resolve an edited path with Go before hiding it.")
+            .accessibilityIdentifier("mac-folder-edit-path")
+        }
+    }
+
+    private func canonicalPath(_ path: String) -> some View {
+        ScrollView(.horizontal) {
+            Text(path).font(.caption.monospaced()).textSelection(.enabled).fixedSize()
+                .accessibilityIdentifier("mac-folder-canonical-path")
+                .accessibilityHint("Scroll horizontally to read the full canonical path.")
+        }
+        .frame(height: 24)
+    }
+
+    private func ancestorPaths(_ path: String) -> [String] {
+        var paths = [path]
+        var current = path
+        while current != "/" {
+            let parent = URL(fileURLWithPath: current).deletingLastPathComponent().path
+            guard parent != current, !parent.isEmpty else { break }
+            paths.append(parent)
+            current = parent
+        }
+        return Array(paths.reversed())
+    }
+
+    private func openResolvedPath(_ path: String) {
+        guard !loading, pathEntry else { return }
+        editingPath = false; error = nil
+        Task { await browser.open(path: path, request: request) }
+    }
+    #endif
+
     private func openDirectory(_ id: UUID?) {
         guard !loading else { return }
         editingPath = false; error = nil
@@ -188,10 +304,12 @@ struct FilePreviewView: View {
                                         ? "This attachment does not fit the 256 KiB prompt budget. Shorten the draft or copy a smaller selection."
                                         : (error as? RemoteFault ?? .unavailable).explanation
                                 }
-                            } label: { Text(preview.truncated ? "Attach shown text" : "Attach text").frame(maxWidth: .infinity, minHeight: 44) }
+                            } label: { Text(preview.truncated ? "Attach shown text" : "Attach text").frame(maxWidth: .infinity, minHeight: directoryControlMinimum) }
                                 .buttonStyle(.borderedProminent).foregroundStyle(.background)
+                                .accessibilityIdentifier("file-preview-attach")
                         }
-                        Button { dismiss() } label: { Text("Done").frame(minWidth: 44, minHeight: 44) }.buttonStyle(.bordered)
+                        Button { dismiss() } label: { Text("Done").frame(minWidth: directoryControlMinimum, minHeight: directoryControlMinimum) }.buttonStyle(.bordered)
+                            .accessibilityIdentifier("file-preview-done")
                     }.padding()
                 }.background(.background)
             }
@@ -211,8 +329,9 @@ struct ExtensionDialogView: View {
                 case "select":
                     ForEach(dialog.options, id: \.self) { option in
                         Button { answer(option, nil, false) } label: {
-                            Text(option).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            Text(option).frame(maxWidth: .infinity, minHeight: directoryControlMinimum, alignment: .leading)
                         }
+                        .accessibilityIdentifier("extension-dialog-option-\(option)")
                     }
                 case "input", "editor":
                     TextEditor(text: $value).frame(height: 160).accessibilityLabel("Dialog text")
@@ -224,13 +343,16 @@ struct ExtensionDialogView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
                 if dialog.method == "confirm" {
-                    Button { answer(nil, true, false) } label: { Text("Confirm").frame(minHeight: 44) }
+                    Button { answer(nil, true, false) } label: { Text("Confirm").frame(minHeight: directoryControlMinimum) }
                         .buttonStyle(.borderedProminent).foregroundStyle(.background)
+                        .accessibilityIdentifier("extension-dialog-confirm")
                 } else if dialog.method == "input" || dialog.method == "editor" {
-                    Button { answer(value, nil, false) } label: { Text("Submit").frame(minHeight: 44) }
+                    Button { answer(value, nil, false) } label: { Text("Submit").frame(minHeight: directoryControlMinimum) }
                         .buttonStyle(.borderedProminent).foregroundStyle(.background)
+                        .accessibilityIdentifier("extension-dialog-submit")
                 }
-                Button(role: .cancel) { answer(nil, nil, true) } label: { Text("Cancel").frame(minHeight: 44) }
+                Button(role: .cancel) { answer(nil, nil, true) } label: { Text("Cancel").frame(minHeight: directoryControlMinimum) }
+                    .accessibilityIdentifier("extension-dialog-cancel")
             }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(.bar)
         }
         .navigationTitle(dialog.title)

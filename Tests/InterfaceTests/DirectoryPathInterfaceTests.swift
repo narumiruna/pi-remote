@@ -14,7 +14,10 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertTrue(field.isEnabled)
         field.tap()
-        field.tap(withNumberOfTaps: 3, numberOfTouches: 1)
+        field.press(forDuration: 1.2)
+        let selectAll = app.menuItems["Select All"]
+        XCTAssertTrue(selectAll.waitForExistence(timeout: 5))
+        selectAll.tap()
         field.typeText(path)
         XCTAssertEqual(field.value as? String, path)
         XCTAssertFalse(app.buttons["Start Pi Here"].isEnabled,
@@ -28,7 +31,7 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(go.frame.height, 44)
         XCTAssertTrue(app.frame.contains(go.frame))
         XCTAssertLessThanOrEqual(go.frame.maxY, keyboard.frame.minY + 1)
-        capture(app, "compact-path-keyboard")
+        capture(app, "phone-path-keyboard")
         go.tap()
         XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
     }
@@ -48,8 +51,8 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["Sessions"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.frame.width, 375)
-        XCTAssertEqual(app.frame.height, 667)
+        XCTAssertEqual(app.frame.width, 402)
+        XCTAssertEqual(app.frame.height, 874)
         openPicker(app)
 
         let path = "/Users/fixture/project/nested"
@@ -59,7 +62,7 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["This folder is empty."].exists)
         XCTAssertTrue(start.isEnabled)
         XCTAssertTrue(app.navigationBars["Choose a Mac folder"].exists)
-        capture(app, "compact-typed-path-opened-not-started")
+        capture(app, "phone-typed-path-opened-not-started")
 
         // Closing after Go must leave the original session and catalog unchanged.
         app.buttons["Close"].tap()
@@ -76,7 +79,7 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["This folder is empty."].exists)
         XCTAssertFalse(start.isEnabled, "An invalid path must not leave the old folder selectable")
         XCTAssertEqual(app.textFields["mac-folder-path"].value as? String, "/Users/fixture/missing")
-        capture(app, "compact-invalid-path-no-old-selection")
+        capture(app, "phone-invalid-path-no-old-selection")
 
         enter(path, app: app)
         XCTAssertTrue(app.staticTexts[path].waitForExistence(timeout: 5))
@@ -87,19 +90,19 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(start.frame.height, 44)
         XCTAssertTrue(app.frame.contains(start.frame))
         XCTAssertTrue(app.navigationBars["Choose a Mac folder"].exists)
-        capture(app, "compact-corrected-path-before-explicit-start")
+        capture(app, "phone-corrected-path-before-explicit-start")
         start.tap()
         XCTAssertTrue(app.navigationBars["Choose a Mac folder"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["nested"].waitForExistence(timeout: 5))
         app.buttons["More"].tap()
         app.buttons["Session controls"].tap()
         XCTAssertTrue(app.staticTexts[path].waitForExistence(timeout: 5))
-        capture(app, "compact-explicit-start-canonical-directory")
+        capture(app, "phone-explicit-start-canonical-directory")
         app.buttons["Close"].tap()
         app.buttons["Sessions"].tap()
         XCTAssertTrue(app.staticTexts["New fixture session"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.collectionViews.staticTexts.matching(identifier: "New fixture session").count, 1)
         XCTAssertTrue(app.staticTexts["Fixture session"].exists)
-        capture(app, "compact-explicit-start-session-catalog")
+        capture(app, "phone-explicit-start-session-catalog")
     }
 }

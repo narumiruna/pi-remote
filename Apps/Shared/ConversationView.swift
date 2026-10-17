@@ -14,6 +14,13 @@ struct ConversationView<Extras: View>: View {
     @State private var followingOutput = true
     @State private var userScrolling = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var controlMinimum: CGFloat? {
+        #if os(macOS)
+        nil
+        #else
+        44
+        #endif
+    }
     private var canCompose: Bool { state.selected != nil && !["unavailable", "interrupted", "recovering", "starting", "stopping"].contains(state.phase) }
 
     var body: some View {
@@ -40,7 +47,7 @@ struct ConversationView<Extras: View>: View {
                                     } label: {
                                         Label(DisplayLimit.text(message.text.components(separatedBy: "\n").first ?? "Tool", bytes: 128),
                                               systemImage: message.isError ? "exclamationmark.triangle" : "wrench.and.screwdriver")
-                                            .font(.subheadline).frame(minHeight: 44)
+                                            .font(.subheadline).frame(minHeight: controlMinimum)
                                     }
                                     if let images = message.images {
                                         OutputImageList(images: images, request: request)
@@ -57,7 +64,7 @@ struct ConversationView<Extras: View>: View {
                                         .font(.caption.weight(.semibold)).foregroundStyle(.primary.opacity(0.75))
                                     if let thinking = message.thinking, !thinking.isEmpty {
                                         DisclosureGroup { MarkdownContent(text: thinking) } label: {
-                                            Text("Thinking").frame(minHeight: 44)
+                                            Text("Thinking").frame(minHeight: controlMinimum)
                                         }.font(.callout)
                                     }
                                     MarkdownContent(text: message.text)
@@ -99,7 +106,7 @@ struct ConversationView<Extras: View>: View {
                 .overlay(alignment: .bottomTrailing) {
                     if !followingOutput {
                         Button { userScrolling = false; followingOutput = true; proxy.scrollTo("latest", anchor: .bottom) } label: {
-                            Label("Latest", systemImage: "arrow.down").frame(minHeight: 44)
+                            Label("Latest", systemImage: "arrow.down").frame(minHeight: controlMinimum)
                         }.font(.caption).buttonStyle(.borderedProminent).foregroundStyle(.background).padding()
                     }
                 }
@@ -127,13 +134,13 @@ struct ConversationView<Extras: View>: View {
                         .disabled(!canCompose)
                     if state.working {
                         Button(action: stop) {
-                            Label("Stop", systemImage: "stop.fill").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                            Label("Stop", systemImage: "stop.fill").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                         }
                             .accessibilityLabel("Stop")
                             .accessibilityHint("Clear queued instructions and stop current work. File changes are not undone.")
                     }
                     Button(action: send) {
-                        Label("Send", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
+                        Label("Send", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                     }
                         .buttonStyle(.borderedProminent).foregroundStyle(.background).accessibilityLabel("Send")
                         .disabled(sending || !canCompose)

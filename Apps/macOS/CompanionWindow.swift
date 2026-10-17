@@ -10,6 +10,7 @@ struct CompanionWindow: View {
     @State private var section = "Chat"
     @State private var inspectorSection = "Files"
     @State private var removingWorkspace: String?
+    @State private var remoteDetailsVisible = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -56,7 +57,10 @@ struct CompanionWindow: View {
                 removingWorkspace = nil
             }
         } message: { Text("This only removes the sidebar entry. Files and saved sessions are not deleted, and Pi work is not stopped.") }
-        .onChange(of: model.state.selected) { _, _ in section = "Chat" }
+        .onChange(of: model.state.context) { _, _ in
+            section = "Chat"
+            if model.panel == "commands" { model.panel = nil }
+        }
     }
 
     private func toolbar(compact: Bool) -> some View {
@@ -89,12 +93,27 @@ struct CompanionWindow: View {
 
     private var status: some View {
         HStack(spacing: 16) {
-            Button { model.destination = .settings } label: {
-                Label(model.serverStatus, systemImage: "network")
-            }.buttonStyle(.plain)
-            Label(model.connectionStatus, systemImage: "iphone")
-            Text(model.state.piVersion == "Not running" ? "Version: Not checked" : "Pi " + model.state.piVersion).font(.caption.monospaced())
-            Text(model.piStatus).accessibilityIdentifier("mac-session-status")
+            Button { remoteDetailsVisible.toggle() } label: {
+                Label(model.remoteAccessSummary, systemImage: "network")
+            }
+            .accessibilityIdentifier("mac-remote-access")
+            .help("Show listener and authenticated device status")
+            .popover(isPresented: $remoteDetailsVisible) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("iPhone access").font(.headline)
+                    Text(model.serverStatus).accessibilityIdentifier("mac-remote-server-status")
+                    if model.listening { Text(model.serverEndpoint).font(.caption.monospaced()).textSelection(.enabled) }
+                    Text(model.connectionStatus).accessibilityIdentifier("mac-remote-device-status")
+                    Text("Local Pi work does not require remote access.").font(.caption)
+                    HStack {
+                        Button("Network settings") { remoteDetailsVisible = false; model.destination = .settings }
+                        Button("Devices") { remoteDetailsVisible = false; model.destination = .devices }
+                    }
+                }.padding(16).frame(width: 310)
+            }
+            if !model.showingLoadedSession {
+                Text(model.piStatus).accessibilityIdentifier("mac-session-status")
+            }
         }.font(.caption)
     }
 
@@ -247,7 +266,7 @@ struct CompanionWindow: View {
                     Spacer()
                     if id == model.state.selected {
                         VStack(alignment: .trailing) {
-                            Text(model.state.phase.capitalized).font(.caption)
+                            Text(model.piStatus).font(.caption).accessibilityIdentifier("mac-session-status")
                             if !model.state.model.isEmpty { Text(model.state.model + " · " + model.state.thinking).font(.caption2).foregroundStyle(.secondary) }
                         }
                     } else { Text("Saved · not loaded").font(.caption).foregroundStyle(.secondary) }
@@ -256,12 +275,10 @@ struct CompanionWindow: View {
                     Picker("Session view", selection: $section) {
                         Text("Chat").tag("Chat")
                         Text("History").tag("History").disabled(model.state.working)
-                        Text("Files").tag("Files")
                     }.pickerStyle(.segmented).padding(.horizontal, 16).padding(.bottom, 12)
                     Divider()
                     switch section {
                     case "History": NavigationStack { HistoryView(request: model.scopedRequest(for: model.state), paged: true) { section = "Chat" } }.id(model.state.context)
-                    case "Files": files(path: session.directory)
                     default:
                         if ["unavailable", "interrupted"].contains(model.state.phase) {
                             HStack {
@@ -271,8 +288,10 @@ struct CompanionWindow: View {
                         }
                         ConversationView(state: model.state, text: $model.text, delivery: $model.delivery, sending: model.sending,
                                          send: { model.send(context: model.state.context) }, stop: { model.stopWork() }, request: model.scopedRequest(for: model.state)) {
-                            Button("Files", systemImage: "folder") { inspectorSection = "Files"; model.inspectorVisible = true }.labelStyle(.iconOnly)
-                            Button("Commands", systemImage: "slash.circle") { inspectorSection = "Tools"; model.inspectorVisible = true }.labelStyle(.iconOnly)
+                            Button("Files", systemImage: "folder") { inspectorSection = "Files"; model.inspectorVisible = true }
+                                .labelStyle(.iconOnly).help("Show files in the inspector").accessibilityIdentifier("mac-composer-files")
+                            Button("Commands", systemImage: "slash.circle") { model.panel = "commands" }
+                                .labelStyle(.iconOnly).help("Open Pi commands").accessibilityIdentifier("mac-composer-commands")
                         }
                     }
                 } else {
@@ -296,7 +315,7 @@ struct CompanionWindow: View {
         VStack(spacing: 0) {
             Picker("Inspector", selection: $inspectorSection) {
                 Text("Files").tag("Files"); Text("Tools").tag("Tools"); Text("Activity").tag("Activity")
-            }.pickerStyle(.segmented).padding(12)
+            }.pickerStyle(.segmented).padding(12).accessibilityIdentifier("mac-inspector-sections")
             Divider()
             switch inspectorSection {
             case "Tools":
@@ -368,6 +387,7 @@ struct CompanionWindow: View {
                         Task { _ = try? await model.scopedRequest(for: state)(.answer(dialog: dialog.id, value: value, confirmed: confirmed, cancelled: cancelled)) }
                     }.id(dialog.id)
                 }
+            case "commands": SessionCommandsView(state: state, request: model.scopedRequest(for: state))
             case "pairingQR": PairingQRView(code: model.code)
             case "preview": if let preview = model.preview { FilePreviewView(preview: preview) }
             default: EmptyView()
@@ -394,7 +414,7 @@ struct CompanionWindow: View {
         }
         .safeAreaInset(edge: .bottom) {
             if model.panel != "dialog" {
-                HStack { Spacer(); Button("Close") { model.panel = nil }.keyboardShortcut(.cancelAction).frame(minHeight: 44) }
+                HStack { Spacer(); Button("Close") { model.panel = nil }.keyboardShortcut(.cancelAction) }
                     .padding(.horizontal, 16).background(.bar)
             }
         }

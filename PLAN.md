@@ -113,7 +113,7 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
   - On Mac, use a persistent workspace/session sidebar and an optional Files/Tools/Activity inspector. Keep the conversation wider than either secondary pane. Preserve the white appearance and blue accent; do not add themes.
   - Keep the iPhone conversation-first layout and existing core RPC contracts.
 - Use system typography, consistent spacing, restrained color, and standard SwiftUI controls; reserve monospaced text for code, paths, and tool output.
-- Support light and dark appearance, Dynamic Type, VoiceOver, sufficient contrast, and touch targets of at least 44 × 44 points.
+- Support light and dark appearance, Dynamic Type, VoiceOver and sufficient contrast. Use touch targets of at least 44 × 44 points on iPhone and native system control sizes on Mac.
 - Show secondary controls only when needed, without removing supported Pi capabilities or hiding errors, connection loss, or active work.
 - Use clear text labels for unfamiliar actions; do not rely on color or unexplained icons to communicate state.
 
@@ -133,7 +133,8 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 - Support typed or pasted absolute Mac paths and `~/folder` with an explicit Go action. Resolve and validate on the Mac without shell expansion or folder creation. Go must not start Pi; require explicit selection of the resolved folder. An edited, failed or pending path must not start a session in the previous folder.
 - Show session titles and working directories in the session list so sessions in different folders are easy to distinguish.
 - Keep pairing and connection settings outside the normal coding flow after setup; show recovery actions when the connection fails.
-- In the Mac app, distinguish listener, authenticated device connections and Pi process status. Local work does not require a listener. Put network, executable and folder access in Settings, pairing/revocation in Devices, and identity replacement under Settings → Advanced.
+- In the Mac app, show Pi execution beside the displayed session and expose listener/authenticated-device details through one remote-access summary. Show active-session status on other destinations. Local work does not require a listener. Put network, executable and folder access in Settings, pairing/revocation in Devices, and identity replacement under Settings → Advanced.
+- On Mac, open Commands directly from the composer and use the inspector as the single Files destination. Show a resolved-folder breadcrumb with explicit Edit path and Copy full path actions; keep canonical-path review before folder selection.
 - Bound Mac sheets to the parent window, scroll long forms and keep Close visible. Before session selection, show workspace/session actions instead of an inactive composer. Persist workspace visibility, expansion, selected metadata, inspector/layout preferences and bounded unsent drafts. UI selection must not activate a saved session while another is working.
 
 ## Architecture
@@ -272,6 +273,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [x] Restore saved conversations without prompt replay; keep UI selection separate from execution and reject activation while work is active. Preserve per-session drafts across switches and app restarts.
 - [x] Provide resizable sidebar/inspector panes, Files/Tools/Activity, keyboard shortcuts, native selection, context menus and separate Settings/Devices pages. Keep the light appearance and existing security confirmations.
 - [x] Verify 12 focused Mac tests, 142 root tests and an unsigned iOS simulator build. Review active 1300 × 800 and minimum 900 × 600 layouts. Verify unchanged project/signing hashes. See [workspace evidence and limits](docs/mac-interface.md#workspace-redesign-verification).
+
+### Mac UI/UX review follow-up
+
+- [ ] Finish acceptance for the five Mac UI/UX corrections. Direct Commands access, one Files destination, native Mac control density, consolidated header status and compact folder navigation are implemented. All 22 Mac tests, nine phone directory-model tests, four focused phone UI checks and unsigned Mac/iOS builds pass. [Evidence and limits](docs/mac-interface.md#uiux-correction-verification) distinguish automated/layout checks from normal launch. The [tracked plan](docs/plans/2026-10-17_mac-uiux-plan.md) remains open for normal local Mac operation, manual breadcrumb-menu selection and full Mac keyboard/accessibility review.
 
 ### 4. Build the iOS client
 

@@ -6,15 +6,51 @@ The Mac app uses a persistent workspace/session sidebar, a conversation area and
 
 Select **Add workspace** to browse, enter a path or use the native folder chooser. Adding a workspace does not start Pi. Select **New session** in that workspace to start a conversation. With no workspace selected, New session offers a directory picker and recent workspaces. Expand a workspace to select a saved session. Full canonical paths identify groups; identical final directory names do not merge unrelated folders. Confirmed Remove workspace hides only the sidebar entry, not files, saved sessions or active work. Re-adding the directory reveals its sessions again.
 
-The header distinguishes server state, authenticated device connections and Pi execution. Local work requires neither listener nor pairing. **Settings** contains network, Pi executable, folder-access and Advanced identity-replacement controls. **Devices** contains pairing, live authenticated connection status and confirmed revocation. Pairing alone does not indicate a live connection. Stopping the listener disconnects phones without stopping Pi.
+The header has one remote-access summary. Select it to read listener state, authenticated device connections and the secure endpoint, or to open Settings/Devices. The displayed session header shows Pi execution; other destinations keep active-session status in the global header. Pi version is available in Settings and session controls, not the global header. Local work requires neither listener nor pairing. **Settings** contains network, Pi executable, folder-access and Advanced identity-replacement controls. **Devices** contains pairing, live authenticated connection status and confirmed revocation. Pairing alone does not indicate a live connection. Stopping the listener disconnects phones without stopping Pi.
 
 The backend supports one active Pi child. UI selection is separate from the loaded session. Selecting another saved session while Pi works shows that session's metadata and explains why activation is unavailable; it never shows the active session's messages under another title or stops work implicitly. When idle, opening a session restores its saved conversation through the existing lifecycle APIs, without replaying prompts. An exited session retains displayed output and offers explicit Open session recovery. The composer is disabled when execution is unavailable.
 
-The inspector reuses the paged directory browser, session controls and tool transcript. Files supports directory navigation, relative-path copying and validated Finder reveal. Tools retains model, thinking, usage, runtime settings, export and lifecycle controls. History retains fork/clone inspection. Activity displays actual tool results/errors and notices, not invented durations. Session context menus expose Open, ID copy and loaded-session rename/history actions. No session deletion action is added because its semantics are not defined.
+The inspector reuses the paged directory browser, session controls and tool transcript. Files is the single Mac file-browser destination; the composer shortcut opens that inspector without replacing Chat. The conversation tabs contain Chat and History. Files supports directory navigation, relative-path copying and validated Finder reveal. A dedicated Commands sheet opens directly from the composer and shares command arguments, dispatch and error handling with session controls. Tools retains model, thinking, usage, runtime settings, export and lifecycle controls. History retains fork/clone inspection. Activity displays actual tool results/errors and notices, not invented durations. Session context menus expose Open, ID copy and loaded-session rename/history actions. No session deletion action is added because its semantics are not defined.
 
 Workspace visibility, expansion, selected metadata and inspector visibility use existing local preferences. Sidebar/inspector widths and sidebar visibility use scene storage. Unsent drafts are saved per session with a 400 ms debounce and shutdown flush, limited to 256 KiB each and 8 MiB total; an oversized draft stays in memory with a copy-before-close warning. No credentials enter these stores. Restored UI selection does not automatically start Pi. Command-N creates a session; Command-Option-S and Command-Option-I toggle the sidebar and inspector.
 
 Mac sheets have a bounded viewport based on the parent window, with a visible Close action outside the scrolling content. Grouped forms scroll instead of expanding the sheet to the full intrinsic content height. This fixes the session-controls overflow shown in the reported screenshot.
+
+## UI/UX correction verification
+
+The five reviewed corrections are implemented: direct Commands access, one Files destination, native Mac density, consolidated header status and compact folder navigation.
+
+Focused results on this Mac:
+
+- All 22 Mac tests pass with zero failures/skips in `/tmp/pi-remote-uiux-mac-final.xcresult`. Tests exercise rendered Commands/Files actions, the real Commands sheet, command arguments and error display, immediate duplicate activation while a request is pending, busy/missing-session restrictions, stale-context rejection, independent remote-access states, the remote-details popover and folder edit/Go/failure/recovery/explicit selection. Parent navigation and canonical-path copying also pass with an isolated pasteboard through the existing clipboard-writer environment; the user's clipboard is unchanged. Existing local Send/Stop, busy-switch, draft persistence and no-replay checks also pass.
+- The final unsigned Mac and iOS simulator builds pass. Logs: `/tmp/pi-remote-uiux-mac-build-final.log` and `/tmp/pi-remote-uiux-ios-build-final.log`.
+- Parent review confirms the Commands sheet has visible commands without Tools scrolling and a pinned Close action. Updated 900 × 600 and 1300 × 800 workspace captures retain the conversation and composer; the 260/320-point folder inspectors retain navigation and file-list space. Tools still scrolls with native row sizes. Captures: `/tmp/pi-remote-mac-ux-captures/uiux-*.png`, `active-workspace-minimum.png`, `active-workspace-session.png`, `busy-workspace-minimum.png` and `session-tools-inspector.png`.
+- On iPhone 17 Pro, iOS 26.5, the unsigned product build and all nine directory-browser model tests pass. Three focused UI tests pass for keyboard/Stop/draft, Commands/editor access and file preview/attachment. The typed-path UI test passes separately after migration to the active 402 × 874 viewport and explicit Select All input replacement. All path, no-start-on-Go, recovery, explicit-start and 44-point checks remain. Evidence: `/tmp/pi-remote-uiux-iphone-evidence/{build,directory-model,interface,path-select-all}.xcresult`. Parent review confirms the complete path error and keyboard captures in `path-captures/`.
+- `project.yml` and `PiRemote.xcodeproj/project.pbxproj` retain their pre-change SHA-256 hashes. No project regeneration, signing change, broad UI/E2E run or inactive compact-device run was used.
+
+Repeat the Mac checks from the repository root:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/pi-remote-mac-ux -parallel-testing-enabled NO \
+  -resultBundlePath /tmp/pi-remote-uiux-mac-repeat.xcresult \
+  CODE_SIGNING_ALLOWED=NO test
+xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/pi-remote-mac-ux CODE_SIGNING_ALLOWED=NO build
+```
+
+Use a new result-bundle path for each run. The phone commands and initial results are in `/tmp/pi-remote-uiux-iphone-evidence/commands.sh`; the final path run uses the same interface scheme, destination and derived data with only `DirectoryPathInterfaceTests/testTypedPathNavigationInvalidPathRecoveryAndExplicitStart` selected.
+
+Verification limits and failures:
+
+- Hosted SwiftUI AX nodes were initially absent, and the first test build used the wrong accessibility protocol type. The final harness enables the public SwiftUI accessibility environment and performs a hit test before traversal. It reads synthetic nodes through public Objective-C accessibility selectors. Grouped Forms can replace child identifiers; tests use visible labels where necessary. The real Commands sheet is checked through its title, native editable field, routing state and capture; a direct command fixture verifies dispatch. No privacy permission or production accessibility setting changed.
+- The original phone path run stopped at an obsolete 375 × 667 assertion. After the viewport correction, triple-tap replaced only part of the path. Explicit Select All fixes the test input; the exact field-value assertion and all safety checks remain. Failed runs are retained in `interface.xcresult` and `path-primary.xcresult`.
+- Breadcrumb-menu selection remains a manual check. Two attempts inspected an unopened, lazily populated menu; a native tracking attempt then reached the 300-second command timeout. Those failures are retained under `/tmp/pi-remote-uiux-mac-folder-actions*`. The final test verifies parent navigation and isolated copying without opening a tracking menu; it does not claim ancestor-selection coverage.
+- Native key events verify text-field focus and input. These checks do not establish full keyboard-only navigation, VoiceOver behavior, live colors or contrast. AppKit foreground caches establish layout only.
+- Normal app launch remains unverified. An existing companion was running under Xcode, and the agent process reported `AXIsProcessTrusted() == false`. That instance and privacy permissions were left unchanged. Close the existing instance, launch the rebuilt app normally, and verify local folder selection, installed Pi startup, Send/reply and Stop without a listener or phone pairing. Keep this check open until observed.
 
 ## Local Pi runtime discovery
 
@@ -30,9 +66,11 @@ Focused verification: four runtime-discovery/error regressions pass; the install
 
 The directory picker supports typed or pasted paths when the host advertises `directory-path`:
 
-1. Enter an absolute Mac path, `~` or `~/folder`.
-2. Select **Go** to open the folder.
+1. On Mac, select **Edit path**. On iPhone, the path field is already visible.
+2. Enter an absolute Mac path, `~` or `~/folder` and select **Go** to open the folder.
 3. Review its resolved canonical path and select **Start Pi Here**.
+
+Mac Files uses a compact resolved-folder breadcrumb with ancestor navigation, a parent action and **Copy full path**. **Full canonical path** expands selectable path text. Folder-selection sheets always show the resolved canonical path for review; long paths scroll horizontally within a bounded row. Mac controls use native sizes; iPhone controls retain their 44-point minimum touch targets.
 
 Go never creates a folder, launches Pi or sends a prompt. Editing a path disables session selection until that path is opened. Invalid or pending navigation clears the old selectable folder. Retry uses the exact attempted path, and stale or cancelled responses cannot replace newer navigation.
 
@@ -40,7 +78,7 @@ The authenticated `directoryAtPath` action returns the existing bounded director
 
 ## Workspace redesign verification
 
-Current focused checks pass:
+The earlier workspace-redesign checks passed before the UI/UX corrections above:
 
 - All 12 Mac tests pass, with zero failures/skips, in `/tmp/pi-remote-workspace-final-14.xcresult`. Model checks cover canonical grouping, same-basename directories, add without process creation, sidebar-only removal, missing/inaccessible paths, saved selection/expansion/inspector preferences, local Send/Stop before listener startup, shared paired-client state, authenticated connection tracking/revocation, busy activation rejection, history restoration without replay, stale actions and per-session drafts. A reconstructed model restores a draft from persisted preferences and a private catalog copy.
 - Native hosted-view checks select actual workspace/session rows through `NSOutlineView` and click the rendered Inspector control. Active captures at 1300 × 800 and 900 × 600 points show all three panes and the complete composer. A busy-workspace capture at 900 × 600 keeps Stop and Active session visible; narrow windows put status on a second header row. Tools scroll in a 320-point inspector. Folder sheets remain bounded with Close visible. Captures are in `/tmp/pi-remote-mac-ux-captures/`; AppKit foreground caches verify layout, not exact system colors or contrast.

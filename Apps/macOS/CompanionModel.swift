@@ -32,6 +32,15 @@ final class CompanionModel {
         }
     }
     var connectionStatus: String { !listening ? "Remote access off" : (connectedDevices.isEmpty ? "No devices connected" : "\(connectedDevices.count) device\(connectedDevices.count == 1 ? "" : "s") connected") }
+    var remoteAccessSummary: String {
+        if starting { return "Remote access updating" }
+        if !listening { return "Remote access off" }
+        return connectedDevices.isEmpty ? "Remote access on · no devices" : connectionStatus
+    }
+    var showingLoadedSession: Bool {
+        guard let selected = state.selected else { return false }
+        return destination == .session(selected) && state.sessions.contains { $0.id == selected }
+    }
     var delivery = Delivery.prompt
     var sending = false
     var confirmResend = false

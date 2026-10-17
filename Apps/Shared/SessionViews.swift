@@ -1,6 +1,14 @@
 import PiRemoteCore
 import SwiftUI
 
+private var sessionControlMinimum: CGFloat? {
+    #if os(macOS)
+    nil
+    #else
+    44
+    #endif
+}
+
 struct SessionListView: View {
     let state: HostSnapshot
     let request: (SessionAction) async throws -> AppResult
@@ -10,15 +18,15 @@ struct SessionListView: View {
     @State private var error: String?
     var body: some View {
         List {
-            Button("New session", systemImage: "plus", action: newSession).frame(minHeight: 44).disabled(state.working)
+            Button("New session", systemImage: "plus", action: newSession).frame(minHeight: sessionControlMinimum).disabled(state.working)
             if state.capabilities.contains("session-lifecycle"), state.selected != nil {
                 NavigationLink("New in current directory") {
                     NewManagedSessionView(state: state, request: request, created: selected)
-                }.frame(minHeight: 44).disabled(state.working)
+                }.frame(minHeight: sessionControlMinimum).disabled(state.working)
             }
             if state.capabilities.contains("session-import") {
                 NavigationLink("Import JSONL session") { SessionImportView(request: request, canChooseDirectory: state.capabilities.contains("session-import-directory"), canEnterPath: state.capabilities.contains("directory-path"), imported: selected) }
-                    .frame(minHeight: 44).disabled(state.working)
+                    .frame(minHeight: sessionControlMinimum).disabled(state.working)
             }
             if let error { Text(error).foregroundStyle(.primary) }
             ForEach(state.sessions) { session in
@@ -54,7 +62,6 @@ struct SessionControls: View {
     let preview: (FilePreview) -> Void
     @State private var confirmClose = false
     @State private var name = ""
-    @State private var arguments = ""
     @State private var error: String?
     var body: some View {
         Form {
@@ -66,7 +73,7 @@ struct SessionControls: View {
             }
             if state.capabilities.contains("pi-release-notes") {
                 Section("Installed Pi") {
-                    NavigationLink("Pi release notes") { ReleaseNotesView(request: request) }.frame(minHeight: 44)
+                    NavigationLink("Pi release notes") { ReleaseNotesView(request: request) }.frame(minHeight: sessionControlMinimum)
                 }
             }
             Section("Pi") {
@@ -80,42 +87,42 @@ struct SessionControls: View {
                     ForEach(state.thinkingLevels, id: \.self) { Text($0).tag($0) }
                 }
                 if state.capabilities.contains("model-cycling") {
-                    Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: 44)
-                    Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: 44)
+                    Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: sessionControlMinimum)
+                    Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: sessionControlMinimum)
                 }
             }.disabled(state.working || state.selected == nil)
             if state.capabilities.contains("retry-controls"), state.phase == "retrying" {
                 Section("Retry recovery") {
                     Text("Cancelling a retry wait does not undo tool actions or cancel every kind of active work. Use Stop to stop work and clear queued instructions.").font(.caption)
-                    Button("Cancel retry wait") { perform(.abortRetry) }.frame(minHeight: 44)
+                    Button("Cancel retry wait") { perform(.abortRetry) }.frame(minHeight: sessionControlMinimum)
                         .disabled(state.selected == nil || state.phase != "retrying")
                 }
             }
             if state.capabilities.contains("session-statistics") {
                 Section("Usage") {
                     NavigationLink("Session tokens and cost") { SessionStatisticsView(request: request) }
-                        .frame(minHeight: 44).disabled(state.selected == nil)
+                        .frame(minHeight: sessionControlMinimum).disabled(state.selected == nil)
                 }
             }
             if state.capabilities.contains("last-assistant") {
                 Section("Output") {
                     NavigationLink("Copy last response") { LastAssistantView(request: request) }
-                        .frame(minHeight: 44).disabled(state.selected == nil)
+                        .frame(minHeight: sessionControlMinimum).disabled(state.selected == nil)
                 }
             }
             if state.capabilities.contains("session-export") {
                 Section("Export") {
                     NavigationLink("Review and export session") { SessionExportView(request: request, jsonlEnabled: state.capabilities.contains("session-jsonl-export")) }
-                        .frame(minHeight: 44).disabled(state.working || state.selected == nil)
+                        .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
                 }
             }
             if state.capabilities.contains("runtime-settings"), state.runtime != nil {
                 Section("Runtime") {
                     NavigationLink("Pi runtime settings") { RuntimeSettingsView(request: request) }
-                        .frame(minHeight: 44).disabled(state.working || state.selected == nil)
+                        .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
                     if state.capabilities.contains("retry-controls") {
                         NavigationLink("Automatic retry controls") { RetrySettingsView(request: request) }
-                            .frame(minHeight: 44).disabled(state.working || state.selected == nil)
+                            .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
                     }
                 }
             }
@@ -123,14 +130,14 @@ struct SessionControls: View {
                 if state.capabilities.contains("session-lifecycle") {
                     NavigationLink("New in current directory") {
                         NewManagedSessionView(state: state, request: request, created: closed)
-                    }.frame(minHeight: 44)
+                    }.frame(minHeight: sessionControlMinimum)
                 }
                 TextField("Session name", text: $name)
                 Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
-                NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: 44)
+                NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: sessionControlMinimum)
                 Button("Clone current branch") { perform(.clone) }
                 if state.capabilities.contains("close-session") {
-                    Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: 44)
+                    Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: sessionControlMinimum)
                 }
                 Button("Working tree diff") {
                     Task {
@@ -144,19 +151,7 @@ struct SessionControls: View {
                     Text("Queued instructions: \(pending). Use Stop to clear the queue.")
                 }
             }
-            Section("Commands, skills, and templates") {
-                TextField("Command arguments", text: $arguments)
-                ForEach(state.commands) { command in
-                    Button { perform(.command(name: command.name, arguments: arguments)) } label: {
-                        VStack(alignment: .leading) {
-                            Text("/" + command.name)
-                            Text(command.detail).font(.caption).foregroundStyle(.primary.opacity(0.75))
-                        }
-                    }.disabled(state.working && command.source != "extension")
-                }
-                Text("Commands use Pi core RPC. A command can report that it requires a terminal.")
-                    .font(.caption).foregroundStyle(.primary.opacity(0.75))
-            }.disabled(state.selected == nil)
+            SessionCommandActions(state: state, request: request)
         }
         .navigationTitle("Session controls")
         .alert("Close this Pi session?", isPresented: $confirmClose) {
@@ -173,6 +168,72 @@ struct SessionControls: View {
         Task {
             do { _ = try await request(action) }
             catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+        }
+    }
+}
+
+struct SessionCommandsView: View {
+    let state: HostSnapshot
+    let request: (SessionAction) async throws -> AppResult
+
+    var body: some View {
+        Form {
+            SessionCommandActions(state: state, request: request)
+        }
+        .accessibilityIdentifier("session-commands-form")
+        .navigationTitle("Commands")
+    }
+}
+
+private struct SessionCommandActions: View {
+    let state: HostSnapshot
+    // The parent binds this closure to the session context that opened the controls.
+    let request: (SessionAction) async throws -> AppResult
+    @State private var arguments = ""
+    @State private var sending = false
+    @State private var error: String?
+
+    var body: some View {
+        Section("Commands, skills, and templates") {
+            if let error {
+                Text(error).foregroundStyle(.primary)
+                    .accessibilityIdentifier("session-command-error")
+            }
+            TextField("Command arguments", text: $arguments)
+                .accessibilityIdentifier("command-arguments")
+                .disabled(sending || state.selected == nil)
+            if state.commands.isEmpty {
+                Text("No commands are available for this session.")
+                    .accessibilityIdentifier("session-commands-empty")
+            }
+            ForEach(state.commands) { command in
+                Button { perform(command) } label: {
+                    VStack(alignment: .leading) {
+                        Text("/" + command.name)
+                        Text(command.detail).font(.caption).foregroundStyle(.primary.opacity(0.75))
+                    }.frame(minHeight: sessionControlMinimum)
+                }
+                .accessibilityIdentifier("session-command-" + command.id)
+                .disabled(sending || state.selected == nil || (state.working && command.source != "extension"))
+            }
+            Text("Commands use Pi core RPC. A command can report that it requires a terminal.")
+                .font(.caption).foregroundStyle(.primary.opacity(0.75))
+        }
+        .onChange(of: state.context) { _, _ in arguments = ""; error = nil }
+    }
+
+    private func perform(_ command: CommandOption) {
+        guard !sending, state.selected != nil,
+              !state.working || command.source == "extension" else { return }
+        sending = true
+        error = nil
+        let action = SessionAction.command(name: command.name, arguments: arguments)
+        Task { @MainActor in
+            defer { sending = false }
+            do {
+                let result = try await request(action)
+                if case .failure(let fault) = result { throw fault }
+            } catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
         }
     }
 }
@@ -203,7 +264,7 @@ struct NewManagedSessionView: View {
         .navigationTitle("New session")
         .safeAreaInset(edge: .bottom) {
             Button { confirm = true } label: {
-                Text("Review new session").frame(maxWidth: .infinity, minHeight: 44)
+                Text("Review new session").frame(maxWidth: .infinity, minHeight: sessionControlMinimum)
             }
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("new-session-review")
@@ -246,8 +307,8 @@ struct HistoryView: View {
             Text("File history includes compacted entries and abandoned branches. Open the session tree for labels, the active leaf and Pi's current fork options.")
                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
             if loading { ProgressView("Loading history") }
-            if !newer.isEmpty { Button("Newer entries") { page = newer.removeLast() }.frame(minHeight: 44).disabled(loading) }
-            Button("Reload newest entries") { Task { newer = []; await load(nil) } }.frame(minHeight: 44).disabled(loading)
+            if !newer.isEmpty { Button("Newer entries") { page = newer.removeLast() }.frame(minHeight: sessionControlMinimum).disabled(loading) }
+            Button("Reload newest entries") { Task { newer = []; await load(nil) } }.frame(minHeight: sessionControlMinimum).disabled(loading)
             ForEach(page.items) { item in
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.kind + " · " + item.id).font(.caption.monospaced()).foregroundStyle(.primary.opacity(0.75))
@@ -259,7 +320,7 @@ struct HistoryView: View {
                                 do { if case .preview(let value) = try await request(.historyEntry(id: id)) { preview = value } }
                                 catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
                             }
-                        }.frame(minHeight: 44)
+                        }.frame(minHeight: sessionControlMinimum)
                     }
                     if item.canFork {
                         Button("Fork from this message") {
@@ -267,11 +328,11 @@ struct HistoryView: View {
                                 do { _ = try await request(.fork(entry: item.id)); forked() }
                                 catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
                             }
-                        }.frame(minHeight: 44)
+                        }.frame(minHeight: sessionControlMinimum)
                     }
                 }.padding(.vertical, 4)
             }
-            if let next = page.next { Button("Older entries") { Task { await load(next) } }.frame(minHeight: 44).disabled(loading) }
+            if let next = page.next { Button("Older entries") { Task { await load(next) } }.frame(minHeight: sessionControlMinimum).disabled(loading) }
         }
         .navigationTitle("History")
         .task { await load(nil) }
