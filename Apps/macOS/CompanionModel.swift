@@ -146,6 +146,7 @@ final class CompanionModel {
     var state = HostSnapshot(host: UUID(), epoch: UUID()) {
         didSet {
             if oldValue.context != state.context { composerError = nil }
+            reconcileSessionVisibility()
             refreshSessionDisplayMetadata()
         }
     }
@@ -162,12 +163,17 @@ final class CompanionModel {
     var hiddenWorkspaces = Set<String>()
     var expandedWorkspaces = Set<String>()
     var openingSession = false
+    private(set) var closingSession: UUID?
+    private(set) var closedSessionIDs = Set<UUID>()
+    private(set) var sessionVisibilityError: String?
+    @ObservationIgnored private var visibilityPreferencesWritable = true
+    @ObservationIgnored private var closeReceipts: [UUID: SessionCloseReceipt] = [:]
     var connectedDevices = Set<UUID>()
     var draftSaveError: String?
     var workspaces: [MacWorkspace] {
         let paths = Set(addedWorkspaces).union(state.sessions.map(\.directory)).subtracting(hiddenWorkspaces)
         return paths.sorted().map { path in
-            MacWorkspace(directory: path, sessions: state.sessions.filter { $0.directory == path }.sorted { $0.updated > $1.updated })
+            MacWorkspace(directory: path, sessions: state.sessions.filter { $0.directory == path && !closedSessionIDs.contains($0.id) }.sorted { $0.updated > $1.updated })
         }
     }
     var selectedWorkspace: String? {
@@ -267,6 +273,21 @@ final class CompanionModel {
             inspectorVisible = saved.inspectorVisible
             rememberedWorkspace = saved.workspace; rememberedSession = saved.session
             destination = saved.session.map(MacDestination.session) ?? saved.workspace.map(MacDestination.workspace) ?? .overview
+        }
+        if let value = defaults.object(forKey: "closedSessionIDs") {
+            if let data = value as? Data, data.count <= 1_048_576,
+               let saved = try? JSONDecoder().decode(MacSessionVisibilityPreferences.self, from: data),
+               saved.version == 1, saved.closed.count <= 10_000 {
+                closedSessionIDs = saved.closed
+                if case .session(let id) = destination, saved.closed.contains(id) {
+                    rememberedSession = nil
+                    destination = rememberedWorkspace.map(MacDestination.workspace) ?? .overview
+                }
+            } else {
+                // Keep unreadable preference bytes intact, independently of workspace preferences.
+                visibilityPreferencesWritable = false
+                sessionVisibilityError = "Session visibility cannot be saved. Back up and remove only the closedSessionIDs preference to restore saving. Saved history and drafts are unchanged."
+            }
         }
         if let data = defaults.data(forKey: "sessionDrafts"), data.count <= 8 * 1_024 * 1_024,
            let saved = try? JSONDecoder().decode([UUID: String].self, from: data) { drafts = saved }
@@ -371,12 +392,12 @@ final class CompanionModel {
     func request(_ action: SessionAction) async throws -> AppResult {
         try await request(action, expectedSession: state.selected)
     }
-    private func request(_ action: SessionAction, expectedSession: UUID?) async throws -> AppResult {
+    private func request(_ action: SessionAction, expectedSession: UUID?, closeConfirmation: LocalCloseConfirmation? = nil) async throws -> AppResult {
         guard let coordinator else { throw RemoteFault.storageFailure }
         let request = AppRequest(epoch: coordinator.epoch, session: expectedSession, action: action)
         if action.changesSession { fault = nil }
         if action.mutates { submissions.begin(request.id) }
-        let result = await coordinator.handle(request, device: localDevice)
+        let result = await coordinator.handle(request, device: localDevice, closeConfirmation: closeConfirmation)
         if case .failure(let error) = result {
             if action.mutates { submissions.finish(request.id, fault: error) }
             fault = error; throw error
@@ -392,7 +413,7 @@ final class CompanionModel {
     }
 
     func send(context: SessionContext? = nil) {
-        guard !sending else { return }
+        guard !sending, closingSession == nil else { return }
         guard context == nil || context == state.context else { fault = .conflict; return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let message = text, submittedSession = state.selected
@@ -401,7 +422,7 @@ final class CompanionModel {
         case .prompt:
             action = .prompt(text: message, delivery: state.working ? delivery : .prompt, image: nil)
         case .native(let command):
-            panel = command.rawValue
+            guard openNativeWorkflow(command, context: context) else { return }
             if text == message {
                 text = ""
                 if let submittedSession { drafts[submittedSession] = "" }
@@ -426,6 +447,15 @@ final class CompanionModel {
             } catch { fault = error as? RemoteFault ?? .unavailable }
         }
     }
+    @discardableResult func openNativeWorkflow(_ command: MacNativeSlashCommand, context: SessionContext? = nil) -> Bool {
+        guard !sending, !shuttingDown, closingSession == nil else { fault = .busy; return false }
+        guard context == nil || context == state.context else { fault = .conflict; return false }
+        guard let option = MacSlashCommands.options(in: state).first(where: { $0.native == command }) else { return false }
+        if let reason = option.disabledReason(in: state) { composerError = reason; return false }
+        composerError = nil; panel = command.rawValue
+        return true
+    }
+
     func attachText(_ preview: FilePreview, context: SessionContext) throws {
         guard !shuttingDown, state.context == context else { throw RemoteFault.conflict }
         text = try TextAttachment.append(preview, to: text)
@@ -615,18 +645,160 @@ final class CompanionModel {
         saveWorkspacePreferences()
     }
 
+    func closeSessionDisabledReason(_ id: UUID) -> String? {
+        guard state.sessions.contains(where: { $0.id == id }) else { return "This saved session is no longer available." }
+        guard closingSession == nil, !openingSession, !shuttingDown else { return "Wait for the session change to finish." }
+        guard state.selected == id else { return nil }
+        guard !sending, !submissions.needsReview, state.error != .unknownOutcome else { return "Wait for pending actions or review the unknown outcome first." }
+        guard state.dialogs.isEmpty else { return "Answer or cancel the open request first." }
+        guard state.phase == "idle" || closeSessionRequiresConfirmation(id) else { return "Wait for Pi to reach a known working or idle state." }
+        return nil
+    }
+
+    func closeSessionRequiresConfirmation(_ id: UUID) -> Bool {
+        state.selected == id && ["working", "streaming", "tool", "retrying", "compacting", "queued"].contains(state.phase)
+    }
+
+    func prepareSessionClose(_ id: UUID) async -> LocalCloseConfirmation? {
+        guard closeSessionDisabledReason(id) == nil, closeSessionRequiresConfirmation(id), let coordinator else {
+            fault = .busy; return nil
+        }
+        let context = state.context
+        do {
+            let confirmation = try await coordinator.closeConfirmation(for: context)
+            try Task.checkCancellation()
+            guard state.context == context, closeSessionDisabledReason(id) == nil,
+                  closeSessionRequiresConfirmation(id) else { throw RemoteFault.conflict }
+            return confirmation
+        } catch { fault = error as? RemoteFault ?? .unavailable; return nil }
+    }
+
+    @discardableResult func closeSession(_ id: UUID, confirmation: LocalCloseConfirmation? = nil) async -> Bool {
+        guard confirmation == nil || (confirmation?.context == state.context && closeSessionRequiresConfirmation(id)) else {
+            fault = .conflict; return false
+        }
+        guard closeSessionDisabledReason(id) == nil else { fault = .busy; return false }
+        let displayed = state
+        let context = displayed.context
+        let loaded = context.session == id
+        guard !loaded || !state.working || confirmation?.context == context else { fault = .busy; return false }
+        closingSession = id
+        defer { closingSession = nil }
+        do {
+            try Task.checkCancellation()
+            var receipt: HostSnapshot?
+            if loaded {
+                if let draftSession { drafts[draftSession] = text }
+                draftSave?.cancel(); persistDrafts()
+                guard draftSaveError == nil else { throw RemoteFault.capacity }
+                guard let coordinator else { throw RemoteFault.unavailable }
+                let initial = await coordinator.state()
+                try Task.checkCancellation()
+                guard state.context == context, !shuttingDown, !sending,
+                      !submissions.needsReview, state.error != .unknownOutcome, state.dialogs.isEmpty,
+                      initial.context == context, initial.dialogs.isEmpty, initial.error != .unknownOutcome,
+                      initial.phase == displayed.phase, state.phase == displayed.phase else { throw RemoteFault.conflict }
+                let action = scopedRequest(for: displayed)
+                if displayed.working {
+                    // The host checks the captured work token before accepting Stop.
+                    _ = try await request(.stop, expectedSession: id, closeConfirmation: confirmation)
+                    // Stop acknowledges cancellation. Require authoritative idle in the same context.
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                    while true {
+                        try Task.checkCancellation()
+                        guard state.context == context, !shuttingDown, !sending,
+                              !submissions.needsReview, state.error != .unknownOutcome, state.dialogs.isEmpty else { throw RemoteFault.conflict }
+                        let current = await coordinator.state()
+                        guard current.context == context, current.dialogs.isEmpty, current.error != .unknownOutcome else { throw RemoteFault.conflict }
+                        if current.phase == "idle" { break }
+                        guard !["recovering", "unavailable", "interrupted", "starting"].contains(current.phase),
+                              ContinuousClock.now < deadline else { throw RemoteFault.unavailable }
+                        try await Task.sleep(for: .milliseconds(50))
+                    }
+                }
+                guard state.context == context, !shuttingDown, !sending,
+                      !submissions.needsReview, state.error != .unknownOutcome, state.dialogs.isEmpty else { throw RemoteFault.conflict }
+                let beforeClose = await coordinator.state()
+                try Task.checkCancellation()
+                guard beforeClose.context == context, beforeClose.phase == "idle", beforeClose.dialogs.isEmpty,
+                      beforeClose.error != .unknownOutcome else { throw RemoteFault.conflict }
+                guard state.context == context, !shuttingDown, !sending,
+                      !submissions.needsReview, state.error != .unknownOutcome, state.dialogs.isEmpty else { throw RemoteFault.conflict }
+                _ = try await action(.closeSession)
+                receipt = await coordinator.state()
+            }
+            try Task.checkCancellation()
+            try finishSessionClose(id, context: context, receipt: receipt)
+            return true
+        } catch { fault = error as? RemoteFault ?? .unavailable; return false }
+    }
+
+    // Keep this transition synchronous: an observer cannot interleave its update
+    // between the sequence check and the local visibility change.
+    func finishSessionClose(_ id: UUID, context: SessionContext, receipt: HostSnapshot?) throws {
+        guard !shuttingDown else { throw RemoteFault.conflict }
+        if let receipt {
+            guard receipt.host == context.host, receipt.epoch == context.epoch, receipt.selected == nil,
+                  state.host == context.host, state.epoch == context.epoch,
+                  state.selected == nil || (state.selected == id && state.sequence <= receipt.sequence) else {
+                throw RemoteFault.conflict
+            }
+            closeReceipts[id] = SessionCloseReceipt(host: receipt.host, epoch: receipt.epoch, sequence: receipt.sequence)
+        }
+        closedSessionIDs.insert(id)
+        saveSessionVisibility()
+        if destination == .session(id),
+           let path = state.sessions.first(where: { $0.id == id })?.directory { destination = .workspace(path) }
+    }
+
+    private func reconcileSessionVisibility() {
+        guard let id = state.selected, closedSessionIDs.contains(id) else { return }
+        if let receipt = closeReceipts[id], receipt.host == state.host, receipt.epoch == state.epoch,
+           state.sequence <= receipt.sequence { return }
+        closedSessionIDs.remove(id); closeReceipts.removeValue(forKey: id)
+        saveSessionVisibility()
+        if let path = state.sessions.first(where: { $0.id == id })?.directory {
+            hiddenWorkspaces.remove(path); expandedWorkspaces.insert(path)
+            saveWorkspacePreferences()
+        }
+    }
+
+    private func saveSessionVisibility() {
+        guard visibilityPreferencesWritable else { return }
+        guard closedSessionIDs.count <= 10_000,
+              let data = try? JSONEncoder().encode(MacSessionVisibilityPreferences(version: 1, closed: closedSessionIDs)), data.count <= 1_048_576 else {
+            sessionVisibilityError = "Session visibility exceeds the local storage limit. This visibility change will not survive an app restart."
+            return
+        }
+        defaults.set(data, forKey: "closedSessionIDs"); sessionVisibilityError = nil
+    }
+
+    private func revealSession(_ id: UUID) {
+        closedSessionIDs.remove(id); closeReceipts.removeValue(forKey: id)
+        saveSessionVisibility()
+        if let path = state.sessions.first(where: { $0.id == id })?.directory {
+            hiddenWorkspaces.remove(path); expandedWorkspaces.insert(path)
+        }
+        destination = .session(id)
+    }
+
     @discardableResult func openSession(_ id: UUID) async -> Bool {
         destination = .session(id)
-        guard state.selected != id || ["unavailable", "interrupted"].contains(state.phase) else { return true }
-        guard !openingSession, !state.working else { fault = .busy; return false }
+        guard closingSession == nil, !openingSession else { fault = .busy; return false }
+        guard state.selected != id || ["unavailable", "interrupted"].contains(state.phase) else { revealSession(id); return true }
+        guard !state.working else { fault = .busy; return false }
         openingSession = true
         defer { openingSession = false }
-        do { _ = try await request(.resumeSession(id: id)); return true }
-        catch { fault = error as? RemoteFault ?? .unavailable; return false }
+        do {
+            _ = try await scopedRequest(for: state)(.resumeSession(id: id))
+            guard let coordinator, await coordinator.state().selected == id else { throw RemoteFault.conflict }
+            revealSession(id)
+            return true
+        } catch { fault = error as? RemoteFault ?? .unavailable; return false }
     }
 
     @discardableResult func createSession(in path: String) async -> Bool {
-        guard !openingSession, !state.working else { fault = .busy; return false }
+        guard !openingSession, closingSession == nil, !state.working else { fault = .busy; return false }
         openingSession = true
         defer { openingSession = false }
         do {
@@ -758,6 +930,17 @@ enum SessionDisplayName {
     private static func shortID(_ id: UUID, length: Int = 8) -> String {
         String(id.uuidString.lowercased().prefix(length))
     }
+}
+
+private struct SessionCloseReceipt {
+    var host: UUID
+    var epoch: UUID
+    var sequence: UInt64
+}
+
+private struct MacSessionVisibilityPreferences: Codable {
+    var version: Int
+    var closed: Set<UUID>
 }
 
 private struct MacWorkspacePreferences: Codable {

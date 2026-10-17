@@ -4,6 +4,13 @@ import PiRPC
 import PiRemoteCore
 import PiRemoteSecurity
 
+/// Local-only authority to stop the work shown before a close confirmation dialog.
+public struct LocalCloseConfirmation: Sendable, Equatable {
+    public let context: SessionContext
+    fileprivate let lifecycle: UUID
+    fileprivate let work: UUID
+}
+
 public actor HostCoordinator {
     private struct ManagedSession: Codable {
         var info: SessionInfo
@@ -49,6 +56,8 @@ public actor HostCoordinator {
     private var observer: Task<Void, Never>?
     private var generation = UUID()
     private var runRevision: UInt64 = 0
+    // Confirmation follows work boundaries, not streaming message completion.
+    private var workGeneration = UUID()
     private var observers: [UUID: AsyncStream<HostSnapshot>.Continuation] = [:]
     private var journal: RequestJournal
     private var replay = StateReplay()
@@ -135,7 +144,33 @@ public actor HostCoordinator {
     }
     private func removeObserver(_ id: UUID) { observers.removeValue(forKey: id) }
 
+    public func closeConfirmation(for context: SessionContext) throws -> LocalCloseConfirmation {
+        guard context == snapshot.context, context.session != nil, !closing, rpc != nil else { throw RemoteFault.conflict }
+        guard snapshot.working, !["starting", "stopping", "recovering"].contains(snapshot.phase),
+              snapshot.dialogs.isEmpty, lifecycleTransition == nil, mutations.isEmpty,
+              !recoveringEvents, snapshot.error != .unknownOutcome else {
+            throw RemoteFault.busy
+        }
+        return LocalCloseConfirmation(context: context, lifecycle: generation, work: workGeneration)
+    }
+
+    private func validateCloseConfirmation(_ confirmation: LocalCloseConfirmation?, for request: AppRequest) throws {
+        guard let confirmation else { return }
+        guard request.action == .stop, confirmation.context == snapshot.context,
+              request.session == confirmation.context.session, request.epoch == confirmation.context.epoch,
+              confirmation.lifecycle == generation, confirmation.work == workGeneration,
+              rpc != nil, !closing else { throw RemoteFault.conflict }
+        guard snapshot.working, !["starting", "stopping", "recovering"].contains(snapshot.phase),
+              snapshot.dialogs.isEmpty, lifecycleTransition == nil, mutations.isEmpty,
+              !recoveringEvents, snapshot.error != .unknownOutcome else { throw RemoteFault.busy }
+    }
+
     public func handle(_ request: AppRequest, device: UUID, authorization: AuthorizationLease? = nil) async -> AppResult {
+        await handle(request, device: device, authorization: authorization, closeConfirmation: nil)
+    }
+
+    public func handle(_ request: AppRequest, device: UUID, authorization: AuthorizationLease? = nil,
+                       closeConfirmation: LocalCloseConfirmation?) async -> AppResult {
         guard !closing, authorization?.valid ?? true, !Task.isCancelled else { return .failure(.unauthorized) }
         guard request.epoch == epoch else { return .failure(.unknownOutcome) }
         switch request.action {
@@ -143,6 +178,21 @@ public actor HostCoordinator {
         default:
             guard !request.action.needsSession || (request.session != nil && request.session == snapshot.selected) else { return .failure(.conflict) }
         }
+        if closeConfirmation != nil {
+            guard request.action == .stop else { return .failure(.conflict) }
+            do {
+                // Replays need their recorded result, not new consent. Probe a
+                // value copy so a stale, undispatched token cannot enter the journal.
+                var probe = journal
+                switch try probe.begin(device: device, request: request) {
+                case .completed(let fault): return fault.map(AppResult.failure) ?? .ok
+                case .unknown: return .failure(.unknownOutcome)
+                case .dispatch: break
+                }
+            } catch { return .failure(error as? RemoteFault ?? .storageFailure) }
+        }
+        do { try validateCloseConfirmation(closeConfirmation, for: request) }
+        catch { return .failure(error as? RemoteFault ?? .conflict) }
         if request.action.mutates {
             do {
                 switch try journal.begin(device: device, request: request) {
@@ -158,7 +208,7 @@ public actor HostCoordinator {
             guard !request.action.needsSession || (request.session != nil && request.session == snapshot.selected) else {
                 throw RemoteFault.conflict
             }
-            let result = try await perform(request)
+            let result = try await perform(request, closeConfirmation: closeConfirmation)
             if request.action.mutates {
                 journal.finish(device: device, request: request, fault: nil)
                 try saveJournal()
@@ -190,7 +240,9 @@ public actor HostCoordinator {
         }
     }
 
-    private func perform(_ request: AppRequest) async throws -> AppResult {
+    private func perform(_ request: AppRequest, closeConfirmation: LocalCloseConfirmation?) async throws -> AppResult {
+        // Validate in the same actor turn as mutation reservation and Stop dispatch.
+        try validateCloseConfirmation(closeConfirmation, for: request)
         let action = request.action
         if recoveringEvents, action.mutates, action != .stop { throw RemoteFault.busy }
         if action.mutates || action.needsSession {
@@ -239,7 +291,9 @@ public actor HostCoordinator {
             value.acknowledgedAutoRetry = enabled
             snapshot.runtime = value
         case .abortRetry:
-            _ = try await requireRPC().request("abort_retry")
+            let child = try requireRPC()
+            workGeneration = UUID()
+            _ = try await child.request("abort_retry")
         case .closeSession:
             guard !snapshot.working else { throw RemoteFault.busy }
             try await requireIdle()
@@ -335,6 +389,7 @@ public actor HostCoordinator {
             let previous = selectedIndex.map { sessions[$0] }
             let token = generation, revision = runRevision
             try markInterrupted(true)
+            workGeneration = UUID()
             let result: JSONValue
             do { result = try await child.request(command, fields: fields) }
             catch {
@@ -363,6 +418,7 @@ public actor HostCoordinator {
         case .stop:
             guard snapshot.phase != "starting" || lifecycleTransition != nil else { throw RemoteFault.busy }
             let child = try requireRPC()
+            workGeneration = UUID()
             if lifecycleTransition != nil {
                 // A hook can ignore dialog cancellation. Fence its pending reply and stop the
                 // child; only confirmed termination can settle this unknown replacement.
@@ -405,6 +461,7 @@ public actor HostCoordinator {
             guard !snapshot.working, instructions.utf8.count <= 16_384 else { throw RemoteFault.busy }
             try await requireIdle()
             let child = try requireRPC()
+            workGeneration = UUID()
             snapshot.phase = "compacting"; publish()
             _ = try await child.request("compact", fields: ["customInstructions": .string(instructions)], timeout: 300)
             snapshot.phase = "idle"
@@ -489,7 +546,9 @@ public actor HostCoordinator {
             guard snapshot.phase != "starting", snapshot.phase != "stopping" else { throw RemoteFault.busy }
             if snapshot.working { guard command.source == "extension" else { throw RemoteFault.busy } }
             else { try await requireIdle() }
-            _ = try await requireRPC().request("prompt", fields: ["message": .string("/" + name + (arguments.isEmpty ? "" : " " + arguments))])
+            let child = try requireRPC()
+            workGeneration = UUID()
+            _ = try await child.request("prompt", fields: ["message": .string("/" + name + (arguments.isEmpty ? "" : " " + arguments))])
         case .answer(let id, let value, let confirmed, let cancelled):
             guard let dialog = snapshot.dialogs.first(where: { $0.id == id }),
                   dialogDeadlines[id].map({ $0 > ProcessInfo.processInfo.systemUptime }) ?? true,
@@ -498,7 +557,9 @@ public actor HostCoordinator {
             if dialog.method == "confirm", !cancelled, confirmed == nil { throw RemoteFault.invalidRequest }
             if ["input", "editor"].contains(dialog.method), !cancelled, value == nil { throw RemoteFault.invalidRequest }
             if dialog.method == "select", !cancelled, !dialog.options.contains(value ?? "") { throw RemoteFault.invalidRequest }
-            try await requireRPC().answerDialog(id: id, value: value, confirmed: confirmed, cancelled: cancelled)
+            let child = try requireRPC()
+            workGeneration = UUID()
+            try await child.answerDialog(id: id, value: value, confirmed: confirmed, cancelled: cancelled)
             snapshot.dialogs.removeAll { $0.id == id }; dialogDeadlines.removeValue(forKey: id)
             snapshot.phase = lifecycleTransition != nil ? "starting" : (snapshot.dialogs.isEmpty ? displayPhase : "waiting")
         case .diff:
@@ -1342,10 +1403,12 @@ public actor HostCoordinator {
         if snapshot.phase != "starting" && snapshot.phase != "stopping" { snapshot.phase = displayPhase }
         snapshot.hasOlderMessages = reducer.omitted
         if event["type"]?.string == "agent_start" {
+            workGeneration = UUID()
             runRevision &+= 1
             do { try markInterrupted(true) } catch { snapshot.error = .storageFailure }
         }
         if event["type"]?.string == "agent_settled" {
+            workGeneration = UUID()
             runRevision &+= 1
             do { try markInterrupted((snapshot.pendingMessages ?? 0) > 0) } catch { snapshot.error = .storageFailure }
         }
@@ -1439,6 +1502,7 @@ public actor HostCoordinator {
 
     private func processEnded(_ token: UUID) {
         guard token == generation else { return }
+        workGeneration = UUID()
         runRevision &+= 1
         rpc = nil; snapshot.phase = "interrupted"; snapshot.error = .unavailable
         snapshot.dialogs = []; dialogDeadlines = [:]

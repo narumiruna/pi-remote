@@ -163,6 +163,184 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         model.text = "  \n"
         model.send()
         XCTAssertFalse(model.sending)
+        model.text = "Preserved palette draft"; model.panel = nil
+        XCTAssertTrue(model.openNativeWorkflow(.resume, context: model.state.context))
+        XCTAssertEqual(model.text, "Preserved palette draft")
+        model.panel = nil
+        var staleWorkflow = model.state.context; staleWorkflow.epoch = UUID()
+        XCTAssertFalse(model.openNativeWorkflow(.resume, context: staleWorkflow))
+        XCTAssertNil(model.panel)
+        XCTAssertEqual(model.fault, .conflict)
+        model.state.capabilities = []
+        XCTAssertFalse(model.openNativeWorkflow(.resume))
+        XCTAssertNotNil(model.composerError)
+        XCTAssertEqual(model.text, "Preserved palette draft")
+        await model.shutdown()
+    }
+
+    func testSessionVisibilityPersistsWithoutFilteringCatalogOrWorkspace() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.VisibilityTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let first = SessionInfo(id: UUID(), title: "First", directory: "/tmp/workspace")
+        let second = SessionInfo(id: UUID(), title: "Second", directory: first.directory)
+        let draftData = try JSONEncoder().encode([first.id: "Retained private draft"])
+        defaults.set(draftData, forKey: "sessionDrafts")
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        model.state.sessions = [first, second]
+        model.state.selected = second.id; model.state.phase = "streaming"
+        model.destination = .session(first.id)
+        let context = model.state.context
+        let closedFirst = await model.closeSession(first.id)
+        XCTAssertTrue(closedFirst, "Unloaded close must not send an RPC to the unrelated working session")
+        XCTAssertEqual(model.state.context, context)
+        XCTAssertEqual(model.state.phase, "streaming")
+        XCTAssertEqual(model.destination, .workspace(first.directory))
+        XCTAssertEqual(model.state.sessions, [first, second], "/resume keeps the complete catalog")
+        XCTAssertEqual(model.workspaces.first?.sessions.map(\.id), [second.id])
+        model.state.selected = nil; model.state.phase = "idle"
+        let closedSecond = await model.closeSession(second.id)
+        XCTAssertTrue(closedSecond)
+        XCTAssertEqual(model.workspaces.count, 1)
+        XCTAssertTrue(model.workspaces[0].sessions.isEmpty)
+        XCTAssertEqual(defaults.data(forKey: "sessionDrafts"), draftData)
+        let restored = CompanionModel(support: root.appendingPathComponent("other"), secrets: MemorySecrets(), defaults: defaults)
+        restored.state.sessions = [first, second]
+        XCTAssertEqual(restored.closedSessionIDs, [first.id, second.id])
+        XCTAssertEqual(restored.workspaces.count, 1)
+        XCTAssertTrue(restored.workspaces[0].sessions.isEmpty)
+        // A rejected activation cannot reveal a closed entry.
+        restored.state.phase = "streaming"
+        let opened = await restored.openSession(first.id)
+        XCTAssertFalse(opened)
+        XCTAssertTrue(restored.closedSessionIDs.contains(first.id))
+        await restored.shutdown(); await model.shutdown()
+    }
+
+    func testCloseReceiptRejectsAnAlreadyObservedSameSessionReactivation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.CloseReceipt." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        let session = SessionInfo(id: UUID(), title: "Reactivated", directory: "/tmp/close-receipt")
+        model.state.sessions = [session]; model.state.selected = session.id
+        model.state.sequence = 10
+        let context = model.state.context
+        var closed = model.state; closed.selected = nil; closed.sequence = 11
+        model.state.sequence = 12
+        model.destination = .session(session.id); model.text = "Keep draft"
+        XCTAssertThrowsError(try model.finishSessionClose(session.id, context: context, receipt: closed)) {
+            XCTAssertEqual($0 as? RemoteFault, .conflict)
+        }
+        XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+        XCTAssertEqual(model.workspaces.first?.sessions, [session])
+        XCTAssertNil(defaults.data(forKey: "closedSessionIDs"))
+        XCTAssertEqual(model.text, "Keep draft")
+        XCTAssertEqual(model.destination, .session(session.id))
+        await model.shutdown()
+    }
+
+    func testLaterActivationRevealsClosedSessionButStaleSnapshotsDoNot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.CloseReceipt." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let session = SessionInfo(id: UUID(), title: "Reopen remotely", directory: "/tmp/close-receipt")
+        let draft = try JSONEncoder().encode([session.id: "Saved draft"])
+        defaults.set(draft, forKey: "sessionDrafts")
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        model.state.sessions = [session]; model.state.selected = session.id; model.state.sequence = 10
+        let old = model.state
+        var closed = old; closed.selected = nil; closed.sequence = 12
+        try model.finishSessionClose(session.id, context: old.context, receipt: closed)
+        XCTAssertTrue(model.closedSessionIDs.contains(session.id))
+        var stale = old; stale.sequence = 11
+        model.state = stale
+        XCTAssertTrue(model.closedSessionIDs.contains(session.id), "A delayed pre-close snapshot is not a new activation")
+        model.state = closed
+        model.removeWorkspace(session.directory)
+        var reopened = old; reopened.sequence = 13; reopened.phase = "working"
+        model.state = reopened
+        XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+        XCTAssertFalse(model.hiddenWorkspaces.contains(session.directory))
+        XCTAssertTrue(model.expandedWorkspaces.contains(session.directory))
+        XCTAssertEqual(model.workspaces.first?.sessions, [session])
+        XCTAssertEqual(model.state.sessions, [session])
+        XCTAssertEqual(defaults.data(forKey: "sessionDrafts"), draft)
+        let visibility = try JSONSerialization.jsonObject(with: try XCTUnwrap(defaults.data(forKey: "closedSessionIDs"))) as? [String: Any]
+        XCTAssertEqual((visibility?["closed"] as? [String])?.count, 0)
+        // A new host epoch can start its sequence again without being stale.
+        model.state = closed
+        try model.finishSessionClose(session.id, context: old.context, receipt: closed)
+        reopened.epoch = UUID(); reopened.sequence = 1
+        model.state = reopened
+        XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+        await model.shutdown()
+    }
+
+    func testCorruptAndUnknownVisibilityPreferencesRemainUntouched() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.VisibilityTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let values: [Any] = [Data("broken".utf8), Data(#"{"version":99,"closed":[]}"#.utf8), "wrong type"]
+        for (index, value) in values.enumerated() {
+            defaults.set(value, forKey: "closedSessionIDs")
+            let before = defaults.object(forKey: "closedSessionIDs") as? NSObject
+            let model = CompanionModel(support: root.appendingPathComponent(String(index)), secrets: MemorySecrets(), defaults: defaults)
+            XCTAssertNotNil(model.sessionVisibilityError)
+            let session = SessionInfo(id: UUID(), title: "Saved", directory: "/tmp/workspace")
+            model.state.sessions = [session]
+            let closed = await model.closeSession(session.id)
+            XCTAssertTrue(closed)
+            model.inspectorVisible.toggle()
+            XCTAssertEqual(defaults.object(forKey: "closedSessionIDs") as? NSObject, before)
+            await model.shutdown()
+        }
+    }
+
+    func testCloseGuardsRejectUnconfirmedStalePendingAndCancelledActions() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.CloseTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        let session = SessionInfo(id: UUID(), title: "Loaded", directory: "/tmp/workspace")
+        model.state.sessions = [session]; model.state.selected = session.id; model.state.phase = "streaming"
+        XCTAssertTrue(model.closeSessionRequiresConfirmation(session.id))
+        let unconfirmed = await model.closeSession(session.id)
+        XCTAssertFalse(unconfirmed)
+        let invalidConfirmation = await model.prepareSessionClose(session.id)
+        XCTAssertNil(invalidConfirmation, "A synthetic or stale context must not create a host token")
+        XCTAssertEqual(model.fault, .conflict)
+        model.sending = true
+        XCTAssertNotNil(model.closeSessionDisabledReason(session.id))
+        model.sending = false; model.openingSession = true
+        XCTAssertNotNil(model.closeSessionDisabledReason(session.id))
+        model.openingSession = false
+        model.state.phase = "idle"; model.state.error = .unknownOutcome
+        XCTAssertNotNil(model.closeSessionDisabledReason(session.id))
+        let uncertain = await model.closeSession(session.id)
+        XCTAssertFalse(uncertain)
+        model.state.error = nil
+        model.state.dialogs = [ExtensionDialog(id: "close-guard", method: "confirm", title: "Pending", message: "Proceed?", options: [], text: "", expires: nil)]
+        XCTAssertNotNil(model.closeSessionDisabledReason(session.id))
+        model.state.dialogs = []
+        for phase in ["starting", "stopping", "recovering", "waiting", "unavailable", "interrupted"] {
+            model.state.phase = phase
+            XCTAssertNotNil(model.closeSessionDisabledReason(session.id))
+        }
+        model.state.selected = nil
+        let cancelled = Task { () -> Bool in
+            withUnsafeCurrentTask { $0?.cancel() }
+            return await model.closeSession(session.id)
+        }
+        let cancelledResult = await cancelled.value
+        XCTAssertFalse(cancelledResult)
+        XCTAssertTrue(model.closedSessionIDs.isEmpty)
+        XCTAssertNil(model.closingSession)
         await model.shutdown()
     }
 
@@ -280,7 +458,7 @@ while IFS= read -r line; do
             esac ;;
         steer|follow_up) printf x >> "$folder/accepted"; reply '{"disposition":"queued"}' ;;
         extension_ui_response) printf '{"id":"%s","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}\n' "$pending" ;;
-        abort) streaming=false; reply '{}'; printf '{"type":"agent_settled"}\n' ;;
+        abort) /bin/sleep 0.2; streaming=false; reply '{}'; printf '{"type":"agent_settled"}\n' ;;
         *) reply '{}' ;;
     esac
 done
@@ -437,6 +615,61 @@ done
             XCTAssertEqual(model.fault, .busy)
             model.stopWork()
             try await waitUntil { !model.state.working }
+            model.text = "Unsent second-session draft"
+            // Close is local visibility plus a confirmed lifecycle action, never history deletion.
+            let catalogIDs = Set(model.state.sessions.map(\.id))
+            model.text = String(repeating: "x", count: 256 * 1_024 + 1)
+            let oversizedClose = await model.closeSession(second)
+            XCTAssertFalse(oversizedClose)
+            XCTAssertNotNil(model.draftSaveError)
+            XCTAssertFalse(model.closedSessionIDs.contains(second))
+            XCTAssertEqual(model.state.selected, second)
+            model.text = "Unsent second-session draft"
+            let idleClosed = await model.closeSession(second)
+            XCTAssertTrue(idleClosed)
+            let immediatelySavedDrafts = try JSONDecoder().decode([UUID: String].self, from: try XCTUnwrap(defaults.data(forKey: "sessionDrafts")))
+            XCTAssertEqual(immediatelySavedDrafts[second], "Unsent second-session draft", "Close must save the latest draft before debounce fires")
+            try await waitUntil { model.state.selected == nil }
+            XCTAssertTrue(model.closedSessionIDs.contains(second))
+            XCTAssertEqual(Set(model.state.sessions.map(\.id)), catalogIDs)
+            model.removeWorkspace(root.path)
+            let reopened = await model.openSession(second)
+            XCTAssertTrue(reopened)
+            try await waitUntil { model.state.selected == second && model.text == "Unsent second-session draft" }
+            XCTAssertFalse(model.closedSessionIDs.contains(second))
+            XCTAssertFalse(model.hiddenWorkspaces.contains(root.path))
+            XCTAssertTrue(model.expandedWorkspaces.contains(root.path))
+            model.text = "Stop and close fixture"; model.send()
+            try await waitUntil { !model.sending && model.state.working }
+            let unconfirmedClose = await model.closeSession(second)
+            XCTAssertFalse(unconfirmedClose)
+            XCTAssertTrue(model.state.working)
+            let oldConfirmation = await model.prepareSessionClose(second)
+            let staleRun = try XCTUnwrap(oldConfirmation)
+            _ = try await client.request(.snapshot)
+            _ = try await client.request(.stop)
+            _ = try await client.request(.prompt(text: "New remote run in the same session", delivery: .prompt, image: nil))
+            try await waitUntil { model.state.selected == second && model.state.working }
+            let staleRunClose = await model.closeSession(second, confirmation: staleRun)
+            XCTAssertFalse(staleRunClose, "The previous run's confirmation must not stop new remote work")
+            XCTAssertEqual(model.fault, .conflict)
+            XCTAssertFalse(model.closedSessionIDs.contains(second))
+            let stillWorking = await host.state()
+            XCTAssertEqual(stillWorking.selected, second)
+            XCTAssertTrue(stillWorking.working)
+            let currentConfirmation = await model.prepareSessionClose(second)
+            let confirmed = try XCTUnwrap(currentConfirmation)
+            let stopAndClose = Task { await model.closeSession(second, confirmation: confirmed) }
+            try await waitUntil { model.closingSession == second }
+            let duplicate = await model.closeSession(second, confirmation: confirmed)
+            XCTAssertFalse(duplicate)
+            let stoppedAndClosed = await stopAndClose.value
+            XCTAssertTrue(stoppedAndClosed)
+            try await waitUntil { model.state.selected == nil }
+            XCTAssertTrue(model.closedSessionIDs.contains(second))
+            let finalReopen = await model.openSession(second)
+            XCTAssertTrue(finalReopen)
+            try await waitUntil { model.state.selected == second && model.state.phase == "idle" }
             model.text = "Unsent second-session draft"
             try await server.revoke(phoneID)
             try await waitUntil { connected.isEmpty }
