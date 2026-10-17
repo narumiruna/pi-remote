@@ -270,6 +270,28 @@ done
     #expect(await child.shutdown())
 }
 
+@Test(.timeLimit(.minutes(1))) func cancelledShutdownCallerStillWaitsForConfirmedChildExit() async throws {
+    let body = "trap '' TERM\nprintf '{\"type\":\"ready\"}\\n'\n" + shutdownFixtureScript()
+    let child = try fake(body, executable: "/bin/bash")
+    do {
+        var events = child.events.makeAsyncIterator()
+        #expect(try await events.next()?["type"]?.string == "ready")
+        let gate = AsyncStream<Void>.makeStream()
+        let start = ContinuousClock.now
+        let shutdown = Task {
+            var values = gate.stream.makeAsyncIterator()
+            _ = await values.next()
+            return await child.shutdown()
+        }
+        shutdown.cancel()
+        gate.continuation.finish()
+        #expect(await shutdown.value)
+        let elapsed = start.duration(to: .now)
+        #expect(elapsed >= .seconds(1))
+        #expect(elapsed < .seconds(4))
+    } catch { await child.shutdown(); throw error }
+}
+
 @Test func shutdownIsBoundedWhenStdinIsNotDrained() async throws {
     let child = try fake(shutdownFixtureScript(), executable: "/bin/bash")
     let request = Task {

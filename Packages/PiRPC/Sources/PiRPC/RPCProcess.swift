@@ -221,6 +221,11 @@ public final class RPCProcess: @unchecked Sendable {
     @discardableResult
     public func shutdown() async -> Bool {
         lock.withLock { stopping = true }
+        // Cleanup must finish even when the request or observer task was cancelled.
+        return await Task.detached { [self] in await finishShutdown() }.value
+    }
+
+    private func finishShutdown() async -> Bool {
         // Queue the close so a blocked write cannot block the shutdown deadline.
         writer.async { [input] in try? input.close() }
         for _ in 0..<50 {
