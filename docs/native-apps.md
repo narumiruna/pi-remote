@@ -62,7 +62,7 @@ SwiftNIO and NIOSSL provide the production listener. The Network.framework clien
 
 The server identity and device secrets use Keychain. The phone uses `WhenPasscodeSetThisDeviceOnly` with `userPresence` and an authenticated `LAContext`; it has no unauthenticated fallback. The app covers inactive content and invalidates the context on background entry. Three simulator tests inject authentication results: denial and errors retain the lock, background return requires a new decision, and an old success cannot unlock the app or finish a newer attempt. The default evaluator still uses `deviceOwnerAuthentication`; no runtime bypass flag was added. Production TLS tests also prove that revocation closes phone access while Pi keeps working and the Mac can still Stop it. Hardware denial, device-lock and passcode-removal behavior still need physical tests. Saved public connection metadata and drafts use the phone's app storage, not the credential Keychain.
 
-A paired phone has Pi control with the Mac user's permissions. Folder selection is not a tools sandbox. The companion does not bypass macOS permissions and does not expose arbitrary RPC forwarding or a shell endpoint. Provider credentials remain on the Mac. Routine diagnostics do not record prompts, tool output, pairing codes or secrets.
+A paired phone has Pi control with the Mac user's permissions. Folder selection is not a tools sandbox. The companion does not bypass macOS permissions and does not expose arbitrary RPC forwarding. Native core shell controls are approved but not yet implemented; an embedded terminal or PTY remains outside scope. Provider credentials remain on the Mac. Routine diagnostics do not record prompts, tool output, pairing codes or secrets.
 
 ## Resource and recovery limits
 

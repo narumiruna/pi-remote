@@ -2,7 +2,7 @@
 
 ## Result
 
-The current host, client and native controls pass the local checks below against Pi 1.3.0. **The plan is not complete:** the core `bash`/`abort_bash` scope decision remains open. No terminal-only or individual-extension integration is required.
+The current host, client and native controls pass the local checks below against Pi 1.3.0. **The plan is not complete:** the approved core `bash`/`abort_bash` controls and `bash_execution_update` output still need implementation and verification. No terminal-only or individual-extension integration is required.
 
 ## Verified results
 
@@ -20,7 +20,7 @@ The current host, client and native controls pass the local checks below against
 
 The seven installed-Pi targets are `NativeWorkflowCheck`, `NativeResourceCheck`, `NativeFailureCheck`, `NativeRetryCheck`, `NativeUIStateCheck`, `NativeSessionLifecycleCheck` and `NativeInspectionCheck`. These cover generic dialogs, resources, missing credentials, retry, standard UI state, same-child lifecycle and authoritative inspection. Generated extensions are isolated test fixtures, not product dependencies or adapters.
 
-The operation inventory contains all 33 command headings from installed `rpc-commands.md`, all 24 core event types and all nine standard extension UI methods. The [coverage table](native-compatibility.md) separates verified mappings from the remaining shell decision. Inventory alone is not complete acceptance.
+The operation inventory contains all 33 command headings from installed `rpc-commands.md`, all 24 core event types and all nine standard extension UI methods. The [coverage table](native-compatibility.md) separates verified mappings from the remaining approved shell implementation and verification. Inventory alone is not complete acceptance.
 
 Run complete root suites with explicit serial test scheduling:
 
@@ -77,4 +77,4 @@ Earlier attempts had 12 failed executions across ten bundles. Files-picker navig
 
 These checks establish local simulator and laptop behavior only. They do not establish signed installation, physical unlock or camera behavior, off-site reliability, a supported runtime-version range or distribution readiness. iOS 18 and macOS 15 remain build deployment settings, not tested hardware floors. Pi 1.3.0 is the only tested development runtime.
 
-Provider credentials remain on the Mac. Pairing approval, certificate pinning, hostname/validity checks, revocation, directory validation and no-prompt-replay rules remain unchanged. No arbitrary raw RPC or general shell endpoint was added.
+Provider credentials remain on the Mac. Pairing approval, certificate pinning, hostname/validity checks, revocation, directory validation and no-prompt-replay rules remain unchanged. No arbitrary raw RPC or shell controls were added in this checkpoint. The user subsequently approved native core shell controls, but not an embedded terminal or PTY; implementation and verification remain open.

@@ -24,7 +24,7 @@ The following groups list the operations in installed Pi 1.3.0's `docs/rpc-comma
 | State and history | `get_state`, `get_messages`, `get_fork_messages`, `get_entries`, `get_tree`, `get_last_assistant_text`, `get_session_stats` | Native state/transcript, authoritative paged tree/fork options, copy and usage; installed-Pi [inspection](session-inspection.md), copy and statistics checks pass. All 27 compact-interface tests and 31 product tests on each local network pass |
 | Models and thinking | `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels` | Native selection/cycling and discovered choices; installed-Pi and compact-interface [checks pass](runtime-controls.md#core-model-cycling-and-retry-checkpoint) |
 | Runtime controls | `set_steering_mode`, `set_follow_up_mode`, `compact`, `set_auto_compaction`, `set_auto_retry`, `abort_retry` | Confirmed native settings, compaction and retry cancellation; [settings checks](runtime-controls.md) and [active retry/compaction checks](core-event-verification.md) pass |
-| Shell and export | `bash`, `abort_bash`, `export_html` | Reviewed HTML export passes installed, native and product checks. `bash`/`abort_bash` remain unimplemented pending the no-general-shell-endpoint scope decision |
+| Shell and export | `bash`, `abort_bash`, `export_html` | Reviewed HTML export passes installed, native and product checks. Native `bash`/`abort_bash` controls are approved but remain unimplemented and unverified; no embedded terminal or PTY is permitted |
 | Discovery | `get_commands` | Native generic command list and dispatch; private startup/resource checks and active extension-dialog dispatch pass |
 
 ### Event mapping
@@ -43,7 +43,7 @@ The 24 event types in Pi 1.3.0's `json.md` have the following app mappings. This
 | `compaction_start`, `compaction_end` | Phase/error handling and deferred authoritative history refresh | Installed manual compaction and host automatic-compaction regression |
 | `auto_retry_start`, `auto_retry_end` | Retry state, bounded final failure and event-driven settlement | Installed `NativeRetryCheck` and reducer checks |
 | `summarization_retry_scheduled`, `summarization_retry_attempt_start`, `summarization_retry_finished` | Retry/compaction phases restored between attempts | Manual-compaction and branch-summary reducer cases |
-| `bash_execution_update` | Native shell output mapping pending the shell-control decision | Open |
+| `bash_execution_update` | Approved native shell output mapping remains unimplemented | Open |
 | `extension_error` | Generic unsupported-feature error without publishing extension paths or supplied error text | `extensionFailuresAndUnknownUIRequestsDoNotExposePathsOrApproveDialogs` |
 
 ### Standard extension UI mapping
