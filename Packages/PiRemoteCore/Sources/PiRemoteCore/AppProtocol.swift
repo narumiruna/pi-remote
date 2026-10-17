@@ -34,6 +34,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case answer(dialog: String, value: String?, confirmed: Bool?, cancelled: Bool)
     case diff
     case statistics
+    case releaseNotes(offset: Int, revision: String?)
     case exportSession
     case exportJSONL
     case outputImage(id: UUID)
@@ -45,7 +46,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var mutates: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession, .exportJSONL: false
+        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession, .exportJSONL, .releaseNotes: false
         default: true
         }
     }
@@ -59,7 +60,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var needsSession: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .createSession, .importSession, .importSessionInDirectory, .resumeSession: false
+        case .snapshot, .synchronize, .directories, .preview, .createSession, .importSession, .importSessionInDirectory, .resumeSession, .releaseNotes: false
         default: true
         }
     }
@@ -96,6 +97,7 @@ public enum AppResult: Codable, Sendable, Equatable {
     case history([HistoryItem])
     case historyPage(HistoryPage)
     case statistics(SessionStatistics)
+    case releaseNotes(ReleaseNotesPage)
     case exportSession(SessionExport)
     case image(ImageAttachment)
     case runtimeSettings(RuntimeSettings)

@@ -17,6 +17,7 @@ The full Pi workflow review remains open. Local model/transport setup checks pas
 - One active companion-managed Pi session per Mac, with its working directory saved and checked on resume.
 - Streamed text and thinking, native Markdown blocks, fenced code, expandable tool output and authenticated native image viewing.
 - Native prompts, steering, follow-up, Stop, model/thinking controls, confirmed queue/compaction settings, command discovery and supported extension dialogs.
+- Paged, read-only [installed Pi release notes](docs/release-notes.md), without starting Pi or opening links.
 - Explicit last-response copy and idle-session close/reopen controls; copying uses local-device clipboard options.
 - Consent-based HTML (full tree) and JSONL (active branch) export through the native file picker, with no automatic upload; see [export limits and checks](docs/session-export.md).
 - Explicit reviewed JSONL import (versions 1–3) into companion-owned storage with Pi-managed legacy migration, with validated saved or explicitly chosen directories and no prompt replay; see [import limits and checks](docs/session-import.md).

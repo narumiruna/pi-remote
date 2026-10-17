@@ -65,7 +65,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var epoch: UUID
     public var sequence: UInt64 = 0
     public var piVersion = "Not running"
-    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics", "output-images", "last-assistant", "runtime-settings", "close-session", "session-export", "session-import", "session-jsonl-export", "session-import-directory"]
+    public var capabilities = ["directories", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics", "output-images", "last-assistant", "runtime-settings", "close-session", "session-export", "session-import", "session-jsonl-export", "session-import-directory", "pi-release-notes"]
     public var sessions: [SessionInfo] = []
     public var selected: UUID?
     public var phase = "idle"

@@ -59,6 +59,11 @@ struct SessionControls: View {
                     Text(session.directory).font(.caption.monospaced()).textSelection(.enabled)
                 }
             }
+            if state.capabilities.contains("pi-release-notes") {
+                Section("Installed Pi") {
+                    NavigationLink("Pi release notes") { ReleaseNotesView(request: request) }.frame(minHeight: 44)
+                }
+            }
             Section("Pi") {
                 Text("Version: " + state.piVersion).font(.caption)
                 Picker("Model", selection: Binding(get: { state.model }, set: { value in

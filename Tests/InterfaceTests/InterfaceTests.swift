@@ -83,6 +83,26 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
     }
 
+    func testReleaseNotesPageNavigationAndReload() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let notes = app.buttons["Pi release notes"]
+        reveal(notes, app: app); notes.tap()
+        XCTAssertTrue(app.navigationBars["Pi release notes"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Pi 1.3.0"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["# Release fixture\nNative page one 🦉"].exists)
+        XCTAssertFalse(app.buttons["Previous"].isEnabled)
+        reachable(app.buttons["Next"], app: app); app.buttons["Next"].tap()
+        XCTAssertTrue(app.staticTexts["Native page two — final notes"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Next"].isEnabled)
+        app.buttons["Previous"].tap()
+        XCTAssertTrue(app.staticTexts["# Release fixture\nNative page one 🦉"].waitForExistence(timeout: 5))
+        app.buttons["Next"].tap(); app.buttons["Reload"].tap()
+        XCTAssertTrue(app.staticTexts["# Release fixture\nNative page one 🦉"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Previous"].isEnabled)
+        capture(app, "compact-native-release-notes")
+    }
+
     func testLightConversationWithKeyboardStopAndRetainedDraft() throws {
         let app = launch(["working"])
         try audit(app)

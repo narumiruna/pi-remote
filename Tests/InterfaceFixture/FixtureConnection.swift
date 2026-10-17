@@ -116,6 +116,15 @@ actor FixtureConnection: PhoneConnection {
         defer { if action.mutates { publish() } }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .releaseNotes(let offset, let revision):
+            let first = "# Release fixture\nNative page one 🦉"
+            let second = "Native page two — final notes"
+            let current = String(repeating: "a", count: 64)
+            guard revision == nil || revision == current else { throw RemoteFault.expired }
+            guard offset == 0 || offset == first.utf8.count else { throw RemoteFault.invalidRequest }
+            return .releaseNotes(ReleaseNotesPage(version: "1.3.0", revision: current, offset: offset,
+                totalBytes: first.utf8.count + second.utf8.count, text: offset == 0 ? first : second,
+                next: offset == 0 ? first.utf8.count : nil))
         case .exportJSONL:
             guard !snapshot.working else { throw RemoteFault.busy }
             return .exportSession(SessionExport(data: Data(Self.sessionJSONL.utf8), format: .jsonl))

@@ -140,6 +140,8 @@ public actor HostCoordinator {
         if action.mutates { snapshot.error = nil }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .releaseNotes(let offset, let revision):
+            return .releaseNotes(try PiReleaseNotes.page(executable: executable, offset: offset, revision: revision))
         case .outputImage(let id): return .image(try outputImages.image(id))
         case .lastAssistant:
             let data = try await requireRPC().request("get_last_assistant_text")
