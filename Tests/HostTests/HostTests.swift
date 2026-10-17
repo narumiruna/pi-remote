@@ -999,10 +999,10 @@ func jsonlExportRejectsInvalidLiveStateAndBoundsTheResponse(mode: String) async 
     let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: root.appendingPathComponent("missing-pi"))
     await host.inspectPi()
     #expect(await host.state().piVersion == "Unavailable")
-    #expect(await host.state().error == .unavailable)
+    #expect(await host.state().error == .piLaunchFailed)
     let directory = try await host.directories.register(root)
     let request = AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory))
-    #expect(await host.handle(request, device: UUID()) == .failure(.unavailable))
+    #expect(await host.handle(request, device: UUID()) == .failure(.piLaunchFailed))
     #expect(await host.state().working == false)
     await host.shutdown()
 }

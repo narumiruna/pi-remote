@@ -109,7 +109,9 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 
 ### Design principles
 
-- Use a clean, minimal native interface with the conversation as the primary screen; do not reproduce the terminal layout or add a dashboard.
+- Use a clean native interface with the conversation as the primary work area; do not reproduce a terminal or web dashboard.
+  - On Mac, use a persistent workspace/session sidebar and an optional Files/Tools/Activity inspector. Keep the conversation wider than either secondary pane. Preserve the white appearance and blue accent; do not add themes.
+  - Keep the iPhone conversation-first layout and existing core RPC contracts.
 - Use system typography, consistent spacing, restrained color, and standard SwiftUI controls; reserve monospaced text for code, paths, and tool output.
 - Support light and dark appearance, Dynamic Type, VoiceOver, sufficient contrast, and touch targets of at least 44 × 44 points.
 - Show secondary controls only when needed, without removing supported Pi capabilities or hiding errors, connection loss, or active work.
@@ -131,8 +133,8 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 - Support typed or pasted absolute Mac paths and `~/folder` with an explicit Go action. Resolve and validate on the Mac without shell expansion or folder creation. Go must not start Pi; require explicit selection of the resolved folder. An edited, failed or pending path must not start a session in the previous folder.
 - Show session titles and working directories in the session list so sessions in different folders are easy to distinguish.
 - Keep pairing and connection settings outside the normal coding flow after setup; show recovery actions when the connection fails.
-- In the Mac companion, show server status separately from session status. Make Start server and Pair iPhone the setup actions. Put maintenance and paired-device details in Connection settings; keep identity replacement under Advanced.
-- Bound Mac sheets to the parent window, scroll long forms and keep Close visible. Before session selection, show explicit folder/saved-session actions instead of an inactive composer.
+- In the Mac app, distinguish listener, authenticated device connections and Pi process status. Local work does not require a listener. Put network, executable and folder access in Settings, pairing/revocation in Devices, and identity replacement under Settings → Advanced.
+- Bound Mac sheets to the parent window, scroll long forms and keep Close visible. Before session selection, show workspace/session actions instead of an inactive composer. Persist workspace visibility, expansion, selected metadata, inspector/layout preferences and bounded unsent drafts. UI selection must not activate a saved session while another is working.
 
 ## Architecture
 
@@ -262,6 +264,14 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [x] Implement snapshot synchronization, event replay, request deduplication, and bounded buffers; tests pass active-run reconnection with identical final messages and one dispatch, contiguous state replay, expired-cursor/epoch fallback, unknown outcomes and UTF-8 output limits.
 - [ ] Verify local use in the normally launched Mac app: choose a folder, start installed Pi, send an instruction, view its reply and stop work without starting the server or pairing a phone. The reported GUI-PATH failure is reproduced and the fnm runtime-discovery fix passes focused installed-Pi and local-model checks; the normally launched GUI flow still needs confirmation after rebuilding. Model tests and hosted-view captures do not complete this check.
 - [x] Implement menu-bar status and local session controls; prove local and remote actions share the same serialized session state. The unsigned Mac app builds, and `PiRemoteMacTests` passes the production `CompanionModel` against a paired TLS client: shared transcript/run state, local Send/follow-up/Stop, remote steering, cross-client mutation exclusion, dialog completion and stale-action rejection.
+
+### Mac workspace redesign checkpoint
+
+- [x] Group managed sessions by canonical working directory; add, expand, select and remove workspace entries without deleting files or sessions.
+- [x] Create sessions in the selected workspace; offer native/manual folder choice and recent workspaces otherwise. Reuse existing opaque-directory and lifecycle APIs.
+- [x] Restore saved conversations without prompt replay; keep UI selection separate from execution and reject activation while work is active. Preserve per-session drafts across switches and app restarts.
+- [x] Provide resizable sidebar/inspector panes, Files/Tools/Activity, keyboard shortcuts, native selection, context menus and separate Settings/Devices pages. Keep the light appearance and existing security confirmations.
+- [x] Verify 12 focused Mac tests, 142 root tests and an unsigned iOS simulator build. Review active 1300 × 800 and minimum 900 × 600 layouts. Verify unchanged project/signing hashes. See [workspace evidence and limits](docs/mac-interface.md#workspace-redesign-verification).
 
 ### 4. Build the iOS client
 

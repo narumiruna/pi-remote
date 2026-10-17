@@ -14,6 +14,7 @@ struct ConversationView<Extras: View>: View {
     @State private var followingOutput = true
     @State private var userScrolling = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var canCompose: Bool { state.selected != nil && !["unavailable", "interrupted", "recovering", "starting", "stopping"].contains(state.phase) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,8 +23,8 @@ struct ConversationView<Extras: View>: View {
                     // The host bounds this view to 100 messages and 256 KiB. Eager layout keeps live row heights stable.
                     VStack(alignment: .leading, spacing: 20) {
                         if state.messages.isEmpty {
-                            ContentUnavailableView(state.selected == nil ? "No session selected" : "Ready for a task", systemImage: "bubble.left.and.text.bubble.right",
-                                                   description: Text(state.selected == nil ? "Choose a folder and start a session, then send an instruction." : "Send an instruction to start working in this session."))
+                            ContentUnavailableView(state.selected == nil ? "No session selected" : (!canCompose ? "Pi is not running" : (state.working ? "Pi is working" : "Ready for a task")), systemImage: "bubble.left.and.text.bubble.right",
+                                                   description: Text(state.selected == nil ? "Choose a folder and start a session, then send an instruction." : (!canCompose ? "Open the saved session to continue. Previous instructions are not resent." : (state.working ? "Waiting for output. Stop remains available." : "Send an instruction to start working in this session."))))
                                 .frame(maxWidth: .infinity)
                         }
                         if state.hasOlderMessages {
@@ -65,6 +66,9 @@ struct ConversationView<Extras: View>: View {
                                     if message.isError { Label("Pi reported an error", systemImage: "exclamationmark.triangle").foregroundStyle(.primary).font(.caption) }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .contextMenu {
+                                    Button("Copy message") { try? LocalClipboard.copy(message.text) }.disabled(message.text.isEmpty)
+                                }
                             }
                         }
                         Color.clear.frame(height: 1).id("latest")
@@ -120,6 +124,7 @@ struct ConversationView<Extras: View>: View {
                     TextField("Message Pi", text: $text, prompt: Text("Message Pi").foregroundColor(.primary.opacity(0.75)), axis: .vertical)
                         .lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 2 : 6)).textFieldStyle(.plain)
                         .accessibilityLabel("Instruction").accessibilityIdentifier("instruction")
+                        .disabled(!canCompose)
                     if state.working {
                         Button(action: stop) {
                             Label("Stop", systemImage: "stop.fill").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
@@ -131,7 +136,7 @@ struct ConversationView<Extras: View>: View {
                         Label("Send", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                     }
                         .buttonStyle(.borderedProminent).foregroundStyle(.background).accessibilityLabel("Send")
-                        .disabled(sending || state.selected == nil)
+                        .disabled(sending || !canCompose)
                         .keyboardShortcut(.return, modifiers: .command)
                 }
             }

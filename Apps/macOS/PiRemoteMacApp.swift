@@ -15,8 +15,9 @@ struct PiRemoteMacApp: App {
     @State private var model = CompanionModel.shared
     var body: some Scene {
         WindowGroup("Pi Remote for Mac", id: "session") {
-            CompanionWindow(model: model).frame(minWidth: 540, minHeight: 560).task { model.observe() }
+            CompanionWindow(model: model).frame(minWidth: 900, minHeight: 600).task { model.observe() }
         }
+        .defaultSize(width: 1200, height: 760)
         MenuBarExtra("Pi Remote", systemImage: "sparkle") {
             CompanionMenu(model: model)
         }

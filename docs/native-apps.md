@@ -83,7 +83,7 @@ A paired phone has Pi control with the Mac user's permissions. Folder selection 
 
 ## Mac setup and folder paths
 
-The Mac window now separates server and session status. Use **Start server**, then **Pair iPhone**; maintenance, paired-device details and Advanced identity replacement are in **Connection settings**. No session means explicit folder/saved-session actions, not an inactive composer. Mac sheets use bounded frames, scrollable grouped forms and a pinned Close action. Paired devices indicate saved access, not live connections.
+The Mac window uses a workspace/session sidebar and a collapsible Files/Tools/Activity inspector. Local sessions do not require a listener. Network, executable and folder controls are in **Settings**; pairing and confirmed revocation are in **Devices**. The header separates listener, authenticated device connections and Pi execution. Saved pairing alone does not mean connected. Mac sheets use bounded frames, scrollable forms and a pinned Close action. See [workspace behavior and checks](mac-interface.md#workspace-redesign-verification).
 
 The folder picker accepts an absolute Mac path or `~/folder`. **Go** opens a validated canonical directory and does not start Pi. **Start Pi Here** remains separate and is disabled while edited path text is unvalidated. Read/search permissions, symbolic-link checks, authenticated access and opaque launch IDs remain in force. Missing paths are not created; shell variables, relative paths and `~otheruser` are not expanded. See [current UI/path checks](mac-interface.md).
 

@@ -35,6 +35,7 @@ public actor AppServer {
     private var peers: [UUID: Peer] = [:]
     private var pending: PendingPair?
     private var pairingObservers: [UUID: AsyncStream<PendingPair?>.Continuation] = [:]
+    private var connectionObservers: [UUID: AsyncStream<Set<UUID>>.Continuation] = [:]
     private var timer: Task<Void, Never>?
     private var observation: Task<Void, Never>?
     private var running = false
@@ -45,6 +46,27 @@ public actor AppServer {
     }
 
     public func isRunning() -> Bool { running }
+
+    public func connectedDeviceIDs() -> Set<UUID> {
+        Set(peers.values.compactMap { peer in
+            guard peer.lease.valid, !peer.closing, case .authenticated(let device) = peer.phase else { return nil }
+            return device
+        })
+    }
+
+    public func connectionUpdates() -> AsyncStream<Set<UUID>> {
+        let id = UUID()
+        let result = AsyncStream<Set<UUID>>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        connectionObservers[id] = result.continuation
+        result.continuation.yield(connectedDeviceIDs())
+        result.continuation.onTermination = { [weak self] _ in Task { await self?.removeConnectionObserver(id) } }
+        return result.stream
+    }
+    private func removeConnectionObserver(_ id: UUID) { connectionObservers.removeValue(forKey: id) }
+    private func publishConnections() {
+        let devices = connectedDeviceIDs()
+        for observer in connectionObservers.values { observer.yield(devices) }
+    }
 
     public func pairingUpdates() -> AsyncStream<PendingPair?> {
         let id = UUID()
@@ -159,6 +181,7 @@ public actor AppServer {
                 }
                 peers[id]?.phase = .authenticated(device)
                 peers[id]?.deadline = ProcessInfo.processInfo.systemUptime + 60
+                publishConnections()
                 send(.authenticated(host: coordinator.hostID, epoch: coordinator.epoch), to: id)
             } catch { send(.denied, to: id, closeAfter: true); return }
         case (.authenticated(let device), .request(let request)):
@@ -245,6 +268,7 @@ public actor AppServer {
         peer.lease.revoke()
         for task in peer.requests.values { task.cancel() }
         peer.connection.cancel()
+        if case .authenticated = peer.phase { publishConnections() }
         if pending?.id == id { publishPair(nil) }
     }
     public func stop() async {

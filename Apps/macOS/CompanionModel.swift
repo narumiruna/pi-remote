@@ -9,7 +9,29 @@ import PiRemoteSecurity
 final class CompanionModel {
     static let shared = CompanionModel()
     var state = HostSnapshot(host: UUID(), epoch: UUID())
-    var text = ""
+    var text = "" { didSet { scheduleDraftSave() } }
+    var destination: MacDestination? = .overview { didSet { saveWorkspacePreferences() } }
+    var inspectorVisible = false { didSet { saveWorkspacePreferences() } }
+    var addedWorkspaces: [String] = []
+    var hiddenWorkspaces = Set<String>()
+    var expandedWorkspaces = Set<String>()
+    var openingSession = false
+    var connectedDevices = Set<UUID>()
+    var draftSaveError: String?
+    var workspaces: [MacWorkspace] {
+        let paths = Set(addedWorkspaces).union(state.sessions.map(\.directory)).subtracting(hiddenWorkspaces)
+        return paths.sorted().map { path in
+            MacWorkspace(directory: path, sessions: state.sessions.filter { $0.directory == path }.sorted { $0.updated > $1.updated })
+        }
+    }
+    var selectedWorkspace: String? {
+        switch destination {
+        case .workspace(let path): return path
+        case .session(let id): return state.sessions.first(where: { $0.id == id })?.directory
+        default: return nil
+        }
+    }
+    var connectionStatus: String { !listening ? "Remote access off" : (connectedDevices.isEmpty ? "No devices connected" : "\(connectedDevices.count) device\(connectedDevices.count == 1 ? "" : "s") connected") }
     var delivery = Delivery.prompt
     var sending = false
     var confirmResend = false
@@ -32,6 +54,14 @@ final class CompanionModel {
     var serverStatus: String { starting ? "Server: Updating" : (listening ? "Server: Listening" : "Server: Stopped") }
     var serverEndpoint: String { "wss://\(address):7443" }
     var sessionStatus: String { state.selected == nil ? "Session: None" : "Session: \(state.phase)" }
+    var piStatus: String {
+        guard state.selected != nil else { return "Pi: Not started" }
+        switch state.phase {
+        case "unavailable", "interrupted": return "Pi: Not running"
+        case "recovering": return "Pi: Status uncertain"
+        default: return "Pi: " + state.phase.capitalized
+        }
+    }
     var code = ""
     var pending: PendingPair?
     var devices: [PairedDevice] = []
@@ -49,6 +79,10 @@ final class CompanionModel {
     @ObservationIgnored private var identity: ServerIdentity?
     @ObservationIgnored private var observation: Task<Void, Never>?
     @ObservationIgnored private var pairingObservation: Task<Void, Never>?
+    @ObservationIgnored private var connectionObservation: Task<Void, Never>?
+    @ObservationIgnored private var draftSave: Task<Void, Never>?
+    @ObservationIgnored private var rememberedWorkspace: String?
+    @ObservationIgnored private var rememberedSession: UUID?
     @ObservationIgnored private var codeExpiry: Task<Void, Never>?
     @ObservationIgnored private var lastDraft: UUID?
     @ObservationIgnored private var draftSession: UUID?
@@ -67,6 +101,14 @@ final class CompanionModel {
         ]
         piPath = defaults.string(forKey: "piExecutable") ?? candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) ?? "/usr/local/bin/pi"
         address = addresses.first(where: { $0.address != "127.0.0.1" })?.address ?? "127.0.0.1"
+        if let data = defaults.data(forKey: "workspacePreferences"), let saved = try? JSONDecoder().decode(MacWorkspacePreferences.self, from: data) {
+            addedWorkspaces = saved.added; hiddenWorkspaces = saved.hidden; expandedWorkspaces = saved.expanded
+            inspectorVisible = saved.inspectorVisible
+            rememberedWorkspace = saved.workspace; rememberedSession = saved.session
+            destination = saved.session.map(MacDestination.session) ?? saved.workspace.map(MacDestination.workspace) ?? .overview
+        }
+        if let data = defaults.data(forKey: "sessionDrafts"), data.count <= 8 * 1_024 * 1_024,
+           let saved = try? JSONDecoder().decode([UUID: String].self, from: data) { drafts = saved }
         do {
             coordinator = try HostCoordinator(support: support, executable: URL(fileURLWithPath: piPath))
             registry = try DeviceRegistry(secrets: secrets, metadata: support.appendingPathComponent("devices.json"))
@@ -91,7 +133,11 @@ final class CompanionModel {
                     self.draftSession = state.selected; self.editorOffer = nil
                     self.text = state.selected.flatMap { self.drafts[$0] } ?? ""
                 }
+                let previous = self.state.selected
                 self.state = state
+                if previous != state.selected, self.destination == previous.map(MacDestination.session), let id = state.selected {
+                    self.destination = .session(id)
+                }
                 if let draftID = state.draftID, draftID != self.lastDraft {
                     self.lastDraft = draftID
                     if self.text.isEmpty { self.text = state.draft ?? "" }
@@ -186,6 +232,13 @@ final class CompanionModel {
                 self.server = server
                 _ = try await server.start(identity: identity, address: address)
                 listening = true
+                let connections = await server.connectionUpdates()
+                connectionObservation = Task { [weak self] in
+                    for await devices in connections {
+                        guard let self, !Task.isCancelled, self.server === server else { return }
+                        self.connectedDevices = devices
+                    }
+                }
                 let updates = await server.pairingUpdates()
                 pairingObservation = Task { [weak self] in
                     for await value in updates {
@@ -204,6 +257,7 @@ final class CompanionModel {
         Task {
             await server?.stop(); server = nil; listening = false; code = ""
             pairingObservation?.cancel(); pairingObservation = nil
+            connectionObservation?.cancel(); connectionObservation = nil; connectedDevices = []
         }
     }
 
@@ -251,6 +305,7 @@ final class CompanionModel {
             defer { starting = false }
             await server?.stop(); server = nil; listening = false; code = ""
             pairingObservation?.cancel(); pairingObservation = nil; codeExpiry?.cancel(); codeExpiry = nil
+            connectionObservation?.cancel(); connectionObservation = nil; connectedDevices = []
             do {
                 for device in await registry.list() {
                     try Task.checkCancellation()
@@ -284,7 +339,141 @@ final class CompanionModel {
         shuttingDown = true
         startup?.cancel()
         if let startup { await startup.value }
-        observation?.cancel(); pairingObservation?.cancel(); codeExpiry?.cancel()
+        observation?.cancel(); pairingObservation?.cancel(); connectionObservation?.cancel(); codeExpiry?.cancel()
+        draftSave?.cancel(); persistDrafts()
         await server?.stop(); await coordinator?.shutdown()
     }
+
+    func chooseWorkspace(startSession: Bool = false) {
+        let picker = NSOpenPanel()
+        picker.canChooseDirectories = true; picker.canChooseFiles = false; picker.allowsMultipleSelection = false
+        picker.prompt = startSession ? "Start Pi here" : "Add workspace"
+        picker.message = "Choose a local Mac working directory. Pi runs with your Mac permissions."
+        guard picker.runModal() == .OK, let url = picker.url else { return }
+        Task {
+            do {
+                try await addWorkspace(path: url.path); panel = nil
+                if startSession { await createSession(in: url.path) }
+            } catch { fault = error as? RemoteFault ?? .unavailable }
+        }
+    }
+
+    func setExpanded(_ path: String, expanded: Bool) {
+        if expanded { expandedWorkspaces.insert(path) } else { expandedWorkspaces.remove(path) }
+        saveWorkspacePreferences()
+    }
+
+    func addWorkspace(path: String) async throws {
+        guard case .directories(let page) = try await request(.directoryAtPath(path: path)) else { throw RemoteFault.invalidRequest }
+        if !addedWorkspaces.contains(page.path) {
+            guard addedWorkspaces.count < 256 else { throw RemoteFault.capacity }
+            addedWorkspaces.append(page.path)
+        }
+        hiddenWorkspaces.remove(page.path); expandedWorkspaces.insert(page.path)
+        destination = .workspace(page.path); saveWorkspacePreferences()
+    }
+
+    func removeWorkspace(_ path: String) {
+        addedWorkspaces.removeAll { $0 == path }; hiddenWorkspaces.insert(path); expandedWorkspaces.remove(path)
+        if rememberedWorkspace == path || state.sessions.contains(where: { $0.id == rememberedSession && $0.directory == path }) {
+            rememberedWorkspace = nil; rememberedSession = nil
+        }
+        if selectedWorkspace == path { destination = .overview }
+        saveWorkspacePreferences()
+    }
+
+    func openSession(_ id: UUID) async {
+        destination = .session(id)
+        guard state.selected != id || ["unavailable", "interrupted"].contains(state.phase) else { return }
+        guard !openingSession, !state.working else { fault = .busy; return }
+        openingSession = true
+        defer { openingSession = false }
+        do { _ = try await request(.resumeSession(id: id)) }
+        catch { fault = error as? RemoteFault ?? .unavailable }
+    }
+
+    @discardableResult func createSession(in path: String) async -> Bool {
+        guard !openingSession, !state.working else { fault = .busy; return false }
+        openingSession = true
+        defer { openingSession = false }
+        do {
+            let displayed = state.context
+            guard case .directories(let page) = try await scopedRequest(for: state)(.directoryAtPath(path: path)), state.context == displayed else { throw RemoteFault.conflict }
+            _ = try await scopedRequest(for: state)(.createSession(directory: page.id))
+            if let coordinator, let id = await coordinator.state().selected { destination = .session(id) }
+            return true
+        } catch { fault = error as? RemoteFault ?? .unavailable; return false }
+    }
+
+    func revealWorkspace(_ path: String) {
+        Task {
+            do {
+                guard case .directories(let page) = try await request(.directoryAtPath(path: path)) else { throw RemoteFault.invalidRequest }
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: page.path)
+            } catch { fault = error as? RemoteFault ?? .unavailable }
+        }
+    }
+
+    func revealEntry(_ id: UUID, directory: Bool) {
+        Task {
+            do {
+                guard let coordinator else { throw RemoteFault.unavailable }
+                let path = try await coordinator.directories.resolve(id, directory: directory)
+                NSWorkspace.shared.activateFileViewerSelecting([path.url])
+            } catch { fault = error as? RemoteFault ?? .unavailable }
+        }
+    }
+
+    func copy(_ value: String) {
+        do { try LocalClipboard.copy(value) } catch { fault = error as? RemoteFault ?? .unavailable }
+    }
+
+    private func saveWorkspacePreferences() {
+        switch destination {
+        case .session(let id):
+            rememberedSession = id
+            if let path = state.sessions.first(where: { $0.id == id })?.directory { rememberedWorkspace = path }
+        case .workspace(let path): rememberedWorkspace = path; rememberedSession = nil
+        default: break
+        }
+        let saved = MacWorkspacePreferences(added: addedWorkspaces, hidden: hiddenWorkspaces, expanded: expandedWorkspaces,
+                                            workspace: rememberedWorkspace, session: rememberedSession, inspectorVisible: inspectorVisible)
+        if let data = try? JSONEncoder().encode(saved) { defaults.set(data, forKey: "workspacePreferences") }
+    }
+
+    private func scheduleDraftSave() {
+        guard let session = draftSession else { return }
+        drafts[session] = text
+        draftSave?.cancel()
+        draftSave = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+            self?.persistDrafts()
+        }
+    }
+
+    private func persistDrafts() {
+        guard drafts.values.allSatisfy({ $0.utf8.count <= 256 * 1_024 }),
+              let data = try? JSONEncoder().encode(drafts), data.count <= 8 * 1_024 * 1_024 else {
+            draftSaveError = "This draft is too large to save locally. Copy it before closing the app."; return
+        }
+        defaults.set(data, forKey: "sessionDrafts"); draftSaveError = nil
+    }
+}
+
+enum MacDestination: Hashable { case overview, workspace(String), session(UUID), devices, settings }
+
+struct MacWorkspace: Identifiable, Equatable {
+    let directory: String
+    var sessions: [SessionInfo]
+    var id: String { directory }
+    var name: String { URL(fileURLWithPath: directory).lastPathComponent.isEmpty ? directory : URL(fileURLWithPath: directory).lastPathComponent }
+}
+
+private struct MacWorkspacePreferences: Codable {
+    var added: [String]
+    var hidden: Set<String>
+    var expanded: Set<String>
+    var workspace: String?
+    var session: UUID?
+    var inspectorVisible: Bool
 }

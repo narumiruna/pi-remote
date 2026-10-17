@@ -7,6 +7,9 @@ struct DirectoryBrowser: View {
     var attach: ((FilePreview) throws -> Void)? = nil
     var selectionTitle = "Start Pi Here"
     var pathEntry = false
+    var initialPath: String? = nil
+    var relativeTo: String? = nil
+    var reveal: ((UUID, Bool) -> Void)? = nil
     var selected: (UUID, String) async throws -> Void
     @State private var typedPath = ""
     @FocusState private var editingPath: Bool
@@ -82,6 +85,7 @@ struct DirectoryBrowser: View {
                     Button("Previous page") { browser.previous() }.frame(minHeight: 44).disabled(loading)
                 }
                 ForEach(Array((page?.items ?? []).enumerated()), id: \.offset) { _, item in
+                    Group {
                     if let fault = item.fault {
                         VStack(alignment: .leading) {
                             Label(item.name, systemImage: "exclamationmark.triangle")
@@ -93,6 +97,19 @@ struct DirectoryBrowser: View {
                     } else if !selecting {
                         Button { Task { await browser.openPreview(item.id, request: request) } } label: { Label(item.name, systemImage: "doc") }
                             .frame(minHeight: 44)
+                    }
+                    }
+                    .contextMenu {
+                        if item.fault == nil, let page {
+                            let full = URL(fileURLWithPath: page.path).appendingPathComponent(item.name).path
+                            let prefix = relativeTo.map { $0 == "/" ? "/" : $0 + "/" }
+                            let relative = prefix.flatMap { full.hasPrefix($0) ? String(full.dropFirst($0.count)) : nil }
+                            Button(relative == nil ? "Copy path" : "Copy relative path") {
+                                do { try LocalClipboard.copy(relative ?? full) }
+                                catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                            }
+                            if let reveal { Button("Show in Finder") { reveal(item.id, item.isDirectory) } }
+                        }
                     }
                 }
                 if page?.next != nil {
@@ -116,7 +133,10 @@ struct DirectoryBrowser: View {
             }
         }
         .navigationTitle(selecting ? "Choose a Mac folder" : "Mac files")
-        .task { await browser.open(nil, request: request) }
+        .task {
+            if let initialPath { await browser.open(path: initialPath, request: request) }
+            else { await browser.open(nil, request: request) }
+        }
         .onChange(of: page?.path) { _, value in if let value { typedPath = value } }
         .sheet(isPresented: Binding(get: { browser.preview != nil }, set: { if !$0 { browser.preview = nil } })) {
             if let preview = browser.preview { FilePreviewView(preview: preview, request: request, attach: attach) }

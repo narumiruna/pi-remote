@@ -109,11 +109,12 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --session-dir) folder=$2; shift 2 ;;
         --session-id) session=$2; shift 2 ;;
+        --session) file=$2; session=${file##*/}; session=${session%.jsonl}; shift 2 ;;
         *) shift ;;
     esac
 done
 file="$folder/$session.jsonl"
-printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+if [ ! -f "$file" ]; then printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"; fi
 streaming=false
 reply() { printf '{"id":"%s","type":"response","command":"%s","success":true,"data":%s}\n' "$id" "$command" "$1"; }
 while IFS= read -r line; do
@@ -124,12 +125,13 @@ while IFS= read -r line; do
         get_available_models) reply '{"models":[]}' ;;
         get_available_thinking_levels) reply '{"levels":["off","low"]}' ;;
         get_commands) reply '{"commands":[{"name":"ask","source":"extension"}]}' ;;
-        get_messages) reply '{"messages":[]}' ;;
+        get_messages) if [ -f "$file.messages" ]; then IFS= read -r history < "$file.messages"; reply "{\"messages\":$history}"; else reply '{"messages":[]}'; fi ;;
+        switch_session) file=$(printf '%s' "$line" | /usr/bin/plutil -extract sessionPath raw -o - -); session=${file##*/}; session=${session%.jsonl}; streaming=false; reply '{"cancelled":false}' ;;
         new_session) session=$(/usr/bin/uuidgen); file="$folder/$session.jsonl"; streaming=false; printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"; reply '{"cancelled":false}' ;;
         prompt)
             case "$line" in
                 *'/ask'*) pending=$id; printf '{"type":"extension_ui_request","id":"local-question","method":"confirm","title":"Test confirmation"}\n' ;;
-                *) printf x >> "$folder/accepted"; streaming=true; reply '{"disposition":"started"}'; printf '{"type":"agent_start"}\n{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Shared state"}]}}\n' ;;
+                *) printf x >> "$folder/accepted"; printf '[{"role":"assistant","content":[{"type":"text","text":"Shared state"}]}]\n' > "$file.messages"; streaming=true; reply '{"disposition":"started"}'; printf '{"type":"agent_start"}\n{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Shared state"}]}}\n' ;;
             esac ;;
         steer|follow_up) printf x >> "$folder/accepted"; reply '{"disposition":"queued"}' ;;
         extension_ui_response) printf '{"id":"%s","type":"response","command":"prompt","success":true,"data":{"disposition":"handled"}}\n' "$pending" ;;
@@ -155,6 +157,10 @@ done
         let client = RemoteClient(secrets: store)
         model.observe()
         do {
+            // Adding a workspace is not session activation and must not start Pi.
+            try await model.addWorkspace(path: root.path)
+            let beforeSession = await host.state()
+            XCTAssertTrue(beforeSession.sessions.isEmpty)
             // Local creation must work before any listener or phone connection.
             let directory = try await host.directories.register(root)
             try await host.setExecutable(root.appendingPathComponent("missing-pi"))
@@ -187,9 +193,16 @@ done
                 }
             }
             defer { approval.cancel() }
-            let mac = try await client.pair(code: code, device: UUID(), name: "Fixture phone")
+            let connections = await server.connectionUpdates()
+            var connected = Set<UUID>()
+            let connectionWatch = Task { for await devices in connections { connected = devices } }
+            defer { connectionWatch.cancel() }
+            let phoneID = UUID()
+            let mac = try await client.pair(code: code, device: phoneID, name: "Fixture phone")
             try await approval.value
+            XCTAssertTrue(connected.isEmpty, "Pairing alone is not an authenticated connection")
             try await client.connect(mac)
+            try await waitUntil { connected.contains(phoneID) }
             model.text = "Kept draft"
             try model.attachText(FilePreview(name: "fixture.swift", text: "let attached = 42", truncated: false), context: model.state.context)
             XCTAssertTrue(model.text.hasPrefix("Kept draft\n\nFile: fixture.swift"))
@@ -234,6 +247,7 @@ done
             try await waitUntil { model.state.dialogs.isEmpty }
             XCTAssertNil(model.panel)
             let oldAction = model.scopedRequest(for: model.state)
+            model.text = "Unsent first-session draft"
             _ = try await client.request(.createSession(directory: directory))
             try await waitUntil { model.state.selected != first }
             do {
@@ -241,9 +255,105 @@ done
                 XCTFail("Stale local action must not target the new session")
             } catch { XCTAssertEqual(error as? RemoteFault, .conflict) }
             XCTAssertEqual(try Data(contentsOf: accepted).count, 4)
+            let second = try XCTUnwrap(model.state.selected)
+            model.text = "Unsent second-session draft"
+            await model.openSession(first)
+            try await waitUntil { model.state.selected == first && model.state.phase == "idle" && model.text == "Unsent first-session draft" }
+            XCTAssertEqual(model.state.messages.last?.text, "Shared state")
+            await model.openSession(second)
+            try await waitUntil { model.state.selected == second && model.state.phase == "idle" && model.text == "Unsent second-session draft" }
+            XCTAssertEqual(try Data(contentsOf: accepted).count, 4, "Restoration must not replay prompts")
+            model.text = "Busy switching check"; model.send()
+            try await waitUntil { !model.sending && model.state.working }
+            await model.openSession(first)
+            XCTAssertEqual(model.destination, .session(first), "Sidebar selection is independent of execution")
+            XCTAssertEqual(model.state.selected, second)
+            XCTAssertTrue(model.state.working, "Selecting a saved session must not stop active work")
+            XCTAssertEqual(model.fault, .busy)
+            model.stopWork()
+            try await waitUntil { !model.state.working }
+            model.text = "Unsent second-session draft"
+            try await server.revoke(phoneID)
+            try await waitUntil { connected.isEmpty }
         } catch {
             await client.disconnect(); await server.stop(); await model.shutdown(); throw error
         }
         await client.disconnect(); await server.stop(); await model.shutdown()
+        let savedDrafts = try JSONDecoder().decode([UUID: String].self, from: try XCTUnwrap(defaults.data(forKey: "sessionDrafts")))
+        XCTAssertTrue(savedDrafts.values.contains("Unsent first-session draft"))
+        XCTAssertTrue(savedDrafts.values.contains("Unsent second-session draft"))
+        let restartedSupport = root.appendingPathComponent("restarted-support")
+        try FileManager.default.copyItem(at: support, to: restartedSupport)
+        // Keep the original host lease intact while restoring a private copy of its catalog.
+        let catalog = restartedSupport.appendingPathComponent("sessions.json")
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: catalog))
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes]), as: UTF8.self)
+        try Data(json.replacingOccurrences(of: support.path, with: restartedSupport.path).utf8).write(to: catalog)
+        defaults.set(executable.path, forKey: "piExecutable")
+        let restarted = CompanionModel(support: restartedSupport, secrets: store, defaults: defaults)
+        restarted.observe()
+        do {
+            let savedID = try XCTUnwrap(savedDrafts.first { $0.value == "Unsent second-session draft" }?.key)
+            try await waitUntil { restarted.state.sessions.contains { $0.id == savedID } }
+            await restarted.openSession(savedID)
+            XCTAssertNil(restarted.fault)
+            try await waitUntil { restarted.state.selected == savedID && restarted.state.phase == "idle" }
+            XCTAssertEqual(restarted.text, "Unsent second-session draft", "A new model must restore the unsent draft from disk")
+        } catch { await restarted.shutdown(); throw error }
+        await restarted.shutdown()
+    }
+
+    func testWorkspacePersistenceGroupingRemovalAndInvalidPaths() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let left = root.appendingPathComponent("left/project"), right = root.appendingPathComponent("right/project")
+        try FileManager.default.createDirectory(at: left, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: right, withIntermediateDirectories: true)
+        let marker = left.appendingPathComponent("keep.jsonl")
+        try Data("saved-file-fixture".utf8).write(to: marker)
+        let alias = root.appendingPathComponent("alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: left)
+        let suite = "PiRemote.WorkspaceTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = CompanionModel(support: root.appendingPathComponent("support"), secrets: MemorySecrets(), defaults: defaults)
+        let leftPath = left.resolvingSymlinksInPath().path, rightPath = right.resolvingSymlinksInPath().path
+        try await model.addWorkspace(path: left.path)
+        try await model.addWorkspace(path: alias.path)
+        try await model.addWorkspace(path: right.path)
+        XCTAssertEqual(model.workspaces.count, 2, "Aliases merge, but equal folder names do not")
+        let host = try XCTUnwrap(model.coordinator)
+        let untouched = await host.state()
+        XCTAssertTrue(untouched.sessions.isEmpty)
+        XCTAssertNil(untouched.selected, "Adding a workspace must not activate Pi")
+        let first = UUID(), second = UUID(), other = UUID()
+        model.state.sessions = [SessionInfo(id: first, title: "First", directory: leftPath),
+                                SessionInfo(id: second, title: "Second", directory: leftPath),
+                                SessionInfo(id: other, title: "Other", directory: rightPath)]
+        XCTAssertEqual(model.workspaces.first(where: { $0.id == leftPath })?.sessions.count, 2)
+        XCTAssertEqual(model.workspaces.first(where: { $0.id == rightPath })?.sessions.count, 1)
+        model.setExpanded(leftPath, expanded: true)
+        model.destination = .session(first); model.destination = .settings
+        model.inspectorVisible = true
+        let restored = CompanionModel(support: root.appendingPathComponent("restored-support"), secrets: MemorySecrets(), defaults: defaults)
+        XCTAssertEqual(restored.destination, .session(first))
+        XCTAssertTrue(restored.inspectorVisible)
+        XCTAssertTrue(restored.expandedWorkspaces.contains(leftPath))
+        await restored.shutdown()
+        model.removeWorkspace(leftPath)
+        XCTAssertFalse(model.workspaces.contains(where: { $0.id == leftPath }))
+        XCTAssertEqual(model.state.sessions.count, 3)
+        XCTAssertEqual(try Data(contentsOf: marker), Data("saved-file-fixture".utf8))
+        do { try await model.addWorkspace(path: root.appendingPathComponent("missing").path); XCTFail("Missing folder must fail") }
+        catch { XCTAssertEqual(error as? RemoteFault, .staleDirectory) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("missing").path))
+        let denied = root.appendingPathComponent("denied")
+        try FileManager.default.createDirectory(at: denied, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: denied.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: denied.path) }
+        do { try await model.addWorkspace(path: denied.path); XCTFail("Inaccessible folder must fail") }
+        catch { XCTAssertEqual(error as? RemoteFault, .permissionDenied) }
+        await model.shutdown()
     }
 }
