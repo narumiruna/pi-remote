@@ -11,7 +11,7 @@ private func literal(_ text: String) throws -> String { String(decoding: try JSO
 /// Installed-Pi expansion through the native command path. No network provider is available.
 @main struct NativeResourceCheck {
     static func main() async {
-        do { try await run(); print("PASS: native skill/template discovery, quoting, defaults and expansion without provider requests.") }
+        do { try await run(); print("PASS: native resources, quoting/defaults, trust isolation, project precedence and local-package discovery without provider requests.") }
         catch {
             if let failure = error as? CheckFailure { print("FAIL: \(failure)") }
             else { print("FAIL: native resource check could not complete.") }
@@ -47,6 +47,29 @@ private func literal(_ text: String) throws -> String { String(decoding: try JSO
         ---
         Template fixture first=$1; all=$@; second=${2:-fallback}
         """.write(to: template, atomically: true, encoding: .utf8)
+        let projectTemplate = project.appendingPathComponent(".pi/prompts/native-template.md")
+        let projectSkill = project.appendingPathComponent(".pi/skills/native-resource/SKILL.md")
+        let projectExtension = project.appendingPathComponent(".pi/extensions/marker.js")
+        let package = root.appendingPathComponent("local-package")
+        let packageTemplate = package.appendingPathComponent("templates/package-native.md")
+        let projectLoaded = root.appendingPathComponent("project-loaded")
+        for file in [projectTemplate, projectSkill, projectExtension, packageTemplate] {
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        try "Project template first=$1".write(to: projectTemplate, atomically: true, encoding: .utf8)
+        try """
+        ---
+        name: native-resource
+        description: Project precedence fixture.
+        ---
+        Project skill fixture payload.
+        """.write(to: projectSkill, atomically: true, encoding: .utf8)
+        try "import { writeFileSync } from 'node:fs'; export default function () { writeFileSync(\(try literal(projectLoaded.path)), 'loaded'); }"
+            .write(to: projectExtension, atomically: true, encoding: .utf8)
+        try "Package template first=$1".write(to: packageTemplate, atomically: true, encoding: .utf8)
+        try #"{"name":"native-local-fixture","pi":{"prompts":["templates/package-native.md"]}}"#
+            .write(to: package.appendingPathComponent("package.json"), atomically: true, encoding: .utf8)
+        try "{\"packages\":[\(try literal(package.path))]}".write(to: project.appendingPathComponent(".pi/settings.json"), atomically: true, encoding: .utf8)
         let captured = root.appendingPathComponent("captured.jsonl")
         let providerCalled = root.appendingPathComponent("provider-called")
         let source = """
@@ -74,13 +97,14 @@ private func literal(_ text: String) throws -> String { String(decoding: try JSO
         try source.write(to: fixture, atomically: true, encoding: .utf8)
         let wrapper = root.appendingPathComponent("isolated-pi")
         let path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
-        try """
+        let launcher = """
         #!/bin/sh
         exec /usr/bin/env -i HOME=\(quoted(home.path)) PATH=\(quoted(path)) \\
           PI_CODING_AGENT_DIR=\(quoted(agent.path)) PI_OFFLINE=1 PI_TELEMETRY=0 \\
           \(quoted(pi.path)) --offline --no-mcp --no-context-files --no-tools \\
           --provider native-resource-fixture --model capture "$@"
-        """.write(to: wrapper, atomically: true, encoding: .utf8)
+        """
+        try launcher.write(to: wrapper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
         let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: wrapper)
         do {
@@ -95,6 +119,8 @@ private func literal(_ text: String) throws -> String { String(decoding: try JSO
             let initial = await host.state()
             try require(initial.commands.contains { $0.name == "native-template" })
             try require(initial.commands.contains { $0.name == "skill:native-resource" })
+            try require(!initial.commands.contains { $0.name == "package-native" })
+            try require(!FileManager.default.fileExists(atPath: projectLoaded.path))
             _ = try await send(.autoCompaction(enabled: false))
             let commands = [("native-template", "\"two words\" tail"), ("native-template", ""), ("skill:native-resource", "specific task")]
             for (index, command) in commands.enumerated() {
@@ -122,6 +148,44 @@ private func literal(_ text: String) throws -> String { String(decoding: try JSO
                 action: .command(name: "not-discovered", arguments: "")), device: device)
             try require(rejected == .failure(.unsupportedFeature))
             try require(try Data(contentsOf: captured).split(separator: 10).count == 3)
+            _ = try await send(.closeSession)
+            // The override applies only to this private fixture, never the user's projects or trust store.
+            try launcher.replacingOccurrences(of: "--provider native-resource-fixture", with: "--approve --provider native-resource-fixture")
+                .write(to: wrapper, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+            _ = try await send(.createSession(directory: directory))
+            let trusted = await host.state()
+            try require(trusted.commands.contains { $0.name == "package-native" })
+            try require(FileManager.default.fileExists(atPath: projectLoaded.path))
+            let trustedCommands = [("native-template", "trusted"), ("skill:native-resource", "trusted task"), ("package-native", "package task")]
+            for (index, command) in trustedCommands.enumerated() {
+                _ = try await send(.command(name: command.0, arguments: command.1))
+                var complete = false
+                for _ in 0..<200 {
+                    let count = (try? Data(contentsOf: captured).split(separator: 10).count) ?? 0
+                    if count == index + 4, await !host.state().working { complete = true; break }
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                try require(complete)
+                try require(!FileManager.default.fileExists(atPath: providerCalled.path))
+            }
+            let trustedRecords = try Data(contentsOf: captured).split(separator: 10).map { try JSONDecoder().decode(JSONValue.self, from: Data($0)) }
+            let trustedPrompts = trustedRecords.compactMap { $0["prompt"]?.string }
+            try require(trustedPrompts.count == 6)
+            try require(trustedPrompts[3].trimmingCharacters(in: .whitespacesAndNewlines) == "Project template first=trusted")
+            try require(trustedPrompts[4].contains(projectSkill.path) && trustedPrompts[4].contains("Project skill fixture payload.") && trustedPrompts[4].hasSuffix("trusted task"))
+            try require(trustedPrompts[5].trimmingCharacters(in: .whitespacesAndNewlines) == "Package template first=package")
+            guard case .statistics(let trustedUsage) = try await send(.statistics) else { throw CheckFailure.assertion(#line) }
+            try require(trustedUsage.tokens.total == 0 && trustedUsage.cost == 0)
+            try require(!FileManager.default.fileExists(atPath: agent.appendingPathComponent("trust.json").path))
+            _ = try await send(.closeSession)
+            try launcher.write(to: wrapper, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+            try FileManager.default.removeItem(at: projectLoaded)
+            _ = try await send(.createSession(directory: directory))
+            let untrustedAgain = await host.state()
+            try require(!untrustedAgain.commands.contains { $0.name == "package-native" })
+            try require(!FileManager.default.fileExists(atPath: projectLoaded.path))
             await host.shutdown()
             try require(!FileManager.default.fileExists(atPath: providerCalled.path))
         } catch { await host.shutdown(); throw error }
