@@ -49,6 +49,7 @@ let package = Package(
         .target(name: "PiRemoteClient", dependencies: ["PiRemoteConnection", "PiRemoteSecurity", .product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Packages/PiRemoteClient/Sources/PiRemoteClient"),
         .testTarget(name: "HostTests", dependencies: ["PiRemoteHost", "PiRemoteClient", .product(name: "NIOEmbedded", package: "swift-nio")]),
         .executableTarget(name: "NativeWorkflowCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeWorkflowCheck"),
+        .executableTarget(name: "NativeResourceCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeResourceCheck"),
         .executableTarget(name: "NativeFailureCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeFailureCheck"),
         .executableTarget(name: "NativeExtensionCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeExtensionCheck"),
         .executableTarget(name: "NativeProviderCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeProviderCheck"),

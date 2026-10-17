@@ -218,6 +218,21 @@ The second argument is the checked demo extension bundled with the installed Pi.
 
 This metadata-only check does not exercise provider work. The separate provider check below covers active-run controls, synthetic image input and nonempty native-host restoration. Normal installed-extension compatibility and physical product-app acceptance remain open. Generic real manual compaction now passes in the provider check below. See [the original RPC exercise](verification.md#installed-pi-exercise) for its separate, earlier provider-run evidence.
 
+### Native resource check
+
+`NativeResourceCheck` passes with installed Pi 1.3.0:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+swift run NativeResourceCheck "$(command -v pi)"
+```
+
+It uses an empty environment and private home/agent directories. A provider extension, skill and prompt template load through normal agent-directory discovery, not explicit resource paths. The native host discovers and dispatches their command names. The check verifies quoted positional arguments, all-argument substitution, a missing-argument default, skill content/location and appended user arguments. An unknown command is rejected without dispatch.
+
+The private extension captures the expanded `before_agent_start` input and aborts before a provider request. Its only provider cannot make network requests: its implementation records an unexpected call and throws. The check requires that marker to remain absent before and after shutdown and requires zero tokens and cost. It disables tools, MCP and context-file discovery. It does not load real credentials, packages or personal resources, edit global settings or print captured prompts. All private files are removed after shutdown. The check passes normally and with Thread Sanitizer in `/tmp/pi-remote-resource-check.log` and `/tmp/pi-remote-resource-check-tsan.log`. All 79 root tests also pass normally and with Thread Sanitizer after adding this check (`/tmp/pi-remote-resource-{root,tsan}.log`).
+
+This verifies normal resource discovery and expansion with controlled fixtures. It does not establish installed-package operation, project trust/reload, custom resource precedence or model selection of a skill without an explicit command. Those checks remain open in the compatibility review. The temporary JavaScript fixture is not an app service or a bundled adapter.
+
 ### Native provider check
 
 The following command sends synthetic prompts and a generated white 64 × 64 PNG to the configured provider. It can incur provider usage. It is not part of `swift test`; run it deliberately:
