@@ -277,7 +277,7 @@ done
             case "mac-resume-open": return label == "Open selected session"
             case "mac-session-search":
                 return (node.object as? NSTextField)?.placeholderString == "Search sessions, workspaces, paths or IDs"
-            case "session-commands-form": return label == "Commands, skills, and templates"
+            case "session-commands-form": return label == "Commands, skills, and prompt templates"
             case "session-commands-empty": return value == "No commands are available for this session."
             case "session-command-error": return value == RemoteFault.unsupportedFeature.explanation
             case "mac-folder-breadcrumb": return label == "project"
@@ -451,7 +451,7 @@ done
                 try await self.press("mac-session-close-" + session.id.uuidString, in: host)
                 let dialog = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
                 try self.managementDump(dialog, name: "working-confirmation")
-                XCTAssertTrue(self.hasLabel("Stop clears queued instructions and waits for Pi to become idle before closing this session. File changes cannot be undone. Saved history and the draft are kept.", in: dialog))
+                XCTAssertTrue(self.hasLabel("Stop clears queued messages and waits for Pi to become idle before closing this session. File changes cannot be undone. Saved history and the draft are kept.", in: dialog))
                 XCTAssertFalse(model.closedSessionIDs.contains(session.id))
                 XCTAssertNil(model.closingSession, "Opening confirmation must not send Stop")
                 try await self.press("management-cancel", in: dialog, title: "Cancel")
@@ -1413,6 +1413,37 @@ done
         }
     }
 
+    func testPiTerminologyInSharedControlsAndSettings() async throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID())
+        let id = UUID()
+        state.selected = id
+        state.sessions = [SessionInfo(id: id, title: "Terminology fixture", directory: "/tmp/terminology-fixture")]
+        state.capabilities = ["pi-release-notes", "last-assistant"]
+        state.pendingMessages = 2
+        let request: (SessionAction) async throws -> AppResult = { _ in .ok }
+        try await capture(NavigationStack {
+            SessionControls(state: state, request: request) { _ in }.formStyle(.grouped)
+        }, name: "pi-terms-session-controls", width: 560, height: 800) { host, _ in
+            for label in ["Pi changelog", "Thinking level", "Copy last assistant message"] {
+                XCTAssertTrue(self.hasLabel(label, in: host), label)
+            }
+        }
+        try await capture(NavigationStack {
+            SessionControls(state: state, request: request) { _ in }.formStyle(.grouped)
+        }, name: "pi-terms-session-controls-bottom", width: 560, height: 800, scrollToBottom: true) { host, _ in
+            XCTAssertTrue(self.hasLabel("Clone session", in: host))
+            XCTAssertTrue(self.hasLabel("Queued messages: 2. Use Stop to clear the queue.", in: host))
+        }
+        try await capture(NavigationStack {
+            RuntimeSettingsView(request: { _ in
+                .runtimeSettings(RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .all, autoCompactionEnabled: true))
+            })
+        }, name: "pi-terms-settings", width: 560, height: 600) { host, _ in
+            XCTAssertTrue(self.hasLabel("Steering mode", in: host))
+            XCTAssertTrue(self.hasLabel("Follow-up mode", in: host))
+        }
+    }
+
     func testSessionControlsRemainScrollableInANarrowInspector() async throws {
         try await withModel { model in
             let id = UUID()
@@ -1590,6 +1621,7 @@ done
             try await Task.sleep(for: .milliseconds(100))
             XCTAssertTrue(try self.labelled("Send", in: host).isAccessibilityEnabled())
             let editor = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSTextView }.first { $0.isEditable && !$0.isFieldEditor })
+            XCTAssertEqual(editor.accessibilityLabel(), "Prompt")
             XCTAssertTrue(window.makeFirstResponder(editor))
             editor.setSelectedRange(NSRange(location: editor.string.utf16.count, length: 0))
             let newline = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
@@ -1925,9 +1957,9 @@ done
 
     func testTransientEmptyStatesDoNotClaimReadiness() async throws {
         let cases = [
-            ("starting", "Starting Pi…", "Wait while Pi opens the session. No instruction is resent."),
+            ("starting", "Starting Pi…", "Wait while Pi opens the session. No prompt is resent."),
             ("stopping", "Stopping Pi…", "Wait for Pi to stop. File changes are not undone."),
-            ("recovering", "Pi status is uncertain", "Use Stop, then reopen the saved session. Do not resend uncertain instructions."),
+            ("recovering", "Pi status is uncertain", "Use Stop, then reopen the saved session. Do not resend uncertain prompts."),
             ("waiting", "Pi is waiting for input", "Complete or cancel the open request. Stop remains available.")
         ]
         for (phase, title, description) in cases {
@@ -1951,6 +1983,9 @@ done
                           name: "usability-composer-busy-400", width: 400, height: 600) { host, _ in
             let window = try XCTUnwrap(host.window)
             let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+            XCTAssertEqual(try self.nativeEditor(in: host).accessibilityLabel(), "Prompt")
+            XCTAssertTrue(self.hasLabel("Steering", in: host))
+            XCTAssertFalse(self.hasLabel("Steer now", in: host))
             for label in ["Files", "Commands", "Stop", "Send"] {
                 let button = try self.labelled(label, in: host)
                 let frame = try XCTUnwrap(button.frame(), "Button needs a native accessibility frame: \(label)")

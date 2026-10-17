@@ -54,7 +54,7 @@ struct ConversationView<Extras: View>: View {
                                 .frame(maxWidth: .infinity)
                             #else
                             ContentUnavailableView(state.selected == nil ? "No session selected" : (!canCompose ? "Pi is not running" : (state.working ? "Pi is working" : "Ready for a task")), systemImage: "bubble.left.and.text.bubble.right",
-                                                   description: Text(state.selected == nil ? "Choose a folder and start a session, then send an instruction." : (!canCompose ? "Open the saved session to continue. Previous instructions are not resent." : (state.working ? "Waiting for output. Stop remains available." : "Send an instruction to start working in this session."))))
+                                                   description: Text(state.selected == nil ? "Choose a folder and start a session, then send a prompt." : (!canCompose ? "Open the saved session to continue. Previous prompts are not resent." : (state.working ? "Waiting for output. Stop remains available." : "Send a prompt to start working in this session."))))
                                 .frame(maxWidth: .infinity)
                             #endif
                         }
@@ -166,22 +166,23 @@ struct ConversationView<Extras: View>: View {
             VStack(alignment: .leading, spacing: 8) {
                 if state.working {
                     Picker("Send as", selection: $delivery) {
-                        Text("Steer now").tag(Delivery.steer)
-                        Text("Follow up").tag(Delivery.followUp)
+                        Text("Steering").tag(Delivery.steer)
+                        Text("Follow-up").tag(Delivery.followUp)
                     }.pickerStyle(.menu)
+                    .accessibilityHint("Steering guides Pi after the current response and tool calls finish. Follow-up waits until Pi finishes the current task.")
                 }
                 HStack(alignment: .bottom, spacing: 10) {
                     extras()
                     TextField("Message Pi", text: $text, prompt: Text("Message Pi").foregroundColor(.primary.opacity(0.75)), axis: .vertical)
                         .lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 2 : 6)).textFieldStyle(.plain)
-                        .accessibilityLabel("Instruction").accessibilityIdentifier("instruction")
+                        .accessibilityLabel("Prompt").accessibilityIdentifier("instruction")
                         .disabled(!canCompose)
                     if state.working {
                         Button(action: stop) {
                             Label("Stop", systemImage: "stop.fill").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                         }
                             .accessibilityLabel("Stop")
-                            .accessibilityHint("Clear queued instructions and stop current work. File changes are not undone.")
+                            .accessibilityHint("Clear queued messages and stop current work. File changes are not undone.")
                     }
                     Button(action: send) {
                         Label("Send", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
@@ -323,14 +324,14 @@ struct ConversationView<Extras: View>: View {
     var macEmptyDescription: String {
         if state.selected == nil { return "Choose a workspace and open a session to start." }
         switch state.phase {
-        case "starting": return "Wait while Pi opens the session. No instruction is resent."
+        case "starting": return "Wait while Pi opens the session. No prompt is resent."
         case "stopping": return "Wait for Pi to stop. File changes are not undone."
-        case "recovering": return "Use Stop, then reopen the saved session. Do not resend uncertain instructions."
+        case "recovering": return "Use Stop, then reopen the saved session. Do not resend uncertain prompts."
         case "waiting": return "Complete or cancel the open request. Stop remains available."
         default: break
         }
-        if !canCompose { return "Open the saved session to continue. Previous instructions are not resent." }
-        return state.working ? "Waiting for output. Stop remains available." : "Send an instruction to start working in this session."
+        if !canCompose { return "Open the saved session to continue. Previous prompts are not resent." }
+        return state.working ? "Waiting for output. Stop remains available." : "Send a prompt to start working in this session."
     }
 
     private var macComposer: some View {
@@ -354,7 +355,7 @@ struct ConversationView<Extras: View>: View {
                         .fixedSize(horizontal: false, vertical: true).hidden().accessibilityHidden(true)
                         .onGeometryChange(for: CGFloat.self) { min(180, max(76, $0.size.height)) } action: { macEditorHeight = $0 }
                 }
-                .accessibilityLabel("Instruction").accessibilityIdentifier("instruction")
+                .accessibilityLabel("Prompt").accessibilityIdentifier("instruction")
                 .onChange(of: text) { _, _ in macDismissed = false; macHighlightedID = nil }
                 .onChange(of: macSelection) { _, _ in macDismissed = false; macHighlightedID = nil }
                 .onChange(of: state.context) { _, _ in
@@ -362,10 +363,11 @@ struct ConversationView<Extras: View>: View {
                 }
             if state.working {
                 Picker("Send as", selection: $delivery) {
-                    Text("Steer now").tag(Delivery.steer)
-                    Text("Follow up").tag(Delivery.followUp)
+                    Text("Steering").tag(Delivery.steer)
+                    Text("Follow-up").tag(Delivery.followUp)
                 }
                 .pickerStyle(.menu).frame(maxWidth: 210, alignment: .leading)
+                .accessibilityHint("Steering guides Pi after the current response and tool calls finish. Follow-up waits until Pi finishes the current task.")
             }
             HStack(spacing: 6) {
                 extras()
@@ -376,7 +378,7 @@ struct ConversationView<Extras: View>: View {
                         Label("Stop", systemImage: "stop.fill")
                     }
                     .accessibilityLabel("Stop")
-                    .accessibilityHint("Clear queued instructions and stop current work. File changes are not undone.")
+                    .accessibilityHint("Clear queued messages and stop current work. File changes are not undone.")
                 }
                 Button {
                     guard macCanSend else { return }
@@ -386,7 +388,7 @@ struct ConversationView<Extras: View>: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityLabel(macIsSlash ? "Run" : "Send")
-                .help("Command-Return runs a command or sends an instruction. Return and Tab only complete while suggestions are visible.")
+                .help("Command-Return runs a command or sends a prompt. Return and Tab only complete while suggestions are visible.")
                 .disabled(!macCanSend)
                 .keyboardShortcut(.return, modifiers: .command)
             }
@@ -468,7 +470,7 @@ private struct MacComposerEditor: NSViewRepresentable {
         editor.textContainer?.lineFragmentPadding = 0
         editor.textContainer?.widthTracksTextView = true
         editor.textContainer?.containerSize = NSSize(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
-        editor.setAccessibilityLabel("Instruction")
+        editor.setAccessibilityLabel("Prompt")
         editor.setAccessibilityIdentifier("instruction")
         scroll.documentView = editor
         return scroll
@@ -610,7 +612,7 @@ extension RemoteFault {
         case .incompatiblePi: "The selected Pi version returned an unsupported interface. Use a tested Pi version on the Mac."
         case .providerAuthenticationRequired: "Pi cannot authenticate with its provider. Sign in or configure credentials on the Mac, then retry."
         case .unavailable: "The Mac, Pi process, or connection is unavailable. Check the Mac and reconnect."
-        case .piLaunchFailed: "Pi could not start on the Mac. Check Connection settings → Pi and folder access → Choose Pi executable. Confirm that the selected Pi runs with --version and its runtime is installed."
+        case .piLaunchFailed: "Pi could not start on the Mac. Check Settings → Pi and folder access → Choose Pi executable. Confirm that the selected Pi runs with --version and its runtime is installed."
         case .nodeUnavailable: "Pi needs Node.js, but the Mac app could not find it. Check your Node.js installation or default version configured in your Node version manager, then retry opening the session. Starting the server is not required."
         case .capacity: "The request limit was reached. Wait for pending actions to finish."
         case .cancelled: "The action was cancelled."

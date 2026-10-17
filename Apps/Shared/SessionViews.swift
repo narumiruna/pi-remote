@@ -45,7 +45,7 @@ struct SessionListView: View {
         .navigationTitle("Sessions")
         .confirmationDialog("Resume interrupted session?", isPresented: Binding(get: { interrupted != nil }, set: { if !$0 { interrupted = nil } })) {
             Button("Resume without resending any prompt") { if let session = interrupted { resume(session) }; interrupted = nil }
-        } message: { Text("Saved messages do not prove that an interrupted tool completed. Review the transcript and project before sending another instruction.") }
+        } message: { Text("Saved messages do not prove that an interrupted tool completed. Review the transcript and project before sending another prompt.") }
     }
     private func resume(_ session: SessionInfo) {
         Task {
@@ -77,7 +77,7 @@ struct SessionControls: View {
             }
             if state.capabilities.contains("pi-release-notes") {
                 Section("Installed Pi") {
-                    NavigationLink("Pi release notes") { ReleaseNotesView(request: request) }.frame(minHeight: sessionControlMinimum)
+                    NavigationLink("Pi changelog") { ReleaseNotesView(request: request) }.frame(minHeight: sessionControlMinimum)
                 }
             }
             Section("Pi") {
@@ -87,7 +87,7 @@ struct SessionControls: View {
                 })) {
                     ForEach(state.models) { model in Text(model.name).tag(model.id) }
                 }
-                Picker("Thinking", selection: Binding(get: { state.thinking }, set: { perform(.thinking(level: $0)) })) {
+                Picker("Thinking level", selection: Binding(get: { state.thinking }, set: { perform(.thinking(level: $0)) })) {
                     ForEach(state.thinkingLevels, id: \.self) { Text($0).tag($0) }
                 }
                 if state.capabilities.contains("model-cycling") {
@@ -97,7 +97,7 @@ struct SessionControls: View {
             }.disabled(state.working || state.selected == nil)
             if state.capabilities.contains("retry-controls"), state.phase == "retrying" {
                 Section("Retry recovery") {
-                    Text("Cancelling a retry wait does not undo tool actions or cancel every kind of active work. Use Stop to stop work and clear queued instructions.").font(.caption)
+                    Text("Cancelling a retry wait does not undo tool actions or cancel every kind of active work. Use Stop to stop work and clear queued messages.").font(.caption)
                     Button("Cancel retry wait") { perform(.abortRetry) }.frame(minHeight: sessionControlMinimum)
                         .disabled(state.selected == nil || state.phase != "retrying")
                 }
@@ -110,7 +110,7 @@ struct SessionControls: View {
             }
             if state.capabilities.contains("last-assistant") {
                 Section("Output") {
-                    NavigationLink("Copy last response") { LastAssistantView(request: request) }
+                    NavigationLink("Copy last assistant message") { LastAssistantView(request: request) }
                         .frame(minHeight: sessionControlMinimum).disabled(state.selected == nil)
                 }
             }
@@ -139,7 +139,7 @@ struct SessionControls: View {
                 TextField("Session name", text: $name)
                 Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
                 NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: sessionControlMinimum)
-                Button("Clone current branch") { perform(.clone) }
+                Button("Clone session") { perform(.clone) }
                 #if !os(macOS)
                 if state.capabilities.contains("close-session") {
                     Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: sessionControlMinimum)
@@ -153,8 +153,8 @@ struct SessionControls: View {
                 }
             }.disabled(state.working || state.selected == nil)
             if let pending = state.pendingMessages, pending > 0 {
-                Section("Pending instructions") {
-                    Text("Queued instructions: \(pending). Use Stop to clear the queue.")
+                Section("Pending messages") {
+                    Text("Queued messages: \(pending). Use Stop to clear the queue.")
                 }
             }
             SessionCommandActions(state: state, request: request)
@@ -215,7 +215,7 @@ private struct SessionCommandActions: View {
     @State private var error: String?
 
     var body: some View {
-        Section("Commands, skills, and templates") {
+        Section("Commands, skills, and prompt templates") {
             if let error {
                 Text(error).foregroundStyle(.primary)
                     .accessibilityIdentifier("session-command-error")
@@ -237,7 +237,7 @@ private struct SessionCommandActions: View {
                 .accessibilityIdentifier("session-command-" + command.id)
                 .disabled(sending || state.selected == nil || (state.working && command.source != "extension"))
             }
-            Text("Commands use upstream Pi core RPC. A command can report that it requires a terminal.")
+            Text("Some commands require Pi's terminal UI and cannot run here.")
                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
         }
         .onChange(of: state.context) { _, _ in arguments = ""; error = nil }
@@ -276,7 +276,7 @@ struct NewManagedSessionView: View {
             Section("New session") {
                 Toggle("Record current session as parent", isOn: $parent)
                     .accessibilityIdentifier("new-session-parent")
-                Text("Starts an empty conversation in the same directory. Parent ancestry records a link to saved history; it does not copy messages or resend instructions. A parent must have a saved session file.")
+                Text("Starts an empty conversation in the same directory. Parent ancestry records a link to saved history; it does not copy messages or resend prompts. A parent must have a saved session file.")
                     .font(.caption)
             }.disabled(sending || state.working || state.selected == nil)
             if let error { Text(error).foregroundStyle(.primary) }

@@ -102,7 +102,7 @@ struct PhoneRoot: View {
             }
         }
         .modifier(EditorOfferPrompt(offer: $model.editorOffer, replace: model.acceptEditorOffer))
-        .confirmationDialog("Send this instruction again?", isPresented: $model.confirmResend) {
+        .confirmationDialog("Send this prompt again?", isPresented: $model.confirmResend) {
             Button("Send again") { model.resend() }
         } message: { Text("The previous action has an unknown outcome. Sending again can repeat file changes or external actions. Check the session first.") }
         .photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .images)
@@ -236,7 +236,7 @@ struct PairingView: View {
 
     var body: some View {
         Form {
-            Text("On your Mac, start the listener and select Pair a device to show a two-minute pairing QR code.")
+            Text("In Pi Remote for Mac, select Start server, then Pair iPhone to show a pairing QR code. The code expires in two minutes.")
             Button("Scan QR code", systemImage: "qrcode.viewfinder") {
                 scanScope = model.contentScope
                 scanning = true

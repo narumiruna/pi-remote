@@ -13,8 +13,8 @@ struct RuntimeSettingsView: View {
             Text("Changes update Pi settings on the Mac and may affect future terminal sessions. Apply only while idle.").font(.caption)
             if let error { Text(error) }
             if let settings {
-                Picker("Steering delivery", selection: Binding(get: { settings.steeringMode }, set: { pending = .queueMode(kind: .steering, mode: $0) })) { modes }.pickerStyle(.menu)
-                Picker("Follow-up delivery", selection: Binding(get: { settings.followUpMode }, set: { pending = .queueMode(kind: .followUp, mode: $0) })) { modes }.pickerStyle(.menu)
+                Picker("Steering mode", selection: Binding(get: { settings.steeringMode }, set: { pending = .queueMode(kind: .steering, mode: $0) })) { modes }.pickerStyle(.menu)
+                Picker("Follow-up mode", selection: Binding(get: { settings.followUpMode }, set: { pending = .queueMode(kind: .followUp, mode: $0) })) { modes }.pickerStyle(.menu)
                 Toggle("Automatic compaction", isOn: Binding(get: { settings.autoCompactionEnabled }, set: { pending = .autoCompaction(enabled: $0) }))
             }
             if busy { ProgressView("Updating settings") }

@@ -1,8 +1,8 @@
-# Installed Pi release notes
+# Installed Pi changelog
 
 ## Implemented behavior
 
-Open **More → Session controls → Pi release notes** on the phone, or **Session → Controls → Pi release notes** on the Mac. This read-only view does not require an active session. Previous, Next and Reload read the selected installation's `CHANGELOG.md`; they do not start Pi, call a provider or change settings.
+Open **More → Session controls → Installed Pi → Pi changelog** on the phone, or **Session** inspector → **Installed Pi → Pi changelog** on the Mac. This read-only view does not require an active session. Previous, Next and Reload read the selected installation's `CHANGELOG.md`; they do not start Pi, call a provider or change settings.
 
 The host resolves the selected executable's symbolic link. It accepts only a package manifest named `@earendil-works/pi-coding-agent` whose `bin.pi` resolves to that executable inside the package. The request accepts an offset and revision, not a file path. Unknown wrappers and standalone layouts report that the feature is unavailable. Only the installed npm-style Pi 1.3.0 layout has real-runtime evidence.
 

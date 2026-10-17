@@ -16,6 +16,16 @@ Workspace visibility, expansion, selected metadata and inspector visibility use 
 
 Mac sheets have a bounded viewport based on the parent window, with a visible Close action outside the scrolling content. Grouped forms scroll instead of expanding the sheet to the full intrinsic content height. This fixes the session-controls overflow shown in the reported screenshot.
 
+## UI terminology alignment
+
+Both apps now use the Pi 1.3.0 terms documented in `usage.md`, `slash-commands.md`, `sessions.md` and `rpc-commands.md`. The installed settings selector confirms **Steering mode** and **Follow-up mode**. Shared controls use **Prompt**, **Steering**, **Follow-up**, **Thinking level**, **Last assistant message**, **Pi changelog**, **Clone session** and **Pending messages**. Accessibility labels and recovery text use the same terms. Instructions still identify system or compaction instructions. Workspace, connection and device terms remain app-specific. Protocol identifiers and action handling are unchanged.
+
+Verification: six focused Mac presentation tests pass with zero failures or skips in `/tmp/pi-remote-ui-terms-mac-3.xcresult`. Five focused iPhone 17 Pro, iOS 26.5 UI tests pass with zero failures or skips in `/tmp/pi-remote-ui-terms-phone-2.xcresult`. These cover shared labels, settings, thinking/model cycling, composer accessibility and delivery selection, keyboard/Stop/draft retention, explicit assistant-message copying, idle close, and changelog paging/reload. Unsigned Mac and iOS simulator app builds pass; logs are `/tmp/pi-remote-ui-terms-{mac,phone}-build.log`.
+
+The initial phone run found a changelog button below the 44-point touch-target minimum. Moving minimum sizes into the button labels fixes the target; the same check passes on rerun. A new Mac fixture initially omitted the production grouped-form style and failed its scroll check. The corrected fixture uses that style; no product scrolling rule was weakened. Earlier failed results remain in `/tmp/pi-remote-ui-terms-phone-1.xcresult` and `/tmp/pi-remote-ui-terms-mac-2.xcresult`.
+
+Mac shared-control and iPhone composer/copy captures were reviewed. Evidence is hosted/native-fixture and simulator behavior, not normal-launch provider operation, a full live VoiceOver review, physical-device behavior or a complete UI audit. No provider request, pairing change or protocol migration was needed.
+
 ## Mac session management
 
 Close Session is a non-destructive Mac workflow. Use the row close button, context menu, header actions, Session inspector or Command-Shift-W for the selected session. It removes that session from the sidebar, not its workspace, and keeps saved history and drafts. Hidden row buttons do not accept pointer input; keyboard focus reveals them. The toolbar also provides Switch session (Command-Shift-O) and Command palette (Command-Shift-P). Command-W retains its native window behavior.

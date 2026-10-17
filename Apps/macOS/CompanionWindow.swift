@@ -56,7 +56,7 @@ struct CompanionWindow: View {
         .preferredColorScheme(.light)
         .modifier(InterfaceAppearance())
         .modifier(EditorOfferPrompt(offer: $model.editorOffer, replace: model.acceptEditorOffer))
-        .confirmationDialog("Send this instruction again?", isPresented: $model.confirmResend) {
+        .confirmationDialog("Send this prompt again?", isPresented: $model.confirmResend) {
             Button("Send again") { model.resend() }
         } message: { Text("The Mac may have accepted the previous action. Sending again can repeat file changes or external actions.") }
         .confirmationDialog("Remove workspace from the sidebar?", isPresented: Binding(
@@ -77,7 +77,7 @@ struct CompanionWindow: View {
                 closingSession = nil
             }.accessibilityIdentifier("mac-session-stop-and-close")
         } message: {
-            Text("Stop clears queued instructions and waits for Pi to become idle before closing this session. File changes cannot be undone. Saved history and the draft are kept.")
+            Text("Stop clears queued messages and waits for Pi to become idle before closing this session. File changes cannot be undone. Saved history and the draft are kept.")
         }
         .onChange(of: model.panel) { old, new in
             if old == nil, new != nil { sheetFocusTarget = NSApp.mainWindow?.firstResponder as? NSView }
@@ -98,7 +98,7 @@ struct CompanionWindow: View {
                 if let active = model.state.selected, model.destination != .session(active) {
                     Button("Active session") { model.destination = .session(active) }
                 }
-                if model.state.working { Button("Stop", role: .destructive) { model.stopWork() }.help("Stop active Pi work and clear queued instructions. File changes are not undone.") }
+                if model.state.working { Button("Stop", role: .destructive) { model.stopWork() }.help("Stop active Pi work and clear queued messages. File changes are not undone.") }
                 Button("New session", systemImage: "plus") {
                     if let path = model.selectedWorkspace { Task { await model.createSession(in: path) } }
                     else { model.panel = "directory" }
@@ -445,7 +445,7 @@ struct CompanionWindow: View {
                 if id == model.state.selected {
                     if ["unavailable", "interrupted"].contains(model.state.phase) {
                         HStack {
-                            Text("Pi is not running. Use /resume to choose a session, or open this one. No instruction will be resent.").font(.caption)
+                            Text("Pi is not running. Use /resume to choose a session, or open this one. No prompt will be resent.").font(.caption)
                             Button("Open session") { Task { await model.openSession(id) } }.disabled(model.openingSession)
                         }.padding(12)
                     }
@@ -465,7 +465,7 @@ struct CompanionWindow: View {
                 } else {
                     VStack(spacing: 16) {
                         Image(systemName: "bubble.left.and.text.bubble.right").font(.largeTitle)
-                        Text(model.openingSession ? "Opening session…" : "Open the saved conversation").font(.title3)
+                        Text(model.openingSession ? "Opening session…" : "Open the saved session").font(.title3)
                         Text(model.state.working ? "Another session is working. Its process will not be interrupted. Stop it before activating this session." : "Pi restores this session from its saved file. Previous messages are not sent again.")
                             .multilineTextAlignment(.center).foregroundStyle(.secondary)
                         Button("Open session") { Task { await model.openSession(id) } }
@@ -795,7 +795,7 @@ struct MacResumeSessionView: View {
                                      move: { moveSelection($0) }, cancel: { model.panel = nil })
                 .frame(height: 24).padding(12)
             List(selection: $selection) {
-            Text("Choose a companion-managed session. Previous instructions are not resent.")
+            Text("Choose a companion-managed session. Previous prompts are not resent.")
                 .font(.caption).foregroundStyle(.secondary)
             if model.state.working {
                 Text("Pi is working. Wait or use Stop before switching sessions.").font(.callout)
@@ -841,12 +841,12 @@ struct MacResumeSessionView: View {
         .confirmationDialog("Resume interrupted session?", isPresented: Binding(
             get: { interrupted != nil }, set: { if !$0 { interrupted = nil } }
         )) {
-            Button("Resume without resending instructions") {
+            Button("Resume without resending prompts") {
                 if let session = interrupted { activate(session.id) }
                 interrupted = nil
             }
         } message: {
-            Text("Saved messages do not prove that interrupted tools completed. Review the transcript and project before sending another instruction.")
+            Text("Saved messages do not prove that interrupted tools completed. Review the transcript and project before sending another prompt.")
         }
     }
 

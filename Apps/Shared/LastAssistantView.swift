@@ -18,10 +18,10 @@ struct LastAssistantView: View {
                         if preview.truncated { Text("Text exceeds 256 KiB. Only the shown portion can be copied.").font(.caption) }
                         MarkdownContent(text: preview.text)
                     }
-                } else { ProgressView("Reading last response") }
+                } else { ProgressView("Reading last assistant message") }
             }.frame(maxWidth: .infinity, alignment: .leading).padding()
         }
-        .navigationTitle("Last assistant text")
+        .navigationTitle("Last assistant message")
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading) {
                 HStack {

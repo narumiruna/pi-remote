@@ -112,6 +112,7 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 - Use a clean native interface with the conversation as the primary work area; do not reproduce a terminal or web dashboard.
   - On Mac, use a persistent workspace/session sidebar and an optional Files/Session/Activity inspector. Keep the conversation wider than either secondary pane. Preserve the white appearance and blue accent; do not add themes.
   - Keep the iPhone conversation-first layout and existing upstream Pi core RPC contracts.
+- Use Pi's UI terms consistently in both apps: prompt, steering, follow-up, thinking level, steering mode, follow-up mode, assistant message and changelog. Keep instructions for system and compaction instructions. Preserve app-specific workspace, connection and device terms.
 - Use system typography, consistent spacing, restrained color, and standard SwiftUI controls; reserve monospaced text for code, paths, and tool output.
 - Support light and dark appearance, Dynamic Type, VoiceOver and sufficient contrast. Use touch targets of at least 44 × 44 points on iPhone and native system control sizes on Mac.
 - Show secondary controls only when needed, without removing supported Pi capabilities or hiding errors, connection loss, or active work.

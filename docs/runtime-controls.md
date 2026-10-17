@@ -8,7 +8,7 @@ The earlier copy/runtime checkpoint passed 74 root tests, 27 shared tests, three
 
 ## Copy last response
 
-Session controls open a review of Pi's `get_last_assistant_text` result. Reading it does not copy automatically or start a run. Copy text is a separate explicit action. The view identifies the result as a snapshot; reopen it to refresh while Pi continues working.
+**Session controls → Copy last assistant message** opens **Last assistant message**, a review of Pi's `get_last_assistant_text` result. Reading it does not copy automatically or start a run. Copy text is a separate explicit action. The view identifies the result as a snapshot; reopen it to refresh while Pi continues working.
 
 The response is bounded to 256 KiB of valid UTF-8. Oversized text has an explicit warning and Copy shown text label. Empty text disables copying. Invalid response types fail closed. Pi 1.3.0 omits `text` when it is undefined, although the reference documents `null`; both forms are accepted inside an object response. Other types are rejected.
 
@@ -18,7 +18,7 @@ Tests use unique named pasteboards, not the user's general clipboard. The interf
 
 ## Runtime settings
 
-The native runtime view supports steering delivery, follow-up delivery and automatic compaction. Typed enums permit only all queued messages or one-at-a-time delivery. These are Pi settings, not independent phone preferences. The view warns that changes can affect future terminal sessions and requires Apply or Cancel before a write.
+The native runtime view uses Pi's **Steering mode** and **Follow-up mode** labels for queued-message delivery. It also supports automatic compaction. Typed enums permit only all queued messages or one-at-a-time delivery. These are Pi settings, not independent phone preferences. The view warns that changes can affect future terminal sessions and requires Apply or Cancel before a write.
 
 The host requires idle state, serializes mutations through the same journal as other actions and reads Pi's state after each change. A response that does not confirm the requested value returns conflict, rather than reporting an applied setting. The view directs the user to refresh and check project overrides. Unknown outcomes are not automatically resent. Repeating the same request ID cannot dispatch another setting write.
 

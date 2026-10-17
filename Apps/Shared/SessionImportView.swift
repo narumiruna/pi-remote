@@ -40,7 +40,7 @@ struct SessionImportView: View {
                         Text("Only the managed copy's saved directory changes. This does not move project files or rewrite paths in saved messages. Review history before sending anything.")
                         Button("Clear chosen directory") { self.target = nil }.frame(minHeight: 44).disabled(loading)
                     }
-                    Text("The Mac must have read and search access to the directory. Import opens Pi there and can load trusted extensions with your Mac permissions. Saved instructions and tool output can be untrusted. Review the transcript before sending anything.")
+                    Text("The Mac must have read and search access to the directory. Import opens Pi there and can load trusted extensions with your Mac permissions. Saved prompts and tool output can be untrusted. Review the transcript before sending anything.")
                     Button("Import and open") { confirming = true }.frame(minHeight: 44)
                         .disabled(loading || (review.directory == nil && target == nil))
                     Button("Discard import", role: .destructive) { clear() }.frame(minHeight: 44).disabled(loading)

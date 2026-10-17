@@ -124,7 +124,7 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(model.label.contains("Fixture Two"))
         let thinkingCycle = app.buttons["Cycle thinking level"]
         reveal(thinkingCycle, app: app); reachable(thinkingCycle, app: app); thinkingCycle.tap()
-        let thinking = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Thinking,")).firstMatch
+        let thinking = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Thinking level,")).firstMatch
         reveal(thinking, app: app, towardTop: true)
         XCTAssertTrue(thinking.label.contains("high"))
         capture(app, "compact-core-cycling")
@@ -163,9 +163,9 @@ final class InterfaceTests: XCTestCase {
     func testReleaseNotesPageNavigationAndReload() throws {
         let app = launch(["idle"])
         controls(app)
-        let notes = app.buttons["Pi release notes"]
+        let notes = app.buttons["Pi changelog"]
         reveal(notes, app: app); notes.tap()
-        XCTAssertTrue(app.navigationBars["Pi release notes"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Pi changelog"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Pi 1.3.0"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["# Release fixture\nNative page one 🦉"].exists)
         XCTAssertFalse(app.buttons["Previous"].isEnabled)
@@ -186,6 +186,14 @@ final class InterfaceTests: XCTestCase {
         let tool = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Read file")).firstMatch
         XCTAssertTrue(tool.waitForExistence(timeout: 5) && tool.isHittable)
         let input = instruction(app)
+        XCTAssertEqual(input.label, "Prompt")
+        let delivery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Send as")).firstMatch
+        XCTAssertTrue(delivery.waitForExistence(timeout: 5))
+        XCTAssertTrue(delivery.label.contains("Steering"))
+        delivery.tap()
+        XCTAssertTrue(app.buttons["Follow-up"].waitForExistence(timeout: 5))
+        app.buttons["Follow-up"].tap()
+        XCTAssertTrue(delivery.label.contains("Follow-up"))
         input.tap(); input.typeText("Keyboard fixture")
         XCTAssertTrue((instruction(app).value as? String)?.contains("Keyboard fixture") == true)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
@@ -236,10 +244,10 @@ final class InterfaceTests: XCTestCase {
     func testLastResponseCopyAndIdleSessionCloseUseExplicitActions() throws {
         let app = launch(["idle"])
         controls(app)
-        let copyLink = app.buttons["Copy last response"]
+        let copyLink = app.buttons["Copy last assistant message"]
         for _ in 0..<8 where !copyLink.isHittable { app.swipeUp() }
         XCTAssertTrue(copyLink.isHittable); copyLink.tap()
-        XCTAssertTrue(app.navigationBars["Last assistant text"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Last assistant message"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Native copy fixture"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Copied to this device"].exists)
         let copy = app.buttons["Copy text"]
@@ -457,7 +465,7 @@ final class InterfaceTests: XCTestCase {
         for _ in 0..<8 where !runtime.isHittable { app.swipeUp() }
         XCTAssertTrue(runtime.isHittable); runtime.tap()
         XCTAssertTrue(app.navigationBars["Pi runtime settings"].waitForExistence(timeout: 5))
-        let steering = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Steering delivery")).firstMatch
+        let steering = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Steering mode")).firstMatch
         XCTAssertTrue(steering.waitForExistence(timeout: 5)); steering.tap()
         app.buttons["All queued messages"].tap()
         XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5))

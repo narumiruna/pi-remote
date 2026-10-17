@@ -12,31 +12,34 @@ struct ReleaseNotesView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Notes from the selected Pi installation. Links are not opened automatically.").font(.caption).id("top")
+                    Text("Changelog from the selected Pi installation. Links are not opened automatically.").font(.caption).id("top")
                     if let page {
                         Text("Pi " + page.version).font(.headline)
                         Text("Bytes \(page.offset)–\(page.offset + page.text.utf8.count) of \(page.totalBytes)").font(.caption)
-                        Text(page.text.isEmpty ? "No release notes." : page.text).textSelection(.enabled)
+                        Text(page.text.isEmpty ? "No changelog entries." : page.text).textSelection(.enabled)
                     }
                     if let error { Text(error) }
-                    if loading { ProgressView("Reading release notes") }
+                    if loading { ProgressView("Reading changelog") }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding()
             }
             .safeAreaInset(edge: .bottom) {
                 VStack {
                     HStack {
-                        Button("Previous") { Task { await load(previous.last ?? 0, direction: -1); proxy.scrollTo("top") } }
-                            .frame(minWidth: 44, minHeight: 44).disabled(previous.isEmpty || loading)
+                        Button { Task { await load(previous.last ?? 0, direction: -1); proxy.scrollTo("top") } } label: {
+                            Text("Previous").frame(minWidth: 44, minHeight: 44)
+                        }.disabled(previous.isEmpty || loading)
                         Spacer()
-                        Button("Next") { Task { if let next = page?.next { await load(next, direction: 1); proxy.scrollTo("top") } } }
-                            .frame(minWidth: 44, minHeight: 44).disabled(page?.next == nil || loading)
+                        Button { Task { if let next = page?.next { await load(next, direction: 1); proxy.scrollTo("top") } } } label: {
+                            Text("Next").frame(minWidth: 44, minHeight: 44)
+                        }.disabled(page?.next == nil || loading)
                     }
-                    Button("Reload") { Task { await load(0, direction: 0); proxy.scrollTo("top") } }
-                        .frame(minWidth: 44, minHeight: 44).disabled(loading)
+                    Button { Task { await load(0, direction: 0); proxy.scrollTo("top") } } label: {
+                        Text("Reload").frame(minWidth: 44, minHeight: 44)
+                    }.disabled(loading)
                 }.padding().background(.background)
             }
         }
-        .navigationTitle("Pi release notes")
+        .navigationTitle("Pi changelog")
         .task { if page == nil { await load(0, direction: 0) } }
     }
 

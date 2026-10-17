@@ -19,7 +19,7 @@ Native upstream Pi core `bash`/`abort_bash` controls are approved but not yet im
 - One active companion-managed Pi session per Mac, with its working directory saved and checked on resume. [Same-directory lifecycle controls](docs/session-lifecycle.md) use upstream Pi core new/switch hooks, with confirmed optional ancestry and no prompt replay.
 - Streamed text and thinking, native Markdown blocks, fenced code, expandable tool output and authenticated native image viewing.
 - Native prompts, steering, follow-up, Stop, model/thinking selection and cycling, confirmed queue/compaction settings, explicit retry requests/cancellation, command discovery and supported extension dialogs. [Retry controls](docs/runtime-controls.md#core-model-cycling-and-retry-checkpoint) distinguish acknowledgement from unavailable read-back.
-- Paged, read-only [installed Pi release notes](docs/release-notes.md), without starting Pi or opening links.
+- Paged, read-only [Pi changelog](docs/release-notes.md) from the installed runtime, without starting Pi or opening links.
 - Explicit last-response copy and idle-session close/reopen controls; copying uses local-device clipboard options.
 - Consent-based HTML (full tree) and JSONL (active branch) export through the native file picker, plus separately reviewed system sharing with no automatic upload; see [export limits and checks](docs/session-export.md).
 - Explicit reviewed JSONL import (versions 1–3) into companion-owned storage with Pi-managed legacy migration, with validated saved or explicitly chosen directories and no prompt replay; see [import limits and checks](docs/session-import.md).
@@ -30,6 +30,10 @@ Native upstream Pi core `bash`/`abort_bash` controls are approved but not yet im
 - Local Mac session controls and menu-bar status. Disconnecting the phone does not stop accepted work.
 
 These controls do not prove complete upstream Pi core RPC coverage. The app supports extension commands and interactions generically where the RPC protocol supplied by upstream Pi core packages exposes them; it must not depend on individual extensions. Terminal-only UI, custom extension protocols and terminal commands without upstream Pi core RPC equivalents are outside scope. They do not require adapters or block app completion. The [current compatibility review](docs/native-compatibility.md) records the remaining upstream Pi core RPC audit. [Image output](docs/output-images.md), text and thinking retain their documented limits. Physical-device checks remain unverified, not current completion gates.
+
+## UI terms
+
+Both apps use Pi's terms: **Prompt**, **Steering**, **Follow-up**, **Thinking level**, **Steering mode**, **Follow-up mode**, **Last assistant message** and **Pi changelog**. Steering waits for the current response and tool calls to finish; follow-up waits until Pi finishes the current task. **Workspaces**, **Connections** and **Devices** are app-specific controls. System and compaction instructions keep the term **instructions**.
 
 ## Security and network limits
 
