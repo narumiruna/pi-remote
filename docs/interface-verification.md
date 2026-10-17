@@ -2,9 +2,9 @@
 
 ## Result
 
-Eleven interface tests now pass, with zero failures or skips. The original six also passed twice in sequence before usage, image-output, text-attachment and runtime-control checks were added. They run the production phone views in a separate test app on an iPhone SE (3rd generation) simulator, iOS 26.5, at 375 × 667 points with accessibility-extra-large text. Captures were inspected in light and dark appearance.
+Sixteen interface tests now pass in bounded batches, with zero failures or skips; see the [current checkpoint](release-notes.md#verification-checkpoint). The original six also passed twice in sequence before usage, image-output, text-attachment and runtime-control checks were added. They run the production phone views in a separate test app on an iPhone SE (3rd generation) simulator, iOS 26.5, at 375 × 667 points with accessibility-extra-large text. Captures were inspected in light and dark appearance.
 
-The product app suite also passes all 29 tests with the explicit provider fixture on this Mac's LAN and Tailscale interfaces. All 72 root tests and 27 shared tests pass. The unsigned Mac and iOS device-SDK builds pass. This is local evidence, not hardware or distribution evidence.
+The product app suite also passes all 29 tests with the explicit provider fixture on this Mac's LAN and Tailscale interfaces. All 83 root tests and 35 shared tests pass, also with Thread Sanitizer. The unsigned Mac and iOS device-SDK builds pass. This is local evidence, not hardware or distribution evidence.
 
 ## Test boundary
 
@@ -29,6 +29,7 @@ The separate [simulator coding flow](workflow-verification.md#simulator-coding-a
 - Last-response review copies only after an explicit action. Runtime settings require Apply/Cancel, and idle close retains a session that can be reopened. Captures and tests pass at large text; see [runtime evidence](runtime-controls.md).
 - Mac file previews append selected text to the draft without sending it. Both Attach text and Done remain reachable with large text; the original draft and complete fixture content remain. See [attachment evidence](workflow-verification.md#mac-text-file-attachment).
 - Native session usage opens and refreshes with large text. Image output opens a fit preview, enables the visible Full resolution switch, retains a 44-point Done action and removes the sheet after background return; see [image evidence](output-images.md).
+- Reviewed HTML/JSONL exports, versions 1–3 import, explicit import-directory choice and installed-release-note paging pass at large text size; see [export](session-export.md), [import](session-import.md) and [release-note](release-notes.md) evidence.
 - Input remains a standard text control. The simulator keyboard shows its standard dictation control; no custom speech service or hardware dictation claim is included.
 
 ## Fixes found during review
