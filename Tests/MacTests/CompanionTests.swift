@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import PiRemoteClient
 import PiRemoteCore
@@ -82,10 +83,61 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         } catch { await model.shutdown(); throw error }
     }
 
+    func testQuitCancelsBlockedVersionStartupBeforeWaitingForItsDeadline() async throws {
+        for ignoresTERM in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("pi-quit-startup-" + UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let executable = root.appendingPathComponent("blocked-version-pi")
+            let trap = ignoresTERM ? "trap '' TERM\n" : ""
+            let script = "#!/bin/sh\n" + trap + #"""
+            printf '%s\n' "$$" > version-pid
+            while [ ! -f release-version ]; do /bin/sleep 0.05; done
+            printf '1.3.0\n'
+            """#
+            try script.write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+            let suite = "PiRemote.QuitStartupTests." + UUID().uuidString
+            let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            defaults.set(executable.path, forKey: "piExecutable")
+            let support = root.appendingPathComponent("support")
+            let model = CompanionModel(support: support, secrets: MemorySecrets(), defaults: defaults)
+            let host = try XCTUnwrap(model.coordinator)
+            model.address = "127.0.0.1"
+            do {
+                model.startNetwork()
+                let marker = support.appendingPathComponent("version-pid")
+                try await waitUntil { FileManager.default.fileExists(atPath: marker.path) }
+                let pid = try XCTUnwrap(Int32(String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+                XCTAssertTrue(model.starting)
+                XCTAssertFalse(model.listening)
+                let began = ContinuousClock.now
+                var replies: [Bool] = []
+                XCTAssertEqual(model.requestTermination(confirm: { _ in
+                    XCTFail("An idle version check must not require work consent"); return false
+                }, reply: { replies.append($0) }), .terminateLater)
+                try await waitUntil { replies == [true] }
+                XCTAssertLessThan(began.duration(to: .now), .seconds(4), "Quit must cancel startup before its 15-second utility deadline")
+                XCTAssertFalse(model.starting)
+                XCTAssertFalse(model.listening, "Cancelled startup must not start the listener")
+                XCTAssertEqual(kill(pid, 0), -1, "Quit must wait for version-child cleanup")
+                XCTAssertEqual(errno, ESRCH)
+                let stopped = await host.state()
+                XCTAssertEqual(stopped.phase, "unavailable")
+                XCTAssertEqual(model.requestTermination(confirm: { _ in XCTFail("Already terminated"); return false },
+                                                        reply: { _ in XCTFail("Duplicate reply") }), .terminateNow)
+                await model.shutdown()
+            } catch { await model.shutdown(); throw error }
+        }
+    }
+
     func testQuitCancelAndDuplicateRequestsLeaveWorkRunningThenConfirmOnce() async throws {
         try await withTerminationModel { model, host, root in
             let context = model.state.context
             model.text = "Unsent draft"
+            model.address = "127.0.0.1"
+            model.startNetwork()
             var pending: CheckedContinuation<Bool, Never>?
             var replies: [Bool] = []
             XCTAssertEqual(model.requestTermination(confirm: { changed in
@@ -97,6 +149,7 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
                                                     reply: { _ in XCTFail("Duplicate reply") }), .terminateLater)
             pending?.resume(returning: false); pending = nil
             try await waitUntil { replies == [false] }
+            try await waitUntil { model.listening && !model.starting }
             XCTAssertEqual(model.state.context, context)
             XCTAssertTrue(model.state.working)
             XCTAssertEqual(model.text, "Unsent draft")

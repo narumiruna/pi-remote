@@ -113,6 +113,14 @@ Verified results:
 - `project.yml` adds only the Mac termination delegate source to the Mac test target. `xcodegen generate --spec project.yml` regenerated the ignored local project after that configuration change. Dependencies, deployment and signing settings are unchanged.
 - Complete source/test diff review covers correctness, security, lifecycle safety, compatibility, regressions and scope. No wire format, credentials, catalog/session format or iPhone behavior changed. Read-only requests do not count as Quit mutations. RPC-cancellation and journal-commit unknown outcomes retain consent protection after unrelated read errors; successful explicit Stop/lifecycle changes end that interruption risk.
 
+PR #7 startup correction:
+
+- Review R1 found that Quit awaited network startup before it could cancel startup. A blocked version check reproduced the delay in `/tmp/pi-remote-pr7-startup-before.xcresult`; the four-second reply check failed on the original code. Cleanup then cancelled startup; the old termination task reported busy after shutdown.
+- `requestTermination` now checks authoritative host consent without awaiting startup. Accepted shutdown still cancels startup before waiting. Cancel does not cancel network startup.
+- All 23 `CompanionTests` pass with zero failures/skips in `/tmp/pi-remote-pr7-model-final.xcresult`; log `/tmp/pi-remote-pr7-model-final.log`. The new fixture checks normal and TERM-ignoring blocked version children, a reply within four seconds, child exit and no listener start. The Cancel test also proves that network startup can finish while local Pi work remains active. Existing stale-consent and duplicate-reply checks pass.
+- Command: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/pi-remote-review-main CODE_SIGNING_ALLOWED=NO -only-testing:PiRemoteMacTests/CompanionTests -resultBundlePath /tmp/pi-remote-pr7-model-final.xcresult test`.
+- The unsigned Mac build passes with the same scheme, destination and derived-data path; log `/tmp/pi-remote-pr7-mac-build.log`. Earlier full-suite, root, sanitizer and phone checkpoints above were not rerun for this Mac-only correction. The live acceptance checks remain open. See the [review ledger](../reviews/2026-10-17_pr-7-review.md).
+
 Failure record and limits:
 
 - The first Quit fixture lacked `new_session` support; the changed-session test failed with incompatiblePi. The fixture now implements that core reply and the full Mac suite passes.

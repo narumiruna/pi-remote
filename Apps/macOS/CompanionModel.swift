@@ -619,7 +619,8 @@ final class CompanionModel {
         terminationTask = Task {
             var workChanged = false
             do {
-                if let startup { await startup.value }
+                // Check consent before cancelling startup. Shutdown cancels it
+                // before waiting, so a version check cannot delay this decision.
                 if let coordinator {
                     while true {
                         let consent = try await coordinator.quitConfirmation()
