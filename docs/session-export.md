@@ -19,7 +19,7 @@ Pi Remote does not upload an export automatically, open a browser, render HTML o
   - The header uses the managed Pi session ID, canonical Mac directory and a fresh timestamp. It is not a byte-for-byte archive of the session file. Abandoned branches are deliberately excluded, as in Pi's terminal JSONL export.
 - Both outputs are complete and bounded to 2 MiB. JSONL also limits the complete input tree to 2 MiB. Oversized output is rejected, never truncated. Replies fit the existing 4-MiB protocol limit. Empty or invalid UTF-8 HTML bytes, malformed live state, unknown leaves and invalid tree links fail closed.
 - Older HTML-only replies without a format field still decode as HTML. The JSONL control appears only when the host advertises its separate capability.
-- Pi's terminal-only Radius/Gist upload, bug-report flow and custom-renderer parity are outside the user-confirmed core RPC scope. The native service picker does not implement those integrations, and they are not completion requirements. Core RPC coverage still needs its separate audit; this checkpoint does not complete `PLAN.md`.
+- Pi's terminal-only Radius/Gist upload, bug-report flow and custom-renderer parity are outside the user-confirmed upstream Pi core RPC scope. The native service picker does not implement those integrations, and they are not completion requirements. Upstream Pi core RPC coverage still needs its separate audit; this checkpoint does not complete `PLAN.md`.
 
 ## Verified checks
 

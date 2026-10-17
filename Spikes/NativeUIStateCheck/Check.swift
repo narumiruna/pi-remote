@@ -150,7 +150,7 @@ private func waitUntil(line: Int = #line, _ condition: () async throws -> Bool) 
             try await command("widget-clear"); try await expectNotices(baseline + ["Status three"])
             try await command("status-clear"); try await expectNotices(baseline)
             try await command("state")
-            // The command path does not refresh configuration. These values must arrive as core events.
+            // The command path does not refresh configuration. These values must arrive as upstream Pi core events.
             try await waitUntil {
                 let state = try await snapshot()
                 return state.sessions.first?.title == project.lastPathComponent && state.thinking == "high"

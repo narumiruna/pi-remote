@@ -1,8 +1,10 @@
-# Core event and queue verification
+<a id="core-event-and-queue-verification"></a>
+
+# Upstream Pi core event and queue verification
 
 ## Result
 
-Core queue, transcript, name and standard UI handling have additional local checks against Pi 1.3.0. Lifecycle and inspection also pass their linked checks. Shell controls remain open.
+Upstream Pi core queue, transcript, name and standard UI handling have additional local checks against Pi 1.3.0. Lifecycle and inspection also pass their linked checks. Shell controls remain open.
 
 The initial event checkpoint passed 103 root tests normally and with Thread Sanitizer. The later [acceptance checkpoint](core-rpc-acceptance.md) passes 135 root tests, including write admission, custom previews and lifecycle regressions. A later shared checkpoint passes all 50 tests normally and with Thread Sanitizer, including explicit settlement boundaries, opaque custom-entry handling and branch-summary retry phases. Native session-inspection integration has separate checks in the acceptance record. Evidence:
 
@@ -48,7 +50,7 @@ Backpressure regressions verify both bounds, unknown outcomes, no delayed replay
 
 The process reader continues draining stdout after a bounded event-buffer overflow. `resumeEvents()` creates a fresh subscription with the original capacity; it does not replay events or restart Pi. Replacing a subscription terminates the previous subscription explicitly.
 
-The host subscribes before reading authoritative state and history again. It keeps ownership of the child and reports uncertain work. Core RPC cannot replay a lost dialog or identify every outstanding retry wait. The app therefore keeps the session in recovery and rejects new mutations except Stop. It never approves a lost dialog or resends a prompt.
+The host subscribes before reading authoritative state and history again. It keeps ownership of the child and reports uncertain work. Upstream Pi core RPC cannot replay a lost dialog or identify every outstanding retry wait. The app therefore keeps the session in recovery and rejects new mutations except Stop. It never approves a lost dialog or resends a prompt.
 
 Stop shuts down the uncertain child and retains the saved session for explicit reopening. Failed shutdown retains control for another Stop attempt. Repeated stream gaps are bounded to three recovery attempts per child before controlled shutdown.
 
@@ -85,6 +87,6 @@ swift run NativeRetryCheck "$(command -v pi)"
 swift run NativeUIStateCheck "$(command -v pi)"
 ```
 
-These are local development checks, not hardware, off-site or release-support claims. Native session inspection, core session switching and final app regressions also pass their separate checks in the [acceptance record](core-rpc-acceptance.md).
+These are local development checks, not hardware, off-site or release-support claims. Native session inspection, upstream Pi core session switching and final app regressions also pass their separate checks in the [acceptance record](core-rpc-acceptance.md).
 
 During parallel integration, one build saw a newly declared target before its source file was created. Another rejected a source file changed during compilation. Neither attempt executed its intended checks. Final acceptance must use a stable source tree; these attempts are not passing evidence.

@@ -1,8 +1,10 @@
-# Core RPC acceptance checkpoint
+<a id="core-rpc-acceptance-checkpoint"></a>
+
+# Upstream Pi core RPC acceptance checkpoint
 
 ## Result
 
-The current host, client and native controls pass the local checks below against Pi 1.3.0. **The plan is not complete:** the approved core `bash`/`abort_bash` controls and `bash_execution_update` output still need implementation and verification. No terminal-only or individual-extension integration is required.
+The current host, client and native controls pass the local checks below against Pi 1.3.0. **The plan is not complete:** the approved upstream Pi core `bash`/`abort_bash` controls and `bash_execution_update` output still need implementation and verification. No terminal-only or individual-extension integration is required.
 
 This checkpoint predates the later Mac UI and manual folder-path changes. Its full product/interface counts and source hashes apply to that earlier revision, not the later changes. See [separate UI/path verification](mac-interface.md).
 
@@ -22,7 +24,7 @@ This checkpoint predates the later Mac UI and manual folder-path changes. Its fu
 
 The seven installed-Pi targets are `NativeWorkflowCheck`, `NativeResourceCheck`, `NativeFailureCheck`, `NativeRetryCheck`, `NativeUIStateCheck`, `NativeSessionLifecycleCheck` and `NativeInspectionCheck`. These cover generic dialogs, resources, missing credentials, retry, standard UI state, same-child lifecycle and authoritative inspection. Generated extensions are isolated test fixtures, not product dependencies or adapters.
 
-The operation inventory contains all 33 command headings from installed `rpc-commands.md`, all 24 core event types and all nine standard extension UI methods. The [coverage table](native-compatibility.md) separates verified mappings from the remaining approved shell implementation and verification. Inventory alone is not complete acceptance.
+The operation inventory contains all 33 command headings from installed `rpc-commands.md`, all 24 upstream Pi core event types and all nine standard extension UI methods. The [coverage table](native-compatibility.md) separates verified mappings from the remaining approved shell implementation and verification. Inventory alone is not complete acceptance.
 
 Run complete root suites with explicit serial test scheduling:
 
@@ -70,7 +72,7 @@ Earlier attempts had 12 failed executions across ten bundles. Files-picker navig
 ## Regression records
 
 - The older workflow probe assumed New replaced the process. It timed out on the newly preserved standard `session_before_switch` confirmation. The test now waits for that exact synthetic dialog and explicitly confirms it. Product code does not approve automatically.
-- The Mac model fixture returned an empty object for `new_session`. The core host correctly rejected it. The fixture now returns the standard cancellation field and new session state; all three Mac tests pass without weakening assertions.
+- The Mac model fixture returned an empty object for `new_session`. The Pi Remote host correctly rejected it. The fixture now returns the standard cancellation field and new session state; all three Mac tests pass without weakening assertions.
 - A cancelled shutdown caller previously collapsed cleanup waits. Cleanup now runs independently of caller cancellation with bounded graceful, termination and kill stages. The regression passes normally and with Thread Sanitizer; no owned child remains after success.
 - A handled metadata-only prompt could incorrectly mark a still-unwritten empty session as populated. The host restores its prior empty-file expectation only for a confirmed handled, idle, unchanged session without a persisted file. A dedicated regression and the real `/rpc-prefill` workflow pass normally and with Thread Sanitizer. Unknown accepted outcomes remain protected against replay.
 - [Lifecycle regressions](session-lifecycle.md#verified-checkpoint) cover empty ancestry, an unwritten fork and persisted custom messages. [Event checks](core-event-verification.md) record recovery and refresh races.
@@ -79,4 +81,4 @@ Earlier attempts had 12 failed executions across ten bundles. Files-picker navig
 
 These checks establish local simulator and laptop behavior only. They do not establish signed installation, physical unlock or camera behavior, off-site reliability, a supported runtime-version range or distribution readiness. iOS 18 and macOS 15 remain build deployment settings, not tested hardware floors. Pi 1.3.0 is the only tested development runtime.
 
-Provider credentials remain on the Mac. Pairing approval, certificate pinning, hostname/validity checks, revocation, directory validation and no-prompt-replay rules remain unchanged. No arbitrary raw RPC or shell controls were added in this checkpoint. The user subsequently approved native core shell controls, but not an embedded terminal or PTY; implementation and verification remain open.
+Provider credentials remain on the Mac. Pairing approval, certificate pinning, hostname/validity checks, revocation, directory validation and no-prompt-replay rules remain unchanged. No arbitrary raw RPC or shell controls were added in this checkpoint. The user subsequently approved native upstream Pi core shell controls, but not an embedded terminal or PTY; implementation and verification remain open.

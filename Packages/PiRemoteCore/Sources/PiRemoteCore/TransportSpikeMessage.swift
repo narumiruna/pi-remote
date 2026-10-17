@@ -1,6 +1,6 @@
 import Foundation
 
-/// Restricted diagnostic messages only. This is not a generic Pi RPC bridge.
+/// Restricted diagnostic messages only. This is not a generic upstream Pi core RPC bridge.
 public enum TransportSpikePayload: Codable, Sendable, Equatable {
     case challenge(nonce: Data)
     case pair(device: UUID, grant: Data)

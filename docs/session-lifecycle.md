@@ -1,22 +1,26 @@
-# Managed core session lifecycle
+<a id="managed-core-session-lifecycle"></a>
+
+# Managed upstream Pi core session lifecycle
 
 ## Behavior
 
-Native session changes now use core RPC when the working directory can remain unchanged:
+Native session changes now use upstream Pi core RPC when the working directory can remain unchanged:
 
 - Creating another session in the current directory calls `new_session`.
 - **New in current directory** offers an explicit confirmation and optional parent tracking. The parent is the current managed session, never a phone-supplied path. Parent tracking records ancestry; it does not copy messages.
 - Resuming a persisted managed session or importing reviewed JSONL in the same directory calls `switch_session`.
-- Changing directories replaces the child process. Core can change its session cwd without changing the OS process cwd; process replacement keeps both directories consistent.
+- Changing directories replaces the child process. Upstream Pi core can change its session cwd without changing the OS process cwd; process replacement keeps both directories consistent.
 - Reopening an allocated but unwritten session also replaces the process explicitly, using its saved ID. It does not invent a conversation or resend a prompt.
 
 All operations require idle state and validated directory/file identities. Native IDs remain opaque. The host serializes mutations and records request outcomes. Repeating an acknowledged New, fork or clone request cannot create another session. A stale new request cannot target another selected context.
 
-## Core hooks and UI events
+<a id="core-hooks-and-ui-events"></a>
 
-Same-child operations preserve core cancellation hooks. A cancelled change retains the catalog, selected session and history. Standard hook dialogs remain answerable. Stop during an unresolved replacement stops the owned child and fences late replies; it does not claim that an uncertain replacement completed.
+## Upstream Pi core hooks and UI events
 
-Core UI records have no session ID. During replacement, the host retains bounded notification, title, status, widget and editor updates and applies them to the resolved context, including the retained context after cancellation. These are transition-generated updates, not proof of their originating session. The buffer retains at most 64 records and 512 KiB of encoded data. Oversized editor text is rejected, not silently truncated. Overflow has an explicit warning.
+Same-child operations preserve upstream Pi core cancellation hooks. A cancelled change retains the catalog, selected session and history. Standard hook dialogs remain answerable. Stop during an unresolved replacement stops the owned child and fences late replies; it does not claim that an uncertain replacement completed.
+
+Upstream Pi core UI records have no session ID. During replacement, the host retains bounded notification, title, status, widget and editor updates and applies them to the resolved context, including the retained context after cancellation. These are transition-generated updates, not proof of their originating session. The buffer retains at most 64 records and 512 KiB of encoded data. Oversized editor text is rejected, not silently truncated. Overflow has an explicit warning.
 
 The event subscription remains active so queued UI records are not discarded at the response boundary. Authoritative name read-back prevents delayed outgoing name events from changing the wrong catalog title. Session, child and generation checks fence asynchronous results. Standard editor updates still require consent before replacing a nonempty phone draft.
 
@@ -42,7 +46,7 @@ The current acceptance run passes 135 root tests and 50 shared tests, normally a
 
 `NativeSessionLifecycleCheck` passes against installed Pi 1.3.0 normally and with Thread Sanitizer, without network inference or prompt replay. It verifies:
 
-- Core new/switch operations in one PID and new/resume cancellation.
+- Upstream Pi core new/switch operations in one PID and new/resume cancellation.
 - Host new/import/resume/fork/clone and four cancelled hooks.
 - Incoming and cancelled-hook prefill, status, widget, notification and title updates.
 - Parent metadata without history copying, including explicit empty reopen.

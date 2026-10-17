@@ -2,7 +2,7 @@
 
 ## Status
 
-The local Pi RPC spike passes its focused checks. The complete app plan is **blocked and incomplete**. This document records the spike checkpoint and initial compatibility review. Native apps and an authenticated host have since been added; see [native app verification](native-apps.md) for current implementation and test evidence. The separate [secure transport spike](secure-transport-spike.md) remains diagnostic-only.
+The local upstream Pi core RPC spike passes its focused checks. The complete app plan is **blocked and incomplete**. This document records the spike checkpoint and initial compatibility review. Native apps and an authenticated host have since been added; see [native app verification](native-apps.md) for current implementation and test evidence. The separate [secure transport spike](secure-transport-spike.md) remains diagnostic-only.
 
 ## Environment evidence
 
@@ -87,7 +87,7 @@ Evidence comes from the installed Pi 1.3.0 documentation and the exercise above.
 | Attachments | Documented image content in prompts; RPC rejects CLI `@file` prompt arguments | Native image input, size limits, and an explicit text-file attachment design |
 | File and diff inspection | Tool events can include results; no dedicated file/diff browser contract was established | Define host operations and native views without arbitrary RPC forwarding |
 | Built-in terminal commands | `get_commands` excludes built-in TUI commands | Map each workflow to a native action or investigate a missing interface |
-| Terminal-only extension UI | `custom()` returns `undefined`; terminal input and several rendering methods are unavailable or no-ops in RPC | Outside the user-confirmed core RPC scope; no adapter or terminal-parity requirement applies |
+| Terminal-only extension UI | `custom()` returns `undefined`; terminal input and several rendering methods are unavailable or no-ops in RPC | Outside the user-confirmed upstream Pi core RPC scope; no adapter or terminal-parity requirement applies |
 
 Configured package inventory from `pi list` and package manifests:
 
@@ -115,6 +115,6 @@ None of these packages has passed a remote native-client compatibility test. Sta
 2. Bring the iPhone online in Tailscale and make it available on a different network for the off-site test; Mac Tailscale is already running.
 3. Validate the Face ID or device-passcode unlock policy and matching Keychain access behavior on the physical phone.
 4. Extend the passing physical local-network spike to off-site Tailscale access and physical-device credential-revocation checks; local pairing, server-identity rejection, and authenticated reconnection have passed.
-5. Complete the core RPC operation/event/standard-UI audit under the [user-confirmed scope](native-compatibility.md#accepted-boundary). Installed-extension parity and adapters for terminal-only behavior are not required.
+5. Complete the upstream Pi core RPC operation/event/standard-UI audit under the [user-confirmed scope](native-compatibility.md#accepted-boundary). Installed-extension parity and adapters for terminal-only behavior are not required.
 
 The local physical transport gate in `PLAN.md` is satisfied. Keep off-site Tailscale, product-app, and release checks open; do not report the overall plan complete from a diagnostic handshake test.

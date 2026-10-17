@@ -17,7 +17,7 @@ Existing file-history paging and full text/image entry previews remain available
 - Traversal is iterative. Duplicate IDs, cycles, inconsistent parent links and invalid leaves are rejected. Documented orphan roots retain their missing parent ID.
 - The host serializes inspection with other app actions. It checks the selected session, child generation, run revision and managed-file revision around suspended reads.
 - Two tree reads surround the fork-option read. Detected changes return a conflict; the app does not combine a known inconsistent tree and option list.
-  - Core RPC has no atomic combined inspection operation. These checks cannot establish upstream atomicity against every independent extension change.
+  - Upstream Pi core RPC has no atomic combined inspection operation. These checks cannot establish upstream atomicity against every independent extension change.
 - Cursors are opaque, session-bound and valid for five minutes. The host retains at most two snapshots and 32 tree cursors. The view retains at most eight previous pages.
 - Full-preview indexing scans each unchanged session/file revision once, using at most 32 MiB, 10,000 entries and 64 KiB reads. At most two offset indexes remain cached for five minutes. File revision changes invalidate them. Existing preview references are bounded to 2,000. Pi's 8 MiB record limit and app frame limits also apply.
 - Canonical visible `custom_message` entries retain their full text and original image references in entry previews. Hidden entries remain suppressed, including summary fallbacks.
@@ -30,7 +30,7 @@ These limits apply to app inspection, not to Pi's complete persisted history. No
 A separate Herdr Pi agent implemented the bounded mapper, native inspector and integration checks. Parent inspection confirmed the source and result logs.
 
 - The later [acceptance checkpoint](core-rpc-acceptance.md) passes 135 root tests normally and with Thread Sanitizer. Inspection cases cover three-page traversal, labels/timestamps/leaf, text and image previews, authoritative fork rejection, an abandoned branch, read serialization, changed snapshots, active-work races, bounded retained snapshots, custom-message visibility/images and cached scan reuse/invalidation.
-- 50 shared tests pass normally and with Thread Sanitizer, including inspection DTO round trips and the core event boundary cases.
+- 50 shared tests pass normally and with Thread Sanitizer, including inspection DTO round trips and the upstream Pi core event boundary cases.
 - The pure mapper also passes 10,000-deep and 10,000-wide fixtures without recursive traversal. This does not test decoding a 10,000-deep JSON wire record.
 - `NativeInspectionCheck` passes against installed Pi 1.3.0 normally and with Thread Sanitizer. It imports 217 entries through the supported import action, checks three-page inspection against Pi's own session-manager tree, validates exact labels/timestamps/leaf, reads full text and original image bytes, forks an abandoned message and verifies draft/catalog, close/reopen and host-restart restoration.
 - The installed check denies network access at the OS level and verifies zero input/run/provider/user events, tokens or cost. Source bytes and real settings remain unchanged. Recorded children stop before private fixture removal.

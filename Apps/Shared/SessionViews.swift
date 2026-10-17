@@ -237,7 +237,7 @@ private struct SessionCommandActions: View {
                 .accessibilityIdentifier("session-command-" + command.id)
                 .disabled(sending || state.selected == nil || (state.working && command.source != "extension"))
             }
-            Text("Commands use Pi core RPC. A command can report that it requires a terminal.")
+            Text("Commands use upstream Pi core RPC. A command can report that it requires a terminal.")
                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
         }
         .onChange(of: state.context) { _, _ in arguments = ""; error = nil }

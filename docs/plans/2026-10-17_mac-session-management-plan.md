@@ -2,7 +2,7 @@
 
 ## Goal
 
-Bring Herdr's useful session-management workflows into the native Pi Remote for Mac interface: a session overview, quick navigation, non-destructive session closing, split conversations, concurrent Pi sessions and layout recovery. Preserve the existing light appearance, blue accent, SwiftUI architecture and Pi RPC behavior.
+Bring Herdr's useful session-management workflows into the native Pi Remote for Mac interface: a session overview, quick navigation, non-destructive session closing, split conversations, concurrent Pi sessions and layout recovery. Preserve the existing light appearance, blue accent, SwiftUI architecture and upstream Pi core RPC behavior.
 
 This is a proposed implementation plan, not evidence that these features work. The user selected non-destructive Close Session. Concurrent execution and background process ownership require separate architecture approval before implementation.
 

@@ -27,7 +27,7 @@ private func waitUntil(line: Int = #line, _ condition: () throws -> Bool) async 
 }
 private func canonical(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
 
-/// Direct core RPC lifecycle checks. The JavaScript extension is a private test fixture only.
+/// Direct upstream Pi core RPC lifecycle checks. The JavaScript extension is a private test fixture only.
 @main struct NativeSessionLifecycleCheck {
     static func main() async {
         do {
@@ -188,7 +188,7 @@ private func canonical(_ path: String) -> String { URL(fileURLWithPath: path).re
             try await send(.fork(entry: option.id))
             try await expectUI("Incoming fork")
             try require(try await inspect(project)["pid"] == initial["pid"])
-            // A real core fork returns the complete imported user text, even beyond the native draft budget.
+            // A real upstream Pi core fork returns the complete imported user text, even beyond the native draft budget.
             try await send(.importSession(data: seed(String(repeating: "x", count: 257 * 1_024))))
             try await expectUI("Incoming resume")
             try await command("suppress-fork-ui")

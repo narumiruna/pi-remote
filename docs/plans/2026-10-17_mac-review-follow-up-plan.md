@@ -130,7 +130,7 @@ PR #7 storage-failure correction:
 
 Failure record and limits:
 
-- The first Quit fixture lacked `new_session` support; the changed-session test failed with incompatiblePi. The fixture now implements that core reply and the full Mac suite passes.
+- The first Quit fixture lacked `new_session` support; the changed-session test failed with incompatiblePi. The fixture now implements that upstream Pi core reply and the full Mac suite passes.
 - Native delegate tests initially used an async AppKit overload without await and an old selector spelling. Both compile errors were corrected; the delegate/presenter tests pass.
 - Initial presentation checks expected Tools and missed SwiftUI mouse-up dispatch. Expectations now use Session; the pointer helper delivers mouse-up after mouse-down returns. A native menu-tracking fixture hung and was removed after its own test processes were cleaned up. Actual Session controls menu dispatch remains an open manual check, not a pass.
 - Capture review found a wrapped visible Inspector label and collapsed panes after closing to a workspace. The redundant visible label is hidden while the accessibility label remains in source. The center pane now has a viewport-derived minimum height and empty inspector tabs stay at the top. New frame assertions reproduce and verify these corrections. Two attempted outer-frame-only fixes failed; an intermediate frame-argument ordering error did not compile. Final checks pass.

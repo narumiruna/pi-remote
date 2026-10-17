@@ -218,7 +218,7 @@ private func jsonl(_ values: [JSONValue]) throws -> Data {
             guard let textToken = previews["abandoned"], let imageToken = previews["image-only"],
                   case .preview(let full) = try await send(.historyEntry(id: textToken), to: host),
                   case .preview(let image) = try await send(.historyEntry(id: imageToken), to: host) else { throw CheckFailure.assertion(#line) }
-            // Full file previews retain their block separators; fork text uses core's separator-free extraction.
+            // Full file previews retain their block separators; fork text uses upstream Pi core's separator-free extraction.
             try require(full.text == "Abandoned branch. \n" + String(abandonedText.dropFirst("Abandoned branch. ".count)) && !full.truncated)
             guard let imageID = image.images?.first?.id else { throw CheckFailure.assertion(#line) }
             guard case .image(let original) = try await send(.outputImage(id: imageID), to: host) else { throw CheckFailure.assertion(#line) }

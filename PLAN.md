@@ -6,11 +6,11 @@ Build a native iOS app in Swift that lets one user talk to and control Pi runnin
 
 The user can choose a working directory on the Mac from their iPhone, start Pi there, watch its work, send more instructions, stop work, and return after a connection loss.
 
-Support every documented operation, response, event and standard extension UI method supplied by the tested Pi core packages, including `bash` and `abort_bash`, through native controls. The no-embedded-terminal rule is a UI constraint; it must not exclude native Pi core RPC functionality. Support extension commands and interactions generically only where that core protocol exposes them. Do not add dependencies on individual extensions.
+Support every documented operation, response, event and standard extension UI method supplied by the tested version of upstream Pi core packages, including `bash` and `abort_bash`, through native controls. The no-embedded-terminal rule is a UI constraint; it must not exclude native upstream Pi core RPC functionality. Support extension commands and interactions generically only where that upstream protocol exposes them. Do not add dependencies on individual extensions.
 
 Product name: **Pi Remote**. The macOS companion is **Pi Remote for Mac**.
 
-Status: unsigned Mac, iOS simulator and device-SDK builds pass. The [earlier core RPC acceptance checkpoint](docs/core-rpc-acceptance.md) passes 135 root tests and 50 shared tests, both with and without Thread Sanitizer, three Mac-model tests and all 31 product simulator tests on each of LAN and Tailscale. A separate Herdr Pi agent ran the product E2E checks and verified unchanged source/settings and child/listener cleanup. Installed-Pi checks verify generic UI, resources, retry, authoritative inspection and same-child lifecycle; the real provider workflow also passes. The plan remains incomplete: the approved core shell controls still need implementation and verification. Terminal-only and individual-extension workflows are not completion requirements. These results establish local simulator/laptop behavior, not signed installation, hardware or off-site support. Later Mac UI and manual path-entry changes have [separate verification](docs/mac-interface.md); earlier suite counts are not evidence for those changes.
+Status: unsigned Mac, iOS simulator and device-SDK builds pass. The [earlier upstream Pi core RPC acceptance checkpoint](docs/core-rpc-acceptance.md) passes 135 root tests and 50 shared tests, both with and without Thread Sanitizer, three Mac-model tests and all 31 product simulator tests on each of LAN and Tailscale. A separate Herdr Pi agent ran the product E2E checks and verified unchanged source/settings and child/listener cleanup. Installed-Pi checks verify generic UI, resources, retry, authoritative inspection and same-child lifecycle; the real provider workflow also passes. The plan remains incomplete: the approved upstream Pi core shell controls still need implementation and verification. Terminal-only and individual-extension workflows are not completion requirements. These results establish local simulator/laptop behavior, not signed installation, hardware or off-site support. Later Mac UI and manual path-entry changes have [separate verification](docs/mac-interface.md); earlier suite counts are not evidence for those changes.
 
 ## Context
 
@@ -23,7 +23,7 @@ Status: unsigned Mac, iOS simulator and device-SDK builds pass. The [earlier cor
 
 References for implementation:
 
-- [Pi RPC protocol](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)
+- [Upstream Pi core RPC protocol](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)
 - [RPC commands](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-commands.md)
 - [Event stream](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md)
 - [Extension UI](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-extension-ui.md)
@@ -34,11 +34,11 @@ These references describe the current interface. Confirm behavior against the in
 ## Accepted product decisions
 
 - Allow selection of any folder accessible to the Mac companion; do not require approved roots or per-project registration, and do not bypass macOS permissions.
-- The user-confirmed compatibility boundary is the RPC protocol provided by Pi's core packages: core operations, responses, events and the standard extension UI subprotocol.
+- The user-confirmed compatibility boundary is the RPC protocol supplied by upstream Pi core packages: operations, responses, events and the standard extension UI subprotocol.
   - Discover and invoke extension commands through the standard protocol without extension-specific imports, required packages, name-based adapters or custom message formats.
   - Do not require installed-extension compatibility, terminal-only built-in commands, custom terminal components, a bundled Pi-side adapter or upstream modifications for completion.
-  - This replaces the earlier complete-terminal/installed-extension parity requirement; it does not establish that every core RPC operation is implemented or tested.
-- Core `bash`/`abort_bash` support is required, not an unresolved approval decision. Provide native command, output and cancellation controls. The restriction is against an embedded terminal or PTY, not shell execution through Pi core RPC.
+  - This replaces the earlier complete-terminal/installed-extension parity requirement; it does not establish that every upstream Pi core RPC operation is implemented or tested.
+- Upstream Pi core `bash`/`abort_bash` support is required, not an unresolved approval decision. Provide native command, output and cancellation controls. The restriction is against an embedded terminal or PTY, not shell execution through upstream Pi core RPC.
   - Keep execution on the Mac through typed, authenticated, session-bound actions. Require execution confirmation, bound output and preserve unknown-outcome/no-replay handling.
 - Require both local-network access and access away from home through Tailscale for the first personal build.
 - Target iPhone layouts in the iOS simulator; deployment settings are build requirements, not claims of tested hardware compatibility.
@@ -72,7 +72,7 @@ These references describe the current interface. Confirm behavior against the in
 - Create, resume, and switch companion-managed sessions while idle; associate each session with its working directory.
 - Provide native command discovery and controls for supported Pi workflows, not only text prompts; use the compatibility review below to define the release scope.
 - Send text prompts and render streamed Markdown, code blocks, tool activity, and errors.
-- Execute commands through core `bash`, display bounded streamed output and final results, and cancel through core `abort_bash`, using native controls without an embedded terminal.
+- Execute commands through upstream Pi core `bash`, display bounded streamed output and final results, and cancel through upstream Pi core `abort_bash`, using native controls without an embedded terminal.
 - Send a steering instruction or queue a follow-up while Pi is working.
 - Stop current work and clear queued instructions through one explicit Stop action.
 - Select from Pi's configured models and supported thinking levels.
@@ -85,7 +85,7 @@ These references describe the current interface. Confirm behavior against the in
 - Provide a menu-bar app with connection, pairing, project, and Pi status controls.
 - Let the user select the installed Pi executable and manage directory-access permissions.
 - Serve authenticated directory listings so the iPhone can select a working directory under the accepted access policy.
-- Start and supervise a Pi RPC child process with the selected directory as its working directory.
+- Start and supervise an upstream Pi core RPC child process with the selected directory as its working directory.
 - Keep Pi running when the iPhone disconnects or locks.
 - Store sessions on the Mac and resume them after a companion restart.
 - Show paired devices and let the user revoke access.
@@ -101,9 +101,9 @@ These references describe the current interface. Confirm behavior against the in
 - Push notifications or a promise of continuous iOS background connectivity.
 - Concurrent active sessions on one Mac and automatic Git worktrees.
 - Automatic import of all existing Pi history.
-- Extension-specific integrations, custom extension RPC protocols, terminal-only UI and built-in terminal commands without a core RPC equivalent.
+- Extension-specific integrations, custom extension RPC protocols, terminal-only UI and built-in terminal commands without an upstream Pi core RPC equivalent.
 
-Retain the implemented session, attachment, file, diff, import/export and sharing features; this scope correction does not authorize their removal. Review Pi-backed behavior against core RPC, not terminal parity. The authenticated Mac directory picker remains required and is separate from file-content browsing.
+Retain the implemented session, attachment, file, diff, import/export and sharing features; this scope correction does not authorize their removal. Review Pi-backed behavior against upstream Pi core RPC, not terminal parity. The authenticated Mac directory picker remains required and is separate from file-content browsing.
 
 ## Interface design
 
@@ -111,7 +111,7 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 
 - Use a clean native interface with the conversation as the primary work area; do not reproduce a terminal or web dashboard.
   - On Mac, use a persistent workspace/session sidebar and an optional Files/Session/Activity inspector. Keep the conversation wider than either secondary pane. Preserve the white appearance and blue accent; do not add themes.
-  - Keep the iPhone conversation-first layout and existing core RPC contracts.
+  - Keep the iPhone conversation-first layout and existing upstream Pi core RPC contracts.
 - Use system typography, consistent spacing, restrained color, and standard SwiftUI controls; reserve monospaced text for code, paths, and tool output.
 - Support light and dark appearance, Dynamic Type, VoiceOver and sufficient contrast. Use touch targets of at least 44 × 44 points on iPhone and native system control sizes on Mac.
 - Show secondary controls only when needed, without removing supported Pi capabilities or hiding errors, connection loss, or active work.
@@ -156,15 +156,17 @@ Use one repository with `Apps/iOS/`, `Apps/macOS/`, and `Packages/PiRemoteCore/`
 
 The intended data path is iOS client → authenticated secure connection → Mac companion → local JSON RPC → Pi. Responses and events return along the same path.
 
-### Core RPC coverage and compatibility
+<a id="core-rpc-coverage-and-compatibility"></a>
 
-- Inventory the operations, responses, events and standard extension UI methods documented by the selected Pi core runtime; map each to app behavior and direct verification evidence.
-- Keep unimplemented or unverified core RPC behavior open. Do not treat a scope change or passing tests for a subset as proof of complete protocol coverage.
+### Upstream Pi core RPC coverage and compatibility
+
+- Inventory the operations, responses, events and standard extension UI methods documented by the tested version of upstream Pi core packages; map each to app behavior and direct verification evidence.
+- Keep unimplemented or unverified upstream Pi core RPC behavior open. Do not treat a scope change or passing tests for a subset as proof of complete protocol coverage.
 - Support discovered command names and arguments through `get_commands` and `prompt`; do not hardcode individual extensions or assume that discovery proves a command works in RPC.
 - Render standard extension dialogs and supported notifications, text widgets, status and editor updates generically; verify cancellation, expiry and stale-answer rejection with controlled fixtures.
 - Treat terminal-only commands, custom terminal rendering and extension-specific protocols as outside scope, not as adapter approval blockers.
-- Use native forms, menus, transcript views and dialogs. Keep raw Pi RPC behind the authenticated companion and preserve session ownership, typed app actions and bounded data handling.
-- Implement and verify core `bash`, `abort_bash` and `bash_execution_update` with native controls. Do not embed a terminal, PTY or interactive shell session.
+- Use native forms, menus, transcript views and dialogs. Keep raw upstream Pi core RPC behind the authenticated companion and preserve session ownership, typed app actions and bounded data handling.
+- Implement and verify upstream Pi core `bash`, `abort_bash` and `bash_execution_update` with native controls. Do not embed a terminal, PTY or interactive shell session.
 
 ### Working-directory selection
 
@@ -195,7 +197,7 @@ The intended data path is iOS client → authenticated secure connection → Mac
 ### Pi process and session lifecycle
 
 - Launch the Pi process with Foundation Process, an executable URL and an argument array; do not build its launch command by shell interpolation.
-- Send user-entered shell commands to the managed Pi process through core `bash`. Do not replace this operation with a companion-owned shell process or terminal session.
+- Send user-entered shell commands to the managed Pi process through upstream Pi core `bash`. Do not replace this operation with a companion-owned shell process or terminal session.
 - Launch Pi in RPC mode with persistent sessions enabled. Resolve the exact startup arguments from the selected Pi version.
 - Maintain one active Pi process and one active session per Mac in the first version. Reject project or session switches while work is active.
 - Only the companion writes to its managed sessions. Do not open the same session for writing in a separate terminal Pi process.
@@ -206,9 +208,9 @@ The intended data path is iOS client → authenticated secure connection → Mac
 
 ### Protocol and synchronization
 
-- Define an app protocol with a version, request ID, session ID, host epoch, event sequence, and typed payload. Keep raw Pi RPC behind the companion boundary.
+- Define an app protocol with a version, request ID, session ID, host epoch, event sequence, and typed payload. Keep raw upstream Pi core RPC behind the companion boundary.
 - Negotiate the app protocol version and report the selected Pi version and supported capabilities during connection setup.
-- Allow only typed commands that the app implements, including the approved core `bash`/`abort_bash` actions. Do not expose arbitrary RPC forwarding, arbitrary session paths, an embedded terminal or a PTY.
+- Allow only typed commands that the app implements, including the approved upstream Pi core `bash`/`abort_bash` actions. Do not expose arbitrary RPC forwarding, arbitrary session paths, an embedded terminal or a PTY.
 - Parse Pi stdout as UTF-8 JSONL split only on LF; support partial records and CRLF. Keep stderr separate and continuously drain both streams.
 - Correlate RPC responses by request ID. A successful prompt response means acceptance, not completion.
 - Build live text from deltas and replace it with the authoritative completed message at `message_end`.
@@ -246,7 +248,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ### 1. Resolve implementation blockers
 
 - [x] Check iOS/macOS deployment settings and personal-build configuration against the local SDKs; unsigned macOS, iOS simulator and iOS device-SDK builds pass with automatic signing configured and provisional iOS 18/macOS 15 deployment floors. No team or installation is required for this local configuration check. See [local audit](docs/workflow-verification.md#local-plan-audit).
-- [x] Audit this laptop's Pi version, executable and authentication setup against the core RPC protocol; the [inventory](docs/native-compatibility.md) accounts for all 33 operations, 24 events and nine standard UI methods, with evidence and explicit open shell mappings. Pi 1.3.0 and `/Users/narumi/.bun/bin/pi` are verified; the status-only OAuth check reports ready. This inventory does not close implementation acceptance or require installed-extension parity.
+- [x] Audit this laptop's Pi version, executable and authentication setup against the upstream Pi core RPC protocol; the [inventory](docs/native-compatibility.md) accounts for all 33 operations, 24 events and nine standard UI methods, with evidence and explicit open shell mappings. Pi 1.3.0 and `/Users/narumi/.bun/bin/pi` are verified; the status-only OAuth check reports ready. This inventory does not close implementation acceptance or require installed-extension parity.
 - [x] Validate directory access on this laptop, including symbolic-link targets and permission-denial fixtures; local filesystem tests pass read/search denial, broken links, loops, removed/replaced selections and canonical alias launch. No approved roots or privacy-grant changes were added. See [directory evidence](docs/workflow-verification.md#directory-browsing-and-launch-protection).
 - [x] Select Keychain protection settings for the Face ID or device-passcode unlock policy; `WhenPasscodeSetThisDeviceOnly` plus `userPresence` remains selected. Three simulator tests pass denied/failed unlock, background return and delayed success after simulated lock; locked secret tests fail closed. Production TLS revocation closes access without cancelling Pi, which local Stop still controls. See [local unlock evidence](docs/workflow-verification.md#local-unlock-and-revocation).
 - [x] Build a Swift command-line spike that launches Pi, sends a prompt, streams output, stops work, and resumes a persisted session; Pi 1.3.0 passed streaming, settlement, active-run Stop, working-directory, and saved-session assertions, with 15 RPC tests and seven shared-package tests; see [verification evidence](docs/verification.md).
@@ -305,11 +307,11 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [x] Create and review a small SwiftUI interface prototype covering directory selection, an idle conversation, streaming with tool output, Stop, session controls, and reconnection; six compact-simulator UI tests pass twice, and captures confirm the header/transcript/composer layout. See [interface evidence](docs/interface-verification.md).
 - [x] Implement pairing, saved Mac connections, the Mac directory picker, and session selection; use simulator and local integration tests to navigate nested folders and start Pi in a selected directory without prior project registration. The production `PhoneModel` now pairs, saves and reloads Mac/device metadata, starts the selected nested session and sends the coding task in the simulator integration test. All 25 app tests pass on both LAN and Tailscale; bounded picker, session and stale-selection tests pass separately.
   - Verified: six simulator tests cover bounded picker pages, cached back/forward navigation, stale/cancelled requests, stale previews and retry after denied navigation. QR-code display and an in-app scanner are now implemented. Five additional tests cover QR encode/decode and invalid, expired and stale scans; all 19 iOS tests pass. Verify camera-result and permission handling with injected inputs, not a physical camera; see [QR evidence](docs/workflow-verification.md#qr-code-pairing).
-- [ ] Complete the native controls and generic protocol handling identified by the core RPC audit; verify them against the installed Pi RPC runtime with controlled fixtures and report unsupported core behavior explicitly.
-  - [ ] Implement typed, authenticated, session-bound core `bash` and `abort_bash` actions; verify command execution, final results and cancellation against controlled fixtures and installed Pi.
+- [ ] Complete the native controls and generic protocol handling identified by the upstream Pi core RPC audit; verify them against the installed upstream Pi core RPC runtime with controlled fixtures and report unsupported upstream Pi core behavior explicitly.
+  - [ ] Implement typed, authenticated, session-bound upstream Pi core `bash` and `abort_bash` actions; verify command execution, final results and cancellation against controlled fixtures and installed Pi.
   - [ ] Handle `bash_execution_update` with bounded output; verify command correlation, truncation, slow-client behavior and retained cancellation access.
   - [ ] Add native command entry, execution confirmation, output and cancellation controls; verify basic input, output and cancellation in the usable native workflow without a terminal or PTY. Do not add an iPhone SE verification gate.
-  - [ ] Verify stale-session rejection, reconnect deduplication, unknown outcomes and no automatic command redispatch; record direct evidence in the core RPC coverage audit.
+  - [ ] Verify stale-session rejection, reconnect deduplication, unknown outcomes and no automatic command redispatch; record direct evidence in the upstream Pi core RPC coverage audit.
 - [x] Implement a streamed transcript with Markdown, code blocks, expandable tool output, and clear run states; shared tests pass authoritative text/thinking reconstruction, error visibility, retry, compaction and cancellation settlement. Hosted UIKit fixtures cover idle, working, retrying, compacting and interrupted states; see [workflow evidence](docs/workflow-verification.md).
 - [x] Implement the composer, steering/follow-up choice, Stop, model controls, and supported extension dialogs; verify actions against the Mac host, including expired dialogs. Installed-Pi `NativeWorkflowCheck` passes select, confirm, input, editor and actual dialog expiry/late-answer rejection. Provider, Mac integration and simulator checks cover active steering/follow-up/Stop and model controls; see [workflow evidence](docs/workflow-verification.md).
 - [x] Implement foreground reconnection, draft retention, disconnected status, and snapshot replacement; simulator tests pass protected background/lock state, retained drafts after Home/activate, disconnected recovery and stale-state rejection. Production TLS and simulator provider tests pass connection loss and idle/active host restart without prompt redispatch. These are local and injected-policy checks, not hardware suspension claims; see [interface](docs/interface-verification.md) and [recovery](docs/workflow-verification.md#simulator-coding-and-recovery) evidence.
@@ -326,10 +328,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ## Remaining work and verification limits
 
-- Core model/thinking cycling, acknowledged retry settings and active retry cancellation pass package, installed-Pi and focused UI checks. Same-child new/switch/import/fork/clone, standard lifecycle UI, empty-child ancestry, oversized fork handling and authoritative tree inspection also pass direct checks; see [acceptance evidence](docs/core-rpc-acceptance.md). All 27 compact-interface tests pass in the final accepted batch set.
-- Implement the approved native core `bash`/`abort_bash` controls and bounded `bash_execution_update` output. Verify execution consent, cancellation, session binding, output limits, reconnect/unknown outcomes and no automatic redispatch against controlled fixtures and installed Pi. Verify the basic native workflow before broad UI automation. No embedded terminal or PTY is permitted.
-- Complete the [core RPC coverage audit](docs/native-compatibility.md). Existing test checkpoints do not establish coverage of every documented operation, event or standard extension UI method. Record direct evidence before closing the remaining plan items.
-- Terminal-only extension rejection no longer blocks this plan. The user confirmed a core-RPC-only boundary. Do not add a bundled adapter, modify upstream packages or require the user's extension inventory to satisfy acceptance.
+- Upstream Pi core model/thinking cycling, acknowledged retry settings and active retry cancellation pass package, installed-Pi and focused UI checks. Same-child new/switch/import/fork/clone, standard lifecycle UI, empty-child ancestry, oversized fork handling and authoritative tree inspection also pass direct checks; see [acceptance evidence](docs/core-rpc-acceptance.md). All 27 compact-interface tests pass in the final accepted batch set.
+- Implement the approved native upstream Pi core `bash`/`abort_bash` controls and bounded `bash_execution_update` output. Verify execution consent, cancellation, session binding, output limits, reconnect/unknown outcomes and no automatic redispatch against controlled fixtures and installed Pi. Verify the basic native workflow before broad UI automation. No embedded terminal or PTY is permitted.
+- Complete the [upstream Pi core RPC coverage audit](docs/native-compatibility.md). Existing test checkpoints do not establish coverage of every documented operation, event or standard extension UI method. Record direct evidence before closing the remaining plan items.
+- Terminal-only extension rejection no longer blocks this plan. The user confirmed an upstream Pi core RPC-only boundary. Do not add a bundled adapter, modify upstream Pi core packages or require the user's extension inventory to satisfy acceptance.
 - Keep the existing verified features and evidence: directory access, authenticated LAN/Tailscale transport, pairing/revocation, synchronization, managed sessions, prompts/queues/Stop, model/thinking controls, generic dialogs, resources, compaction, history, images, attachments, import/export, release notes and native system sharing. Their linked checkpoints remain limited to the checks actually run.
 - Xcode checks use a command-local `DEVELOPER_DIR` override; do not change the user's global developer-directory selection. Signed installation, hardware authentication and off-site operation remain unverified and are not current completion gates.
 - `AGENTS.md` still says that no app build/test configuration exists. `project.yml` now provides it; the instruction file needs a separate reviewed maintenance change.
@@ -337,7 +339,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ## Risks and Recovery
 
 - **Pi interface changes:** record tested versions, keep decoding fixtures, and reject unsupported capabilities with an upgrade message.
-- **Extension differences:** verify generic core RPC interactions with controlled fixtures. Report terminal-only or custom-protocol limits without adding extension-specific dependencies or promising compatibility with individual packages.
+- **Extension differences:** verify generic upstream Pi core RPC interactions with controlled fixtures. Report terminal-only or custom-protocol limits without adding extension-specific dependencies or promising compatibility with individual packages.
 - **Connection loss:** work can continue on the Mac. Preserve the phone draft and resynchronize before accepting new commands.
 - **Companion crash:** preserve Pi session files and report uncertain command outcomes. Do not claim exactly-once execution across a process crash.
 - **Interrupted tools:** a saved conversation does not prove a tool completed. Require review before resuming an interrupted task.
@@ -354,10 +356,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [x] Session details use the session's canonical directory. Installed-Pi, package and simulator restart checks verify that restoration preserves it without a silent fallback; changed or inaccessible directories are rejected.
 - [x] Any companion-accessible folder can be selected without prior project registration; access-denial, stale-selection, and symbolic-link tests pass without bypassing macOS permissions. The simulator browses from home through `/` into a new nested fixture directory.
 - [x] Simulator and local tests verify that the unlock policy protects transcripts, directory browsing and remote controls, and that device revocation closes access without cancelling Mac-side work; injected denial/background/stale-success cases and active-run TLS revocation pass. Hardware claims remain excluded.
-- [ ] The core RPC audit covers every documented operation, event and standard extension UI method for the tested runtime; in-scope behavior passes direct checks and remaining core gaps are resolved. No installed-extension or terminal-parity gate applies.
+- [ ] The upstream Pi core RPC audit covers every documented operation, event and standard extension UI method for the tested runtime; in-scope behavior passes direct checks and remaining upstream Pi core gaps are resolved. No installed-extension or terminal-parity gate applies.
 - [x] Text streaming, tool activity, steering, follow-up, Stop, and supported extension dialogs pass the recorded test cases. Installed-Pi checks cover all four supported dialog methods and expiry; simulator provider tests cover tool-written results and stream/recovery controls.
 - [x] A simulated client disconnect does not stop Pi; production fake-Pi tests verify one dispatch and restored active state, and the simulator provider flow verifies one prompt and the completed coding result after reconnection.
 - [x] Session restoration works after a host restart. Simulator checks pass idle and active restart, retained working directories, an interrupted-session flag and unchanged idle messages after explicit restoration, without resending a prompt.
 - [x] Unpaired and revoked devices cannot access the host; production TLS tests pass unauthenticated browsing rejection, active revocation, revoked reconnection, changed-certificate rejection, hostname rejection and expired/future certificate rejection.
-- [x] Build commands, automated tests, simulator execution and local setup instructions have recorded passing results. The earlier core RPC checkpoint includes 135 root tests and 50 shared tests, both normally and with Thread Sanitizer, three Mac-model tests, 31 product simulator tests on each network, installed-Pi metadata and real-provider checks, all 27 compact-interface tests and unsigned Mac/simulator/device-SDK builds. This does not close the separate compatibility acceptance gate.
-- [x] Audit local LAN/Tailscale selection, exact listener binding, authenticated transport and simulated host unavailability; root tests and all 31 product tests pass on each network. Parent verification confirms both host PASS logs, unchanged 93-file source hashes/settings, stopped child identities and closed listeners. Setup guidance names only tested Pi 1.3.0 and local evidence, without hardware/off-site claims. The separate approved core shell implementation and verification remain open; see [acceptance evidence](docs/core-rpc-acceptance.md).
+- [x] Build commands, automated tests, simulator execution and local setup instructions have recorded passing results. The earlier upstream Pi core RPC checkpoint includes 135 root tests and 50 shared tests, both normally and with Thread Sanitizer, three Mac-model tests, 31 product simulator tests on each network, installed-Pi metadata and real-provider checks, all 27 compact-interface tests and unsigned Mac/simulator/device-SDK builds. This does not close the separate compatibility acceptance gate.
+- [x] Audit local LAN/Tailscale selection, exact listener binding, authenticated transport and simulated host unavailability; root tests and all 31 product tests pass on each network. Parent verification confirms both host PASS logs, unchanged 93-file source hashes/settings, stopped child identities and closed listeners. Setup guidance names only tested Pi 1.3.0 and local evidence, without hardware/off-site claims. The separate approved upstream Pi core shell implementation and verification remain open; see [acceptance evidence](docs/core-rpc-acceptance.md).

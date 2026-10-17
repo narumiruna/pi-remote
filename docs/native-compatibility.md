@@ -1,26 +1,28 @@
-# Pi core RPC coverage and compatibility
+# Upstream Pi core RPC coverage and compatibility
 
 ## Result
 
-The user confirmed that app compatibility targets only the RPC protocol provided by Pi's core packages. The earlier complete-terminal and installed-extension parity requirement is superseded. The core coverage audit remains incomplete; this scope correction is not evidence that every RPC operation is implemented or tested.
+The user confirmed that app compatibility targets only the RPC protocol supplied by upstream Pi core packages. The earlier complete-terminal and installed-extension parity requirement is superseded. The upstream Pi core RPC coverage audit remains incomplete; this scope correction is not evidence that every RPC operation is implemented or tested.
 
 ## Accepted boundary
 
-- Cover core RPC operations, responses and events, plus its standard extension UI subprotocol.
+- Cover upstream Pi core RPC operations, responses and events, plus its standard extension UI subprotocol.
 - Discover extension commands and invoke them through the standard protocol without imports, required packages, name-based adapters or custom extension RPC formats.
 - Render standard dialogs, notifications, status, text widgets and editor updates generically. Controlled fixtures can verify this contract without the user's installed extensions.
 - Do not require terminal-only built-in commands, custom terminal components, individual extension workflows or custom extension protocols for acceptance.
-- Do not add a bundled Pi-side adapter or modify Pi/upstream extensions to achieve terminal parity. Such changes are not needed for the accepted scope.
+- Do not add a bundled Pi-side adapter or modify upstream Pi core packages or individual extensions to achieve terminal parity. Such changes are not needed for the accepted scope.
 - Retain existing app-owned security, networking, filesystem and session requirements and implemented convenience features.
 
-## Core RPC audit inventory
+<a id="core-rpc-audit-inventory"></a>
+
+## Upstream Pi core RPC audit inventory
 
 The following groups list the operations in installed Pi 1.3.0's `docs/rpc-commands.md`. The table separates verified groups from remaining integration work. Passing checks for one group do not close another group.
 
-| Area | Core operations | Acceptance status |
+| Area | Upstream Pi core RPC operations | Acceptance status |
 | --- | --- | --- |
 | Work and queues | `prompt`, `steer`, `follow_up`, `abort`, `clear_queue` | Native prompt/delivery/Stop controls; installed provider checks and [queue race regressions](core-event-verification.md#queue-delivery) pass |
-| Session changes | `new_session`, `switch_session`, `set_session_name`, `fork`, `clone` | Native same-directory core lifecycle, normalized names and authoritative branching; installed [lifecycle checks](session-lifecycle.md) pass normally and with Thread Sanitizer, including cancellation and oversized fork text |
+| Session changes | `new_session`, `switch_session`, `set_session_name`, `fork`, `clone` | Native same-directory upstream Pi core lifecycle, normalized names and authoritative branching; installed [lifecycle checks](session-lifecycle.md) pass normally and with Thread Sanitizer, including cancellation and oversized fork text |
 | State and history | `get_state`, `get_messages`, `get_fork_messages`, `get_entries`, `get_tree`, `get_last_assistant_text`, `get_session_stats` | Native state/transcript, authoritative paged tree/fork options, copy and usage; installed-Pi [inspection](session-inspection.md), copy and statistics checks pass. All 27 compact-interface tests and 31 product tests on each local network pass |
 | Models and thinking | `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels` | Native selection/cycling and discovered choices; installed-Pi and compact-interface [checks pass](runtime-controls.md#core-model-cycling-and-retry-checkpoint) |
 | Runtime controls | `set_steering_mode`, `set_follow_up_mode`, `compact`, `set_auto_compaction`, `set_auto_retry`, `abort_retry` | Confirmed native settings, compaction and retry cancellation; [settings checks](runtime-controls.md) and [active retry/compaction checks](core-event-verification.md) pass |
@@ -48,11 +50,11 @@ The 24 event types in Pi 1.3.0's `json.md` have the following app mappings. This
 
 ### Standard extension UI mapping
 
-All nine core UI methods have native mappings. `select`, `confirm`, `input` and `editor` use session-bound dialogs and typed responses. `notify` and `setTitle` use notices. `setStatus` and `setWidget` have independent bounded key namespaces. `set_editor_text` proposes a draft update, with an explicit decision before replacing a nonempty draft. Terminal severity styling, widget placement and terminal titles are not reproduced.
+All nine upstream Pi core UI methods have native mappings. `select`, `confirm`, `input` and `editor` use session-bound dialogs and typed responses. `notify` and `setTitle` use notices. `setStatus` and `setWidget` have independent bounded key namespaces. `set_editor_text` proposes a draft update, with an explicit decision before replacing a nonempty draft. Terminal severity styling, widget placement and terminal titles are not reproduced.
 
 Installed `NativeWorkflowCheck` verifies the four dialog methods, prefill, timeout and late-answer rejection. Installed `NativeUIStateCheck` verifies notices, status/widget replacement and clearing, and Stop-cancelled input. Host and app checks verify oversized-dialog cancellation, stale contexts and draft-replacement consent. This is standard protocol support, not a dependency on the fixture extension.
 
-Keep authenticated typed app actions, opaque filesystem/session identities, deduplication and bounded output; core RPC scope does not mean exposing an arbitrary raw RPC endpoint.
+Keep authenticated typed app actions, opaque filesystem/session identities, deduplication and bounded output; upstream Pi core RPC scope does not mean exposing an arbitrary raw RPC endpoint.
 
 A host regression verifies that an unknown UI method creates no dialog and sends no automatic response. The remaining open operation/event mappings concern shell controls.
 
@@ -109,7 +111,7 @@ The earlier review incorrectly treated direct `custom()` references as proof tha
 
 ## Historical terminal workflow comparison (not an acceptance gate)
 
-The installed `docs/slash-commands.md` includes terminal-only commands. Their presence does not put them in core RPC scope. The following table records earlier comparisons, not current implementation requirements. Only corresponding core RPC behavior belongs in the audit above.
+The installed `docs/slash-commands.md` includes terminal-only commands. Their presence does not put them in upstream Pi core RPC scope. The following table records earlier comparisons, not current implementation requirements. Only corresponding upstream Pi core RPC behavior belongs in the audit above.
 
 <details>
 <summary>Historical terminal comparisons</summary>
@@ -120,7 +122,7 @@ The installed `docs/slash-commands.md` includes terminal-only commands. Their pr
 | `/new`, `/resume`, `/name` | Implemented for companion-owned sessions; local and simulator checks pass | Manual import is separate; terminal-session attachment remains excluded. |
 | `/model`, `/thinking` | Implemented and checked against installed Pi | No tested runtime-version range beyond 1.3.0. |
 | Prompt, streaming, tools, steering, follow-up, Stop | Provider and simulator checks pass | Extension renderers remain a gap; bounded native raster-image viewing now passes separately. |
-| `/fork`, `/clone` | Implemented; real provider checks pass | Historical active-branch-only assumption was incorrect. Core `get_fork_messages` also includes eligible messages from abandoned branches; authoritative native integration and installed-Pi checks now pass. |
+| `/fork`, `/clone` | Implemented; real provider checks pass | Historical active-branch-only assumption was incorrect. Upstream Pi core `get_fork_messages` also includes eligible messages from abandoned branches; authoritative native integration and installed-Pi checks now pass. |
 | `/tree` | Paged entry inspection only | In-place navigation is missing from RPC; extension command contexts expose `navigateTree`, but no app-owned adapter exists. Do not edit JSONL leaf state externally while Pi owns it. |
 | `/compact` | Real summarization, compacting state, persisted entry and restart restoration pass | Extension-specific compaction remains separate. |
 | `/session` | Native session-usage view shows validated token, cost, message and context statistics from `get_session_stats`; installed-Pi empty and post-compaction checks pass | Provider totals are estimates, not an invoice; unavailable post-compaction context is explicit. |
@@ -138,7 +140,7 @@ The installed `docs/slash-commands.md` includes terminal-only commands. Their pr
 | `/hotkeys` | Not implemented | Native equivalents need an explicit compatibility decision; terminal keybindings cannot be copied as mobile controls. |
 | `/quit` | Native idle-session close stops Pi, keeps the listener/catalog and supports explicit resume without prompt replay | Working state rejects close until Stop reaches idle. |
 
-At the earlier checkpoint, managed-session activation always started a new child. The current [same-directory core lifecycle](session-lifecycle.md) now preserves the standard new/switch/fork hooks and cancellation without an adapter. Cross-directory activation still replaces the process deliberately. In-place tree navigation remains outside core RPC scope.
+At the earlier checkpoint, managed-session activation always started a new child. The current [same-directory upstream Pi core lifecycle](session-lifecycle.md) now preserves the standard new/switch/fork hooks and cancellation without an adapter. Cross-directory activation still replaces the process deliberately. In-place tree navigation remains outside upstream Pi core RPC scope.
 
 </details>
 
@@ -146,4 +148,4 @@ At the earlier checkpoint, managed-session activation always started a new child
 
 Pi 1.3.0's RPC `custom()` returns `undefined`, and terminal-input registration is a no-op. Installed btw, file-context, inspect and llama commands explicitly reject RPC. Those observations remain valid protocol limits, but the user-confirmed scope no longer requires adapting these workflows.
 
-No adapter approval is pending for this plan. Do not treat an extension's unsupported terminal UI as a failed app acceptance check. Remaining work is the core RPC audit and implementation/verification of its in-scope gaps, not installed-extension or terminal-feature parity.
+No adapter approval is pending for this plan. Do not treat an extension's unsupported terminal UI as a failed app acceptance check. Remaining work is the upstream Pi core RPC audit and implementation/verification of its in-scope gaps, not installed-extension or terminal-feature parity.

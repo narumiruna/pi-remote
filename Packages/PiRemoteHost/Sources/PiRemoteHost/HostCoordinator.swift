@@ -653,7 +653,7 @@ public actor HostCoordinator {
         let file = try inspectionFile()
         let revision = try await history.revision(file: file)
         try checkInspection(context)
-        // App mutations remain serialized by perform(). Fence the two core reads
+        // App mutations remain serialized by perform(). Fence the two upstream Pi core reads
         // with another tree read and the managed file revision to reject changes.
         let before = try await child.request("get_tree")
         try checkInspection(context)
@@ -822,7 +822,7 @@ public actor HostCoordinator {
            let file = item.file, FileManager.default.fileExists(atPath: file.path) {
             try await replaceInChild(target: item, parent: false)
         } else {
-            // Core switch_session cannot restore an allocated but unwritten session path.
+            // Upstream Pi core switch_session cannot restore an allocated but unwritten session path.
             // Launch explicitly with its managed ID; no history or prompt is manufactured.
             try await activate(id)
         }
@@ -854,7 +854,7 @@ public actor HostCoordinator {
         if let target { try validateManaged(target) }
         let priorPhase = snapshot.phase
         // Fence outgoing callbacks before dispatch. Old name/status/history events must not
-        // be applied to either catalog entry while core replaces its extension runtime.
+        // be applied to either catalog entry while upstream Pi core replaces its extension runtime.
         let token = generation
         lifecycleTransition = token
         lifecycleUI = []; lifecycleUIOverflow = false; lifecycleNameReadBack = true
@@ -944,7 +944,7 @@ public actor HostCoordinator {
         guard rpc === child else { throw RemoteFault.conflict }
         lifecycleTransition = nil
         runRevision &+= 1
-        // Core UI records have no session tags. Treat these as transition-generated
+        // Upstream Pi core UI records have no session tags. Treat these as transition-generated
         // updates for the resolved context, including a cancelled outgoing hook.
         let events = lifecycleUI; lifecycleUI = []
         for event in events { extensionEvent(event) }
@@ -1235,7 +1235,7 @@ public actor HostCoordinator {
             }
             let forkText = command == "fork" ? result["text"]?.string : nil
             let oversizedDraft = (forkText?.utf8.count ?? 0) > 256 * 1_024
-            // A successful core fork is already committed. Never truncate its returned
+            // A successful upstream Pi core fork is already committed. Never truncate its returned
             // input, reject that success, or repeat it because the native draft is smaller.
             snapshot.draft = oversizedDraft ? nil : forkText
             snapshot.draftID = snapshot.draft == nil ? nil : UUID()
@@ -1318,7 +1318,7 @@ public actor HostCoordinator {
             try await refreshConfiguration()
             try await refreshHistory()
             guard generation == token, rpc === child, !closing else { return false }
-            // Core RPC cannot replay lost extension dialogs or report an outstanding retry wait.
+            // Upstream Pi core RPC cannot replay lost extension dialogs or report an outstanding retry wait.
             // Preserve the child, but require explicit Stop/reopen before further mutations.
             recoveryNotice = "Session history was refreshed after lost events. Work status is uncertain. Use Stop, then reopen the saved session; do not resend uncertain actions."
             snapshot.phase = "recovering"; refreshNotices(); publish()
@@ -1397,7 +1397,7 @@ public actor HostCoordinator {
     private func retainHistoryPresence() throws {
         guard let index = selectedIndex, sessions[index].hasHistory != true,
               let file = sessions[index].file, FileManager.default.fileExists(atPath: file.path) else { return }
-        // Core can keep setup/custom context in memory without creating a file.
+        // Upstream Pi core can keep setup/custom context in memory without creating a file.
         // Only an observed persisted file makes its later absence a history-loss error.
         sessions[index].hasHistory = true
         try saveSessions()

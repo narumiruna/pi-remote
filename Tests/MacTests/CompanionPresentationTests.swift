@@ -1161,7 +1161,7 @@ done
     func testCommandsRespectBusyAndMissingSessionAndShowEmptyState() async throws {
         var state = HostSnapshot(host: UUID(), epoch: UUID())
         state.selected = UUID(); state.phase = "working"
-        state.commands = [CommandOption(name: "builtin", detail: "Core fixture", source: "prompt"),
+        state.commands = [CommandOption(name: "builtin", detail: "Upstream Pi core fixture", source: "prompt"),
                           CommandOption(name: "extension", detail: "Extension fixture", source: "extension")]
         var actions: [SessionAction] = []
         try await capture(SessionCommandsView(state: state, request: { actions.append($0); return .ok }),

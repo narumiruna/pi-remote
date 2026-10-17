@@ -144,7 +144,7 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             let expiredResult = await host.handle(AppRequest(epoch: host.epoch, session: expiredState.selected,
                 action: .answer(dialog: expiringDialog.id, value: "Late", confirmed: nil, cancelled: false)), device: device)
             try require(expiredResult == .failure(.expired))
-            // A slash command handled by core is not a persisted user conversation.
+            // A slash command handled by upstream Pi core is not a persisted user conversation.
             _ = try await send(.prompt(text: "/rpc-prefill", delivery: .prompt, image: nil))
             for _ in 0..<100 {
                 if await host.state().draftID != nil { break }
@@ -164,7 +164,7 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
                 guard let confirmation, confirmation.method == "confirm", confirmation.title == "Clear session?" else {
                     throw CheckFailure.assertion(#line)
                 }
-                // This is explicit fixture consent to the standard core lifecycle hook.
+                // This is explicit fixture consent to the standard upstream Pi core lifecycle hook.
                 _ = try await send(.answer(dialog: confirmation.id, value: nil, confirmed: true, cancelled: false))
                 _ = try await newSession.value
             } catch {

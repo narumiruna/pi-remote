@@ -30,7 +30,7 @@ Before changing code, investigate:
 
 - Existing SwiftUI views and navigation structure.
 - Mac companion application architecture.
-- Pi RPC integration and process lifecycle.
+- Upstream Pi core RPC integration and process lifecycle.
 - Session creation, listing, loading, switching, and persistence.
 - How session history and streaming events are represented.
 - Workspace and working-directory management.
@@ -239,7 +239,7 @@ Avoid displaying verbose filesystem paths as the main title.
 
 Render the conversation chronologically.
 
-Support relevant Pi RPC event types, including:
+Support relevant upstream Pi core RPC event types, including:
 
 - User messages.
 - Assistant messages.
@@ -318,7 +318,7 @@ The composer must reflect the actual session state.
 
 Do not display an enabled Send button when there is no usable Pi process or connection.
 
-When the agent is running, distinguish between sending another message, steering, queuing, or interrupting according to existing Pi RPC semantics.
+When the agent is running, distinguish between sending another message, steering, queuing, or interrupting according to existing upstream Pi core RPC semantics.
 
 Do not treat these operations as interchangeable.
 
@@ -485,7 +485,7 @@ Do not duplicate sensitive session content unnecessarily.
 
 - Use Swift and SwiftUI.
 - Respect existing Swift concurrency and actor-isolation conventions.
-- Preserve Pi RPC compatibility.
+- Preserve upstream Pi core RPC compatibility.
 - Preserve existing authentication and authorization behavior.
 - Preserve session file compatibility.
 - Preserve existing Mac/iPhone communication contracts.
