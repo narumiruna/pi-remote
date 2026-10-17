@@ -5,7 +5,8 @@ struct DirectoryBrowser: View {
     var selecting: Bool
     var request: (SessionAction) async throws -> AppResult
     var attach: ((FilePreview) throws -> Void)? = nil
-    var selected: (UUID) async throws -> Void
+    var selectionTitle = "Start Pi Here"
+    var selected: (UUID, String) async throws -> Void
     @State private var directory: UUID?
     @State private var browser = DirectoryBrowserModel()
     @State private var error: String?
@@ -70,15 +71,15 @@ struct DirectoryBrowser: View {
             .disabled(loading)
             if selecting {
                 Button {
-                    if let id = page?.id {
+                    if let page {
                         Task {
                             selectingSession = true
                             defer { selectingSession = false }
-                            do { try await selected(id) }
+                            do { try await selected(page.id, page.path) }
                             catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
                         }
                     }
-                } label: { Text("Start Pi Here").frame(minHeight: 44) }
+                } label: { Text(selectionTitle).frame(minHeight: 44) }
                     .buttonStyle(.borderedProminent).foregroundStyle(.background).padding()
                     .disabled(loading || page == nil)
             }

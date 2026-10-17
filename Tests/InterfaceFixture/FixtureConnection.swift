@@ -49,17 +49,36 @@ actor FixtureConnection: PhoneConnection {
             state.messages = (0..<99).map { TranscriptMessage(role: $0.isMultiple(of: 2) ? "user" : "assistant", text: "Record \($0).\n\n" + text) }
             state.messages.append(TranscriptMessage(role: "tool", text: "Bounded transcript complete"))
         }
-        if phase == "import" || phase == "legacy-import" {
+        if ["import", "legacy-import", "import-missing-directory"].contains(phase) {
             do {
                 let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
-                let source = phase == "legacy-import" ? Self.sessionJSONL.replacingOccurrences(of: "\"version\":3", with: "\"version\":1") : Self.sessionJSONL
+                var source = Self.sessionJSONL
+                if phase == "legacy-import" { source = source.replacingOccurrences(of: "\"version\":3", with: "\"version\":1") }
+                if phase == "import-missing-directory" { source = source.replacingOccurrences(of: ",\"cwd\":\"/Users/fixture/project\"", with: "") }
                 try Data(source.utf8).write(to: documents.appendingPathComponent("Import fixture.jsonl"))
             } catch { state.error = .storageFailure }
         }
         snapshot = state
     }
 
+    private func directoryPath(_ id: UUID) throws -> String {
+        switch id {
+        case root: return "/"
+        case home: return "/Users/fixture"
+        case project: return "/Users/fixture/project"
+        case nested: return "/Users/fixture/project/nested"
+        default: throw RemoteFault.staleDirectory
+        }
+    }
+    private func importCopy(_ data: Data, directory: String? = nil) throws {
+        guard !snapshot.working else { throw RemoteFault.busy }
+        let value = try SessionImport(data: SessionImport.preparedCopy(of: data, directory: directory))
+        guard let path = value.directory else { throw RemoteFault.invalidRequest }
+        let session = SessionInfo(id: UUID(), title: value.title, directory: path, interrupted: true)
+        snapshot.sessions.append(session); snapshot.selected = session.id
+        snapshot.messages = [TranscriptMessage(role: "user", text: "Imported native fixture")]; snapshot.phase = "idle"
+    }
     func pair(code: PairingCode, device: UUID, name: String) throws -> SavedMac { throw RemoteFault.unsupportedFeature }
     func updates() -> AsyncStream<ClientUpdate> {
         let id = UUID(), pair = AsyncStream<ClientUpdate>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -149,12 +168,8 @@ actor FixtureConnection: PhoneConnection {
             let session = SessionInfo(id: UUID(), title: "New fixture session", directory: path)
             snapshot.sessions.append(session); snapshot.selected = session.id; snapshot.messages = []; snapshot.phase = "idle"
             snapshot.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
-        case .importSession(let data):
-            guard !snapshot.working else { throw RemoteFault.busy }
-            let value = try SessionImport(data: data)
-            let session = SessionInfo(id: UUID(), title: value.title, directory: value.directory, interrupted: true)
-            snapshot.sessions.append(session); snapshot.selected = session.id
-            snapshot.messages = [TranscriptMessage(role: "user", text: "Imported native fixture")]; snapshot.phase = "idle"
+        case .importSession(let data): try importCopy(data)
+        case .importSessionInDirectory(let data, let id): try importCopy(data, directory: directoryPath(id))
         case .resumeSession(let id):
             snapshot.selected = id
             snapshot.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)

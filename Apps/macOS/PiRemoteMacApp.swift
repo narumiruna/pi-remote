@@ -95,13 +95,13 @@ struct CompanionWindow: View {
                 case "sessions":
                     SessionListView(state: state, request: request, newSession: { model.panel = "directory" }, selected: { model.panel = nil })
                 case "directory":
-                    DirectoryBrowser(selecting: true, request: request) { id in
+                    DirectoryBrowser(selecting: true, request: request) { id, _ in
                         _ = try await request(.createSession(directory: id)); model.panel = nil
                     }
                 case "files":
                     DirectoryBrowser(selecting: false, request: request, attach: { preview in
                         try model.attachText(preview, context: state.context); model.panel = nil
-                    }) { _ in }
+                    }) { _, _ in }
                 case "controls": SessionControls(state: state, request: request, closed: { model.panel = "sessions" }) { model.preview = $0; model.panel = "preview" }
                 case "history": HistoryView(request: request, paged: state.capabilities.contains("history-pages")) { model.panel = nil }
                 case "dialog":

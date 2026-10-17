@@ -142,6 +142,7 @@ if [ -z "$file" ]; then
     file="$folder/$session.jsonl"
     printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
 fi
+/bin/pwd -P > "$folder/observed-cwd"
 streaming=false
 thinking=off
 steering=one-at-a-time
@@ -455,7 +456,7 @@ func sessionExportIsBoundedPrivateAndSessionScoped(mode: String) async throws {
     await host.shutdown()
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: ["valid", "no-final-lf", "legacy-v1", "legacy-v2", "malformed", "missing-directory", "denied-directory", "busy", "stale"])
+@Test(.timeLimit(.minutes(1)), arguments: ["valid", "no-final-lf", "leading-blank", "legacy-v1", "legacy-v2", "duplicate-json", "malformed", "missing-directory", "denied-directory", "busy", "stale"])
 func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) async throws {
     let root = try temporaryDirectory()
     let project = root.appendingPathComponent("project")
@@ -471,9 +472,15 @@ func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) a
     var data = try JSONEncoder().encode(header); data.append(10)
     data.append(try JSONEncoder().encode(entry)); data.append(10)
     if mode == "malformed" { data = Data("broken".utf8) }
+    if mode == "duplicate-json" {
+        data = try JSONEncoder().encode(header); data.append(10)
+        data.append(Data(#"{"type":"message","id":"user-1","parentId":null,"parentId":"user-1","message":{"role":"user","content":"Ambiguous tree fixture"}}"#.utf8))
+        data.append(10)
+    }
     if mode == "no-final-lf" { data.removeLast() }
     var normalized = data
     if normalized.last != 10 { normalized.append(10) }
+    if mode == "leading-blank" { data = Data("\n \t\r\n".utf8) + data }
     let source = root.appendingPathComponent("source.jsonl")
     try data.write(to: source)
     let support = root.appendingPathComponent("support")
@@ -488,7 +495,7 @@ func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) a
         }
         let request = AppRequest(epoch: host.epoch, session: mode == "stale" ? UUID() : before.selected, action: .importSession(data: data))
         let result = await host.handle(request, device: device)
-        if mode == "valid" || mode == "no-final-lf" || mode.hasPrefix("legacy-") {
+        if mode == "valid" || mode == "no-final-lf" || mode == "leading-blank" || mode.hasPrefix("legacy-") {
             #expect(result == .ok)
             #expect(await host.handle(request, device: device) == .ok)
             let state = await host.state(), selected = try #require(state.selected)
@@ -508,11 +515,85 @@ func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) a
             #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .resumeSession(id: selected)), device: device) == .ok)
             #expect(try Data(contentsOf: copy) == normalized)
         } else {
-            let fault: RemoteFault = mode == "malformed" ? .invalidRequest : mode == "missing-directory" ? .staleDirectory : mode == "denied-directory" ? .permissionDenied : mode == "busy" ? .busy : .conflict
+            let fault: RemoteFault = ["malformed", "duplicate-json"].contains(mode) ? .invalidRequest : mode == "missing-directory" ? .staleDirectory : mode == "denied-directory" ? .permissionDenied : mode == "busy" ? .busy : .conflict
             #expect(result == .failure(fault))
             #expect(await host.state().selected == before.selected)
             #expect(await host.state().sessions.count == 1)
             #expect(try FileManager.default.contentsOfDirectory(atPath: support.appendingPathComponent("pi-sessions").path).count == 1)
+        }
+        #expect(try Data(contentsOf: source) == data)
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["different", "missing-source", "missing-header", "symlink", "stale-directory", "denied", "file", "unknown", "busy", "stale-session"])
+func importDirectoryChoiceIsExplicitValidatedAndSourcePreserving(mode: String) async throws {
+    let root = try temporaryDirectory()
+    let target = root.appendingPathComponent("chosen-project")
+    let old = root.appendingPathComponent("source-project")
+    try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+    if mode != "missing-source" { try FileManager.default.createDirectory(at: old, withIntermediateDirectories: false) }
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: target.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+    let piID = UUID().uuidString
+    var header: [String: JSONValue] = ["type": .string("session"), "version": .number(3), "id": .string(piID)]
+    if mode != "missing-header" { header["cwd"] = .string(old.path) }
+    let entry: JSONValue = .object(["type": .string("message"), "id": .string("source-user"), "parentId": .null,
+                                   "message": .object(["role": .string("user"), "content": .string("Keep " + old.path + "/source.swift")])])
+    var data = try JSONEncoder().encode(JSONValue.object(header)); data.append(10)
+    var messageBytes = try JSONEncoder().encode(entry); messageBytes.append(10); data.append(messageBytes)
+    let source = root.appendingPathComponent("source.jsonl")
+    try data.write(to: source)
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: fakePi(at: root, hold: true))
+    do {
+        let device = UUID(), starting = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: starting)), device: device) == .ok)
+        let before = await host.state()
+        var chosen = target
+        if mode == "symlink" {
+            chosen = root.appendingPathComponent("chosen-alias")
+            try FileManager.default.createSymbolicLink(at: chosen, withDestinationURL: target)
+        }
+        if mode == "file" { chosen = source }
+        var directory = try await host.directories.register(chosen)
+        if mode == "unknown" { directory = UUID() }
+        if mode == "stale-directory" { try FileManager.default.removeItem(at: target) }
+        if mode == "denied" { try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: target.path) }
+        if mode == "busy" {
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: before.selected, action: .prompt(text: "Hold", delivery: .prompt, image: nil)), device: device) == .ok)
+        }
+        if ["missing-header", "missing-source"].contains(mode) {
+            let normal = await host.handle(AppRequest(epoch: host.epoch, session: before.selected, action: .importSession(data: data)), device: device)
+            #expect(normal == .failure(mode == "missing-header" ? .invalidRequest : .staleDirectory))
+            #expect(await host.state().selected == before.selected)
+        }
+        let request = AppRequest(epoch: host.epoch, session: mode == "stale-session" ? UUID() : before.selected,
+                                 action: .importSessionInDirectory(data: data, directory: directory))
+        let result = await host.handle(request, device: device)
+        if ["different", "missing-source", "missing-header", "symlink"].contains(mode) {
+            #expect(result == .ok)
+            #expect(await host.handle(request, device: device) == .ok)
+            let state = await host.state(), selected = try #require(state.selected)
+            #expect(selected != before.selected && state.sessions.count == 2)
+            #expect(state.sessions.first(where: { $0.id == selected })?.directory == target.resolvingSymlinksInPath().path)
+            let folder = support.appendingPathComponent("pi-sessions/" + selected.uuidString)
+            let copy = try Data(contentsOf: folder.appendingPathComponent("imported.jsonl"))
+            let info = try SessionImport(data: copy)
+            #expect(info.piID == piID && info.directory == target.resolvingSymlinksInPath().path)
+            #expect(copy.suffix(messageBytes.count) == messageBytes)
+            let observed = try String(contentsOf: folder.appendingPathComponent("observed-cwd"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+            #expect(try DirectoryRegistry.identify(URL(fileURLWithPath: observed)) == DirectoryRegistry.identify(target))
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("accepted").path))
+            var changed = request; changed.action = .importSessionInDirectory(data: data, directory: UUID())
+            #expect(await host.handle(changed, device: device) == .failure(.conflict))
+        } else {
+            let fault: RemoteFault = mode == "denied" ? .permissionDenied : mode == "busy" ? .busy : mode == "stale-session" ? .conflict : .staleDirectory
+            #expect(result == .failure(fault))
+            let unchanged = await host.state()
+            #expect(unchanged.selected == before.selected && unchanged.sessions.count == 1)
         }
         #expect(try Data(contentsOf: source) == data)
     } catch { await host.shutdown(); throw error }
@@ -820,7 +901,20 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         #expect(archive.format == .jsonl && archiveReview.entryCount == 1)
         #expect(String(decoding: archive.data, as: UTF8.self).contains("Network import fixture"))
         #expect(!FileManager.default.fileExists(atPath: importFolder.appendingPathComponent("accepted").path))
+        let chosen = root.appendingPathComponent("transport-import")
+        try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: false)
+        let chosenID = try await host.directories.register(chosen)
+        _ = try await client.request(.importSessionInDirectory(data: importData, directory: chosenID))
+        let relocated = await host.state(), relocatedID = try #require(relocated.selected)
+        #expect(relocatedID != importedID && relocated.sessions.count == 3)
+        let relocatedFolder = root.appendingPathComponent("support/pi-sessions/" + relocatedID.uuidString)
+        let relocatedData = try Data(contentsOf: relocatedFolder.appendingPathComponent("imported.jsonl"))
+        #expect(try SessionImport(data: relocatedData).directory == DirectoryRegistry.identify(chosen).url.path)
+        let observed = try String(contentsOf: relocatedFolder.appendingPathComponent("observed-cwd"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(try DirectoryRegistry.identify(URL(fileURLWithPath: observed)) == DirectoryRegistry.identify(chosen))
+        #expect(!FileManager.default.fileExists(atPath: relocatedFolder.appendingPathComponent("accepted").path))
         try await server.revoke(mac.device)
+        await #expect(throws: (any Error).self) { try await client.request(.importSessionInDirectory(data: importData, directory: chosenID)) }
         await #expect(throws: (any Error).self) { try await client.request(.importSession(data: importData)) }
         await #expect(throws: (any Error).self) { try await client.request(.exportSession) }
         await #expect(throws: (any Error).self) { try await client.request(.outputImage(id: reference.id)) }

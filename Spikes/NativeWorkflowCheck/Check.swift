@@ -230,6 +230,30 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             _ = try await send(.importSession(data: JSONEncoder().encode(emptyHeader)))
             let emptyImported = await host.state()
             try require(emptyImported.messages.isEmpty && !emptyImported.working)
+            let chosenFolder = root.appendingPathComponent("project/chosen-import")
+            try FileManager.default.createDirectory(at: chosenFolder, withIntermediateDirectories: false)
+            let sourceHeader: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(UUID().uuidString),
+                "timestamp": .string("2026-10-17T00:00:00.000Z")])
+            let originalPathText = "Keep " + folder.path + "/source.swift"
+            let sourceEntry: JSONValue = .object(["type": .string("message"), "id": .string("directory-user"), "parentId": .null,
+                "timestamp": .string("2026-10-17T00:00:00.000Z"), "message": .object(["role": .string("user"), "content": .string(originalPathText), "timestamp": .number(1_792_195_200_000)])])
+            var missingDirectory = try JSONEncoder().encode(sourceHeader); missingDirectory.append(10)
+            missingDirectory.append(try JSONEncoder().encode(sourceEntry)); missingDirectory.append(10)
+            let originalSource = root.appendingPathComponent("directory-source.jsonl")
+            try missingDirectory.write(to: originalSource)
+            let unbound = await host.handle(AppRequest(epoch: host.epoch, session: emptyImported.selected, action: .importSession(data: missingDirectory)), device: device)
+            try require(unbound == .failure(.invalidRequest))
+            try require(await host.state().selected == emptyImported.selected)
+            let chosenID = try await host.directories.register(chosenFolder)
+            _ = try await send(.importSessionInDirectory(data: missingDirectory, directory: chosenID))
+            let relocated = await host.state()
+            try require(relocated.selected != emptyImported.selected && !relocated.working)
+            try require(relocated.messages.contains { $0.role == "user" && $0.text == originalPathText })
+            let observed = try String(contentsOf: cwd, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+            try require(try DirectoryRegistry.identify(URL(fileURLWithPath: observed)) == DirectoryRegistry.identify(chosenFolder))
+            guard case .exportSession(let relocatedArchive) = try await send(.exportJSONL) else { throw CheckFailure.assertion(#line) }
+            try require(try SessionImport(data: relocatedArchive.data).directory == DirectoryRegistry.identify(chosenFolder).url.path)
+            try require(try Data(contentsOf: originalSource) == missingDirectory)
             await host.shutdown()
             try require((try? Data(contentsOf: globalSettings)) == settingsBefore)
         } catch { await host.shutdown(); throw error }

@@ -12,7 +12,7 @@ struct SessionListView: View {
         List {
             Button("New session", systemImage: "plus", action: newSession).frame(minHeight: 44).disabled(state.working)
             if state.capabilities.contains("session-import") {
-                NavigationLink("Import JSONL session") { SessionImportView(request: request, imported: selected) }
+                NavigationLink("Import JSONL session") { SessionImportView(request: request, canChooseDirectory: state.capabilities.contains("session-import-directory"), imported: selected) }
                     .frame(minHeight: 44).disabled(state.working)
             }
             if let error { Text(error).foregroundStyle(.primary) }

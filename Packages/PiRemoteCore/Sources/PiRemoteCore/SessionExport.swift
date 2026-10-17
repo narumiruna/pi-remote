@@ -23,6 +23,9 @@ public struct SessionExport: Codable, Sendable, Equatable {
         guard !data.isEmpty else { throw RemoteFault.incompatiblePi }
         guard data.count <= Self.maximumBytes else { throw RemoteFault.tooLarge }
         guard String(data: data, encoding: .utf8) != nil else { throw RemoteFault.incompatiblePi }
-        if format == .jsonl { _ = try SessionImport(data: data) }
+        if format == .jsonl {
+            let imported = try SessionImport(data: data)
+            guard imported.directory != nil else { throw RemoteFault.incompatiblePi }
+        }
     }
 }

@@ -56,6 +56,33 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Session controls"].waitForExistence(timeout: 5))
     }
 
+    private func openImportReview(_ app: XCUIApplication) {
+        app.buttons["Sessions"].tap()
+        XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
+        app.buttons["Import JSONL session"].tap()
+        XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
+        let choose = app.buttons["Choose session file"]
+        reveal(choose, app: app); choose.tap()
+        let browse = app.tabBars.buttons["Browse"]
+        XCTAssertTrue(browse.waitForExistence(timeout: 5)); browse.tap()
+        let local = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'On My iPhone'")).firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 5)); local.tap()
+        let folder = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "PiRemoteInterfaceFixture")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 10)); folder.tap()
+        let file = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Import fixture")).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 5)); file.tap()
+    }
+    private func chooseImportFolder(_ app: XCUIApplication) {
+        let choose = app.buttons["Choose import folder"]
+        reveal(choose, app: app, towardTop: true); choose.tap()
+        XCTAssertTrue(app.navigationBars["Choose a Mac folder"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["project"].waitForExistence(timeout: 5)); app.buttons["project"].tap()
+        XCTAssertTrue(app.buttons["nested"].waitForExistence(timeout: 5)); app.buttons["nested"].tap()
+        let use = app.buttons["Use this folder"]
+        XCTAssertTrue(use.waitForExistence(timeout: 5)); use.tap()
+        XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
+    }
+
     func testLightConversationWithKeyboardStopAndRetainedDraft() throws {
         let app = launch(["working"])
         try audit(app)
@@ -216,22 +243,33 @@ final class InterfaceTests: XCTestCase {
         XCTAssertFalse(save.exists)
     }
 
+    func testMissingImportDirectoryRequiresAnExplicitChoiceAndConfirmation() throws {
+        let app = launch(["import-missing-directory"])
+        openImportReview(app)
+        let missing = app.staticTexts["Not recorded. Choose a Mac folder."]
+        reveal(missing, app: app)
+        let open = app.buttons["Import and open"]
+        reveal(open, app: app); XCTAssertFalse(open.isEnabled)
+        chooseImportFolder(app)
+        let target = app.staticTexts["/Users/fixture/project/nested"]
+        reveal(target, app: app); XCTAssertTrue(target.exists)
+        let clear = app.buttons["Clear chosen directory"]
+        reveal(clear, app: app); clear.tap()
+        reveal(open, app: app); XCTAssertFalse(open.isEnabled)
+        chooseImportFolder(app)
+        reveal(open, app: app); open.tap()
+        XCTAssertTrue(app.alerts["Import and open this session?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Import and open"].tap()
+        XCTAssertTrue(app.staticTexts["Imported native fixture"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Stop"].exists)
+        controls(app)
+        reveal(app.staticTexts["/Users/fixture/project/nested"], app: app)
+        XCTAssertTrue(app.staticTexts["/Users/fixture/project/nested"].exists)
+    }
+
     func testSessionImportReviewsTheDirectoryAndRequiresConfirmation() throws {
         let app = launch(["legacy-import"])
-        app.buttons["Sessions"].tap()
-        XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
-        app.buttons["Import JSONL session"].tap()
-        XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
-        let choose = app.buttons["Choose session file"]
-        reveal(choose, app: app); choose.tap()
-        let browse = app.tabBars.buttons["Browse"]
-        XCTAssertTrue(browse.waitForExistence(timeout: 5)); browse.tap()
-        let local = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'On My iPhone'")).firstMatch
-        XCTAssertTrue(local.waitForExistence(timeout: 5)); local.tap()
-        let folder = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "PiRemoteInterfaceFixture")).firstMatch
-        XCTAssertTrue(folder.waitForExistence(timeout: 10)); folder.tap()
-        let file = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Import fixture")).firstMatch
-        XCTAssertTrue(file.waitForExistence(timeout: 5)); file.tap()
+        openImportReview(app)
         reveal(app.staticTexts["/Users/fixture/project"], app: app)
         XCTAssertTrue(app.staticTexts["/Users/fixture/project"].exists)
         let migration = app.staticTexts["Pi migrates the managed copy to its current session format. The source file remains unchanged."]

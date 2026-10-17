@@ -216,37 +216,9 @@ public actor HostCoordinator {
             sessions.append(item); try saveSessions()
             try await activate(sessionID)
         case .importSession(let data):
-            guard request.session == snapshot.selected else { throw RemoteFault.conflict }
-            guard !snapshot.working, sessions.count < 256 else { throw RemoteFault.busy }
-            let imported = try SessionImport(data: data)
-            let directory = try DirectoryRegistry.identify(URL(fileURLWithPath: imported.directory))
-            try DirectoryRegistry.validateDirectory(directory)
-            try await requireIdle()
-            guard !closing, !Task.isCancelled else { throw RemoteFault.cancelled }
-            try DirectoryRegistry.validateDirectory(directory)
-            let sessionID = UUID()
-            let folder = support.appendingPathComponent("pi-sessions/" + sessionID.uuidString, isDirectory: true)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let file = folder.appendingPathComponent("imported.jsonl")
-            do {
-                var contents = data
-                // Keep later Pi appends on a new line, including header-only imports.
-                if contents.last != 10 { contents.append(10) }
-                try contents.write(to: file, options: .withoutOverwriting)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            } catch {
-                try? FileManager.default.removeItem(at: folder)
-                throw RemoteFault.storageFailure
-            }
-            let item = ManagedSession(info: SessionInfo(id: sessionID, title: imported.title, directory: directory.url.path, interrupted: true),
-                                      directory: directory, piID: imported.piID, folder: folder, file: file, hasHistory: true)
-            sessions.append(item)
-            do { try saveSessions() }
-            catch {
-                sessions.removeLast(); try? FileManager.default.removeItem(at: folder)
-                throw RemoteFault.storageFailure
-            }
-            try await activate(sessionID)
+            try await importSession(data, directory: nil, expectedSession: request.session)
+        case .importSessionInDirectory(let data, let directory):
+            try await importSession(data, directory: directory, expectedSession: request.session)
         case .resumeSession(let id):
             guard !snapshot.working else { throw RemoteFault.busy }
             try await requireIdle()
@@ -392,6 +364,43 @@ public actor HostCoordinator {
             return .preview(FilePreview(name: "Working tree diff", text: String(decoding: result.0, as: UTF8.self), truncated: result.1))
         }
         return .ok
+    }
+
+    private func importSession(_ data: Data, directory directoryID: UUID?, expectedSession: UUID?) async throws {
+        guard expectedSession == snapshot.selected else { throw RemoteFault.conflict }
+        guard !snapshot.working, sessions.count < 256 else { throw RemoteFault.busy }
+        let imported = try SessionImport(data: data)
+        let directory: RegisteredPath
+        if let directoryID { directory = try await directories.resolve(directoryID) }
+        else {
+            guard let path = imported.directory else { throw RemoteFault.invalidRequest }
+            directory = try DirectoryRegistry.identify(URL(fileURLWithPath: path))
+        }
+        try DirectoryRegistry.validateDirectory(directory)
+        try await requireIdle()
+        guard !closing, !Task.isCancelled else { throw RemoteFault.cancelled }
+        try DirectoryRegistry.validateDirectory(directory)
+        let contents = try SessionImport.preparedCopy(of: data, directory: directoryID == nil ? nil : directory.url.path)
+        let sessionID = UUID()
+        let folder = support.appendingPathComponent("pi-sessions/" + sessionID.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let file = folder.appendingPathComponent("imported.jsonl")
+        do {
+            try contents.write(to: file, options: .withoutOverwriting)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw RemoteFault.storageFailure
+        }
+        let item = ManagedSession(info: SessionInfo(id: sessionID, title: imported.title, directory: directory.url.path, interrupted: true),
+                                  directory: directory, piID: imported.piID, folder: folder, file: file, hasHistory: true)
+        sessions.append(item)
+        do { try saveSessions() }
+        catch {
+            sessions.removeLast(); try? FileManager.default.removeItem(at: folder)
+            throw RemoteFault.storageFailure
+        }
+        try await activate(sessionID)
     }
 
     private func runUtility(_ path: String, _ arguments: [String], directory: URL, limit: Int = 1_048_576, environment: [String: String]? = nil) async throws -> (Data, Bool) {
