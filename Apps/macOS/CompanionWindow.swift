@@ -11,6 +11,7 @@ struct CompanionWindow: View {
     @State private var inspectorSection = "Files"
     @State private var removingWorkspace: String?
     @State private var remoteDetailsVisible = false
+    @State private var renamingSession: UUID?
 
     var body: some View {
         GeometryReader { geometry in
@@ -59,18 +60,18 @@ struct CompanionWindow: View {
         } message: { Text("This only removes the sidebar entry. Files and saved sessions are not deleted, and Pi work is not stopped.") }
         .onChange(of: model.state.context) { _, _ in
             section = "Chat"
-            if model.panel == "commands" { model.panel = nil }
+            if model.panel == "commands" || model.panel == "rename" { model.panel = nil }
+            renamingSession = nil
         }
     }
 
     private func toolbar(compact: Bool) -> some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 16) {
+        HStack(spacing: 12) {
                 Button("Sidebar", systemImage: "sidebar.left") { sidebarVisible.toggle() }
                     .labelStyle(.iconOnly).keyboardShortcut("s", modifiers: [.command, .option])
-                Text("Pi Remote for Mac").font(.headline).lineLimit(1)
-                Spacer(minLength: 12)
-                if !compact { status }
+                if !compact { Text("Pi Remote for Mac").font(.headline).lineLimit(1) }
+                Spacer(minLength: 8)
+                status
                 if let active = model.state.selected, model.destination != .session(active) {
                     Button("Active session") { model.destination = .session(active) }
                 }
@@ -85,16 +86,14 @@ struct CompanionWindow: View {
                     .accessibilityIdentifier("mac-inspector-toggle")
                     .labelStyle(.iconOnly).keyboardShortcut("i", modifiers: [.command, .option])
                     .help("Show or hide Files, Tools and Activity")
-            }
-            if compact { HStack { status; Spacer() } }
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, 16).padding(.vertical, 10)
     }
 
     private var status: some View {
         HStack(spacing: 16) {
             Button { remoteDetailsVisible.toggle() } label: {
-                Label(model.remoteAccessSummary, systemImage: "network")
+                Label(model.listening ? "iPhone access on" : (model.starting ? "iPhone access updating" : "iPhone access off"), systemImage: "iphone")
             }
             .accessibilityIdentifier("mac-remote-access")
             .help("Show listener and authenticated device status")
@@ -104,7 +103,7 @@ struct CompanionWindow: View {
                     Text(model.serverStatus).accessibilityIdentifier("mac-remote-server-status")
                     if model.listening { Text(model.serverEndpoint).font(.caption.monospaced()).textSelection(.enabled) }
                     Text(model.connectionStatus).accessibilityIdentifier("mac-remote-device-status")
-                    Text("Local Pi work does not require remote access.").font(.caption)
+                    Text("Remote access is optional. It only controls iPhone connections; local Pi sessions work without it.").font(.caption)
                     HStack {
                         Button("Network settings") { remoteDetailsVisible = false; model.destination = .settings }
                         Button("Devices") { remoteDetailsVisible = false; model.destination = .devices }
@@ -117,81 +116,127 @@ struct CompanionWindow: View {
         }.font(.caption)
     }
 
-    private var sidebar: some View {
-        List(selection: Binding(get: { model.destination }, set: { destination in
+    private var sidebarSelection: Binding<MacDestination?> {
+        Binding(get: { model.destination }, set: { destination in
             section = "Chat"
             if case .session(let id) = destination { Task { await model.openSession(id) } }
             else { model.destination = destination }
-        })) {
-            Label("Overview", systemImage: "house").tag(MacDestination.overview)
-            Section {
-                ForEach(model.workspaces) { workspace in
-                    DisclosureGroup(isExpanded: Binding(
-                        get: { model.expandedWorkspaces.contains(workspace.id) },
-                        set: { model.setExpanded(workspace.id, expanded: $0) }
-                    )) {
-                        ForEach(workspace.sessions) { session in
-                            Group {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack {
-                                        Image(systemName: session.id == model.state.selected ? "circle.fill" : "circle")
-                                            .font(.system(size: 7)).foregroundStyle(.secondary)
-                                        Text(session.title.isEmpty ? String(session.id.uuidString.prefix(8)) : session.title).lineLimit(1)
+        })
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            List(selection: sidebarSelection) {
+                Label("Overview", systemImage: "house").tag(MacDestination.overview)
+                Section {
+                    ForEach(model.workspaces) { workspace in
+                        DisclosureGroup(isExpanded: Binding(
+                            get: { model.expandedWorkspaces.contains(workspace.id) },
+                            set: { model.setExpanded(workspace.id, expanded: $0) }
+                        )) {
+                            ForEach(workspace.sessions) { session in
+                                sessionRow(session)
+                                    .tag(MacDestination.session(session.id))
+                            }
+                        } label: {
+                            Label {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(workspace.name).fontWeight(.medium).lineLimit(1)
+                                    if model.workspaces.filter({ $0.name == workspace.name }).count > 1 {
+                                        Text(URL(fileURLWithPath: workspace.directory).deletingLastPathComponent().path)
+                                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                     }
-                                    HStack {
-                                        Text(session.id == model.state.selected ? model.state.phase.capitalized : (session.interrupted ? "Needs review" : "Saved"))
-                                        Spacer()
-                                        Text(session.updated, style: .relative)
-                                    }.font(.caption2).foregroundStyle(.secondary)
-                                }.padding(.vertical, 3)
-                            }
-                            .tag(MacDestination.session(session.id))
-                            .accessibilityIdentifier("mac-session-" + session.id.uuidString)
-                            .contextMenu {
-                                Button("Open session") { Task { await model.openSession(session.id) } }
-                                Button("Copy session ID") { model.copy(session.id.uuidString) }
-                                if session.id == model.state.selected {
-                                    Button("Session controls and rename") { model.destination = .session(session.id); inspectorSection = "Tools"; model.inspectorVisible = true }
-                                    Button("History and fork options") { model.destination = .session(session.id); section = "History" }
-                                        .disabled(model.state.working)
                                 }
-                            }
+                            } icon: { Image(systemName: "folder") }
+                                .help(workspace.directory)
+                                .accessibilityIdentifier("mac-workspace-" + workspace.directory)
                         }
-                        Button("New session", systemImage: "plus") { Task { await model.createSession(in: workspace.directory) } }
-                            .disabled(model.state.working || model.openingSession)
-                    } label: {
-                        Label {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(workspace.name).lineLimit(1)
-                                if model.workspaces.filter({ $0.name == workspace.name }).count > 1 {
-                                    Text(URL(fileURLWithPath: workspace.directory).deletingLastPathComponent().path)
-                                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                            }
-                        } icon: { Image(systemName: "folder") }.help(workspace.directory)
-                            .accessibilityIdentifier("mac-workspace-" + workspace.directory)
+                        .tag(MacDestination.workspace(workspace.directory))
+                        .contextMenu {
+                            Button("New session") { Task { await model.createSession(in: workspace.directory) } }
+                                .disabled(model.state.working || model.openingSession || model.startupError != nil)
+                            Button("Show in Finder") { model.revealWorkspace(workspace.directory) }
+                            Button("Copy path") { model.copy(workspace.directory) }
+                            Button("Remove workspace…", role: .destructive) { removingWorkspace = workspace.directory }
+                        }
                     }
-                    .tag(MacDestination.workspace(workspace.directory))
-                    .contextMenu {
-                        Button("New session") { Task { await model.createSession(in: workspace.directory) } }
-                            .disabled(model.state.working || model.openingSession)
-                        Button("Show in Finder") { model.revealWorkspace(workspace.directory) }
-                        Button("Copy path") { model.copy(workspace.directory) }
-                        Button("Remove workspace…", role: .destructive) { removingWorkspace = workspace.directory }
+                } header: {
+                    HStack {
+                        Text("Workspaces")
+                        Spacer()
+                        Menu {
+                            Button("New session") {
+                                if let path = model.selectedWorkspace { Task { await model.createSession(in: path) } }
+                                else { model.panel = "directory" }
+                            }.disabled(model.state.working || model.openingSession || model.startupError != nil)
+                            Button("Add workspace…") { model.panel = "workspace" }
+                                .accessibilityIdentifier("mac-add-workspace")
+                            Divider()
+                            Button("Import session…") { model.panel = "import" }
+                                .disabled(model.state.working || model.openingSession)
+                        } label: { Image(systemName: "plus") }
+                        .menuStyle(.borderlessButton).fixedSize()
+                        .accessibilityLabel("Workspace actions").accessibilityIdentifier("mac-workspace-actions")
+                        .help("New session, add workspace or import session")
                     }
                 }
-                Button("Add workspace", systemImage: "folder.badge.plus") { model.panel = "workspace" }
-                    .accessibilityIdentifier("mac-add-workspace")
-            } header: { Text("Workspaces") }
-            Section("Manage") {
-                Button("Import session", systemImage: "square.and.arrow.down") { model.panel = "import" }
-                    .disabled(model.state.working || model.openingSession)
-                Label("Devices", systemImage: "iphone").tag(MacDestination.devices)
-                Label("Settings", systemImage: "gearshape").tag(MacDestination.settings)
+            }
+            .listStyle(.sidebar).scrollContentBackground(.hidden)
+            Divider()
+            List(selection: sidebarSelection) {
+                Section("Devices & Settings") {
+                    Label("Devices", systemImage: "iphone").tag(MacDestination.devices)
+                    Label("Settings", systemImage: "gearshape").tag(MacDestination.settings)
+                }
+            }
+            .listStyle(.sidebar).scrollContentBackground(.hidden).frame(height: 116)
+        }
+        .background(.white).accessibilityIdentifier("mac-workspace-sidebar")
+    }
+
+    private func sessionRow(_ session: SessionInfo) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Image(systemName: session.id == model.state.selected ? "circle.fill" : "circle")
+                    .font(.system(size: 6)).foregroundStyle(.secondary).accessibilityHidden(true)
+                Text(model.displayName(for: session)).lineLimit(1).truncationMode(.middle)
+            }
+            HStack {
+                Text(session.id == model.state.selected ? model.state.phase.capitalized : (session.interrupted ? "Needs review" : "Saved"))
+                Spacer(minLength: 4)
+                Text(session.updated, style: .relative)
+            }.font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .help(model.fullDisplayName(for: session) + "\n" + session.directory + "\nSession " + session.id.uuidString)
+        .accessibilityIdentifier("mac-session-" + session.id.uuidString)
+        .contextMenu {
+            Button("Open session") { Task { await model.openSession(session.id) } }
+                .disabled(model.openingSession)
+            Button("Rename…") { beginRename(session.id) }
+                .disabled(!canRename(session.id))
+            Button("Copy session ID") { model.copy(session.id.uuidString) }
+            if session.id == model.state.selected {
+                Button("Session controls") { model.destination = .session(session.id); showInspector("Tools") }
+                Button("History and fork options") { model.destination = .session(session.id); section = "History" }
+                    .disabled(model.state.working)
             }
         }
-        .listStyle(.sidebar).scrollContentBackground(.hidden).background(.white)
-        .accessibilityIdentifier("mac-workspace-sidebar")
+    }
+
+    private func canRename(_ id: UUID) -> Bool {
+        id == model.state.selected && model.state.phase == "idle" && !model.openingSession
+    }
+
+    private func beginRename(_ id: UUID) {
+        guard canRename(id) else { return }
+        renamingSession = id
+        model.panel = "rename"
+    }
+
+    private func showInspector(_ tab: String) {
+        inspectorSection = tab
+        model.inspectorVisible = true
     }
 
     @ViewBuilder private var notices: some View {
@@ -226,14 +271,15 @@ struct CompanionWindow: View {
         default:
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Your Mac, your Pi sessions").font(.title2.bold())
-                    Text("Add a workspace, create a session and talk to Pi here. The server is only needed for iPhone access.").foregroundStyle(.secondary)
+                    Text(model.workspaces.isEmpty ? "Start with a workspace" : "Choose a session").font(.title2.bold())
+                    Text(model.workspaces.isEmpty
+                         ? "Add a Mac folder, then use New session in the toolbar. Pi works locally without a server or iPhone."
+                         : "Expand a workspace in the sidebar to open a saved conversation, or use New session in the toolbar.").foregroundStyle(.secondary)
                     HStack {
                         Button("Add workspace", systemImage: "folder.badge.plus") { model.panel = "workspace" }.buttonStyle(.borderedProminent)
-                        Button("New session") { model.panel = "directory" }.disabled(model.state.working || model.openingSession)
                     }
                     Divider()
-                    CompanionServerControls(model: model)
+                    DisclosureGroup("iPhone access (optional)") { CompanionServerControls(model: model) }
                     Text("\(model.workspaces.count) workspaces · \(model.state.sessions.count) saved sessions").font(.caption).foregroundStyle(.secondary)
                 }.padding(24).frame(maxWidth: 700, alignment: .leading)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -244,12 +290,14 @@ struct CompanionWindow: View {
         VStack(alignment: .leading, spacing: 16) {
             Label(URL(fileURLWithPath: path).lastPathComponent, systemImage: "folder").font(.title2.bold())
             Text(path).font(.callout.monospaced()).textSelection(.enabled)
-            Text("Select a session in the sidebar, or start a new conversation in this folder.").foregroundStyle(.secondary)
-            HStack {
-                Button("New session", systemImage: "plus") { Task { await model.createSession(in: path) } }
-                    .buttonStyle(.borderedProminent).disabled(model.state.working || model.openingSession)
-                Button("Show in Finder") { model.revealWorkspace(path) }
-            }
+            let count = model.state.sessions.filter { $0.directory == path }.count
+            Text(count == 0 ? "No sessions in this workspace" : "\(count) saved session\(count == 1 ? "" : "s")")
+                .font(.headline)
+            Text(count == 0
+                 ? "Use New session in the toolbar to start a conversation in this folder."
+                 : "Expand this workspace in the sidebar to open a session. Use New session in the toolbar for a new conversation.")
+                .foregroundStyle(.secondary)
+            Button("Show in Finder") { model.revealWorkspace(path) }
             if model.state.working { Text("Pi is working in another session. New sessions and activation wait until that work stops.").font(.caption) }
             Spacer()
         }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -258,24 +306,29 @@ struct CompanionWindow: View {
     @ViewBuilder private func sessionDetail(_ id: UUID) -> some View {
         if let session = model.state.sessions.first(where: { $0.id == id }) {
             VStack(spacing: 0) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(session.title).font(.headline)
-                        Text(session.directory).font(.caption.monospaced()).lineLimit(1).help(session.directory)
-                    }
-                    Spacer()
-                    if id == model.state.selected {
-                        VStack(alignment: .trailing) {
-                            Text(model.piStatus).font(.caption).accessibilityIdentifier("mac-session-status")
-                            if !model.state.model.isEmpty { Text(model.state.model + " · " + model.state.thinking).font(.caption2).foregroundStyle(.secondary) }
-                        }
-                    } else { Text("Saved · not loaded").font(.caption).foregroundStyle(.secondary) }
-                }.padding(16)
+                sessionHeader(session)
                 if id == model.state.selected {
-                    Picker("Session view", selection: $section) {
-                        Text("Chat").tag("Chat")
-                        Text("History").tag("History").disabled(model.state.working)
-                    }.pickerStyle(.segmented).padding(.horizontal, 16).padding(.bottom, 12)
+                    HStack {
+                        Picker("Conversation view", selection: $section) {
+                            Text("Conversation").tag("Chat")
+                            Text("History").tag("History").disabled(model.state.working)
+                        }
+                        .labelsHidden().pickerStyle(.segmented).frame(maxWidth: 230)
+                        .accessibilityIdentifier("mac-conversation-tabs")
+                        Spacer(minLength: 8)
+                        Menu {
+                            Button("Session controls") { showInspector("Tools") }
+                            Button("Rename…") { beginRename(id) }.disabled(!canRename(id))
+                            Button("Commands") { model.panel = "commands" }
+                            Button("Files") { showInspector("Files") }
+                            Button("Extension diagnostics") { showInspector("Activity") }
+                            Divider()
+                            Button("Copy working directory") { model.copy(session.directory) }
+                        } label: { Image(systemName: "ellipsis") }
+                        .menuStyle(.borderlessButton).fixedSize()
+                        .accessibilityLabel("Session actions").accessibilityIdentifier("mac-session-actions")
+                        .help("Session controls, rename, files and diagnostics")
+                    }.padding(.horizontal, 16).padding(.bottom, 10)
                     Divider()
                     switch section {
                     case "History": NavigationStack { HistoryView(request: model.scopedRequest(for: model.state), paged: true) { section = "Chat" } }.id(model.state.context)
@@ -286,12 +339,17 @@ struct CompanionWindow: View {
                                 Button("Open session") { Task { await model.openSession(id) } }.disabled(model.openingSession)
                             }.padding(12)
                         }
-                        ConversationView(state: model.state, text: $model.text, delivery: $model.delivery, sending: model.sending,
-                                         send: { model.send(context: model.state.context) }, stop: { model.stopWork() }, request: model.scopedRequest(for: model.state)) {
-                            Button("Files", systemImage: "folder") { inspectorSection = "Files"; model.inspectorVisible = true }
-                                .labelStyle(.iconOnly).help("Show files in the inspector").accessibilityIdentifier("mac-composer-files")
-                            Button("Commands", systemImage: "slash.circle") { model.panel = "commands" }
-                                .labelStyle(.iconOnly).help("Open Pi commands").accessibilityIdentifier("mac-composer-commands")
+                        if model.openingSession {
+                            ProgressView("Opening session…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .accessibilityIdentifier("mac-session-loading")
+                        } else {
+                            ConversationView(state: model.state, text: $model.text, delivery: $model.delivery, sending: model.sending,
+                                             send: { model.send(context: model.state.context) }, stop: { model.stopWork() }, request: model.scopedRequest(for: model.state)) {
+                                Button("Files", systemImage: "folder") { showInspector("Files") }
+                                    .help("Browse files and attach text from a file preview").accessibilityIdentifier("mac-composer-files")
+                                Button("Commands", systemImage: "slash.circle") { model.panel = "commands" }
+                                    .help("Open Pi commands").accessibilityIdentifier("mac-composer-commands")
+                            }
                         }
                     }
                 } else {
@@ -309,6 +367,31 @@ struct CompanionWindow: View {
         } else {
             ContentUnavailableView("Session not found", systemImage: "bubble.left", description: Text("Select another saved session or add a workspace."))
         }
+    }
+
+    private func sessionHeader(_ session: SessionInfo) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(model.displayName(for: session)).font(.title3.weight(.semibold))
+                    .lineLimit(1).truncationMode(.middle).layoutPriority(1)
+                    .help(model.fullDisplayName(for: session))
+                    .accessibilityIdentifier("mac-session-heading")
+                Spacer(minLength: 0)
+                if session.id == model.state.selected {
+                    Text(model.openingSession ? "Opening Pi session…" : model.piStatus).font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("mac-session-status")
+                } else {
+                    Text(model.openingSession ? "Opening…" : "Saved · not loaded")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            let workspace = URL(fileURLWithPath: session.directory).lastPathComponent
+            let configuration = session.id == model.state.selected && !model.state.model.isEmpty
+                ? " / " + model.state.model + (model.state.thinking.isEmpty ? "" : " · " + model.state.thinking) : ""
+            Text((workspace.isEmpty ? "/" : workspace) + configuration)
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                .help(session.directory + configuration).accessibilityIdentifier("mac-session-metadata")
+        }.padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
     }
 
     @ViewBuilder private var inspector: some View {
@@ -338,7 +421,12 @@ struct CompanionWindow: View {
                             }
                         }
                         if let error = model.state.error { Text(error.explanation) }
-                        ForEach(Array(model.state.notices.enumerated()), id: \.offset) { _, value in Text(value).font(.caption) }
+                        Section("Extension diagnostics") {
+                            if model.state.notices.isEmpty { Text("No extension diagnostics").font(.caption).foregroundStyle(.secondary) }
+                            ForEach(Array(model.state.notices.enumerated()), id: \.offset) { _, value in
+                                Text(value).font(.caption).textSelection(.enabled)
+                            }
+                        }.accessibilityIdentifier("mac-extension-diagnostics")
                     } else { Text("Activity is available for the loaded session.").foregroundStyle(.secondary) }
                 }
             default:
@@ -387,6 +475,13 @@ struct CompanionWindow: View {
                         Task { _ = try? await model.scopedRequest(for: state)(.answer(dialog: dialog.id, value: value, confirmed: confirmed, cancelled: cancelled)) }
                     }.id(dialog.id)
                 }
+            case "rename":
+                if let id = renamingSession, id == state.selected,
+                   let session = state.sessions.first(where: { $0.id == id }) {
+                    MacRenameSessionView(initialName: session.title, state: state, request: model.scopedRequest(for: state)) {
+                        model.panel = nil; renamingSession = nil
+                    }
+                }
             case "commands": SessionCommandsView(state: state, request: model.scopedRequest(for: state))
             case "pairingQR": PairingQRView(code: model.code)
             case "preview": if let preview = model.preview { FilePreviewView(preview: preview) }
@@ -419,5 +514,56 @@ struct CompanionWindow: View {
             }
         }
         .id(model.state.context)
+    }
+}
+
+struct MacRenameSessionView: View {
+    let state: HostSnapshot
+    let request: (SessionAction) async throws -> AppResult
+    let renamed: () -> Void
+    @State private var name: String
+    @State private var saving = false
+    @State private var error: String?
+
+    init(initialName: String, state: HostSnapshot, request: @escaping (SessionAction) async throws -> AppResult, renamed: @escaping () -> Void) {
+        self.state = state; self.request = request; self.renamed = renamed
+        _name = State(initialValue: initialName)
+    }
+
+    private var proposedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        Form {
+            Section("Session name") {
+                TextField("Name", text: $name).accessibilityIdentifier("mac-session-rename-name")
+                    .disabled(saving)
+                Text("Updates the name in Pi. The session ID, working directory and saved messages do not change.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if proposedName.utf8.count > 256 { Text("Use a name of at most 256 UTF-8 bytes.").font(.caption) }
+            }
+            if let error { Text(error).textSelection(.enabled) }
+        }
+        .navigationTitle("Rename session")
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Spacer()
+                Button("Rename") {
+                    guard !saving, state.phase == "idle", state.selected != nil,
+                          !proposedName.isEmpty, proposedName.utf8.count <= 256 else { return }
+                    saving = true
+                    let value = proposedName
+                    Task {
+                        defer { saving = false }
+                        do {
+                            let result = try await request(.rename(name: value))
+                            if case .failure(let fault) = result { throw fault }
+                            renamed()
+                        } catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                    }
+                }
+                .buttonStyle(.borderedProminent).accessibilityIdentifier("mac-session-rename-save")
+                .disabled(saving || state.phase != "idle" || state.selected == nil || proposedName.isEmpty || proposedName.utf8.count > 256)
+            }.padding(16)
+        }
     }
 }

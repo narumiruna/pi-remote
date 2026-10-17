@@ -2,6 +2,15 @@ import Darwin
 import Foundation
 import PiRemoteCore
 
+/// Local display hints only. These values are not part of the remote protocol or catalog.
+public struct SessionDisplayMetadata: Sendable, Equatable {
+    public var name: String?
+    public var firstInstruction: String?
+    public init(name: String? = nil, firstInstruction: String? = nil) {
+        self.name = name; self.firstInstruction = firstInstruction
+    }
+}
+
 /// Read only companion-owned files supplied by HostCoordinator, never a remote path.
 actor SessionHistory {
     private struct Reference {
@@ -26,8 +35,15 @@ actor SessionHistory {
         var nanoseconds: Int
         var revision: String { "\(identity):\(size):\(seconds):\(nanoseconds)" }
     }
+    private struct DisplayCache {
+        var state: FileState
+        var metadata: SessionDisplayMetadata
+        var used: TimeInterval
+    }
+    private var displayCache: [URL: DisplayCache] = [:]
     private var indexes: [IndexKey: InspectionIndex] = [:]
     // Internal read accounting supports deterministic resource-bound tests, not diagnostics.
+    private(set) var displayMetadataBytesRead: UInt64 = 0
     private(set) var inspectionIndexBuilds = 0
     private(set) var inspectionIndexBytesRead: UInt64 = 0
     var inspectionIndexCount: Int { indexes.count }
@@ -35,6 +51,110 @@ actor SessionHistory {
     private var cursors: [UUID: Reference] = [:]
     private var entries: [UUID: EntryReference] = [:]
     private let maximumRecord = 8 * 1_024 * 1_024
+
+    /// Scan at most 2 MiB. A prefix can supply the first instruction, but never
+    /// an authoritative name: an unread session_info entry could rename it.
+    func displayMetadata(file: URL, root: URL? = nil, piID: String? = nil,
+                         directory: RegisteredPath? = nil, parentFile: URL? = nil) throws -> SessionDisplayMetadata {
+        try Task.checkCancellation()
+        let now = ProcessInfo.processInfo.systemUptime
+        displayCache = displayCache.filter { now - $0.value.used < 300 }
+        let handle = try openDisplayFile(file, root: root)
+        defer { try? handle.close() }
+        let state = try fileState(handle)
+        // Validate the same descriptor before using even a cached result.
+        let prefix = try handle.read(upToCount: 65_536) ?? Data()
+        displayMetadataBytesRead &+= UInt64(prefix.count)
+        guard let end = prefix.firstIndex(of: 10),
+              let validatedHeader = try? JSONDecoder().decode(JSONValue.self, from: prefix[..<end]),
+              validatedHeader["type"]?.string == "session" else { throw RemoteFault.incompatiblePi }
+        if let piID {
+            guard validatedHeader["id"]?.string == piID,
+                  let cwd = validatedHeader["cwd"]?.string, cwd.hasPrefix("/"),
+                  (try? DirectoryRegistry.identify(URL(fileURLWithPath: cwd))) == directory,
+                  parentFile == nil || validatedHeader["parentSession"]?.string == parentFile?.path else { throw RemoteFault.incompatiblePi }
+        }
+        guard try fileState(handle) == state else { throw RemoteFault.staleDirectory }
+        if var cached = displayCache[file], cached.state == state {
+            cached.used = now; displayCache[file] = cached
+            return cached.metadata
+        }
+        let count = Int(min(state.size, 2 * 1_024 * 1_024))
+        var data = prefix
+        if data.count < count {
+            let remainder = try handle.read(upToCount: count - data.count) ?? Data()
+            displayMetadataBytesRead &+= UInt64(remainder.count)
+            data.append(remainder)
+        }
+        guard data.count == count else { throw RemoteFault.staleDirectory }
+        var metadata = SessionDisplayMetadata(), start = data.startIndex
+        var header = false
+        func consume(_ line: Data.SubSequence) throws {
+            guard let raw = try? JSONDecoder().decode(JSONValue.self, from: line) else { throw RemoteFault.incompatiblePi }
+            if !header {
+                guard raw["type"]?.string == "session" else { throw RemoteFault.incompatiblePi }
+                header = true
+            } else if raw["type"]?.string == "session_info" {
+                // An empty latest name clears an earlier name.
+                metadata.name = Self.displayText(raw["name"]?.string)
+            } else if metadata.firstInstruction == nil, raw["type"]?.string == "message",
+                      raw["message"]?["role"]?.string == "user" {
+                let content = raw["message"]?["content"]
+                let text = content?.string ?? content?.array?.compactMap { block in
+                    block["type"]?.string == "text" ? block["text"]?.string : nil
+                }.joined(separator: " ")
+                metadata.firstInstruction = Self.displayText(text)
+            }
+        }
+        while let end = data[start...].firstIndex(of: 10) {
+            try Task.checkCancellation()
+            try consume(data[start..<end])
+            start = data.index(after: end)
+        }
+        let complete = UInt64(data.count) == state.size
+        var validTail = true
+        if complete, start != data.endIndex {
+            do { try consume(data[start...]) }
+            catch { validTail = false }
+        }
+        guard header, try fileState(handle) == state else { throw RemoteFault.staleDirectory }
+        if !complete || !validTail { metadata.name = nil }
+        displayCache[file] = DisplayCache(state: state, metadata: metadata, used: now)
+        while displayCache.count > 256, let oldest = displayCache.min(by: { $0.value.used < $1.value.used })?.key {
+            displayCache.removeValue(forKey: oldest)
+        }
+        return metadata
+    }
+
+    /// Walk from / with no-follow directory descriptors. No parent symlink can
+    /// redirect a metadata read outside companion-owned storage.
+    private func openDisplayFile(_ file: URL, root: URL?) throws -> FileHandle {
+        let path = file.standardizedFileURL.path
+        if let root {
+            guard path.hasPrefix(root.standardizedFileURL.path + "/"), file.pathExtension == "jsonl" else { throw RemoteFault.incompatiblePi }
+        }
+        // Darwin exposes these system-owned aliases. Expand only these fixed
+        // prefixes; never resolve user-controlled storage components.
+        let traversalPath = path.hasPrefix("/var/") || path.hasPrefix("/tmp/") ? "/private" + path : path
+        let parts = traversalPath.split(separator: "/").map(String.init)
+        guard path.hasPrefix("/"), !parts.isEmpty else { throw RemoteFault.permissionDenied }
+        var descriptor = open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else { throw RemoteFault.permissionDenied }
+        for (index, part) in parts.enumerated() {
+            let flags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC | (index == parts.count - 1 ? 0 : O_DIRECTORY)
+            let next = openat(descriptor, part, flags)
+            close(descriptor)
+            guard next >= 0 else { throw RemoteFault.permissionDenied }
+            descriptor = next
+        }
+        return FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+    }
+
+    private static func displayText(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let normalized = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return normalized.isEmpty ? nil : DisplayLimit.text(normalized, bytes: 4_096)
+    }
 
     func page(session: UUID, file: URL?, cursor: UUID?) throws -> HistoryPage {
         expire()

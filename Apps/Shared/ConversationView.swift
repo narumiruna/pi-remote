@@ -13,12 +13,22 @@ struct ConversationView<Extras: View>: View {
     @State private var atBottom = true
     @State private var followingOutput = true
     @State private var userScrolling = false
+    #if os(macOS)
+    @State private var macEditorHeight: CGFloat = 76
+    #endif
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var controlMinimum: CGFloat? {
         #if os(macOS)
         nil
         #else
         44
+        #endif
+    }
+    private var transcriptSpacing: CGFloat {
+        #if os(macOS)
+        16
+        #else
+        20
         #endif
     }
     private var canCompose: Bool { state.selected != nil && !["unavailable", "interrupted", "recovering", "starting", "stopping"].contains(state.phase) }
@@ -28,11 +38,17 @@ struct ConversationView<Extras: View>: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     // The host bounds this view to 100 messages and 256 KiB. Eager layout keeps live row heights stable.
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: transcriptSpacing) {
                         if state.messages.isEmpty {
+                            #if os(macOS)
+                            ContentUnavailableView(macEmptyTitle, systemImage: "bubble.left.and.text.bubble.right",
+                                                   description: Text(macEmptyDescription))
+                                .frame(maxWidth: .infinity)
+                            #else
                             ContentUnavailableView(state.selected == nil ? "No session selected" : (!canCompose ? "Pi is not running" : (state.working ? "Pi is working" : "Ready for a task")), systemImage: "bubble.left.and.text.bubble.right",
                                                    description: Text(state.selected == nil ? "Choose a folder and start a session, then send an instruction." : (!canCompose ? "Open the saved session to continue. Previous instructions are not resent." : (state.working ? "Waiting for output. Stop remains available." : "Send an instruction to start working in this session."))))
                                 .frame(maxWidth: .infinity)
+                            #endif
                         }
                         if state.hasOlderMessages {
                             Text("Earlier messages are saved on the Mac. Open History to inspect them.")
@@ -80,8 +96,18 @@ struct ConversationView<Extras: View>: View {
                         }
                         Color.clear.frame(height: 1).id("latest")
                     }
+                    #if os(macOS)
+                    .font(.system(size: 15))
+                    .frame(maxWidth: 760)
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                    #else
                     .padding(20)
+                    #endif
                 }
+                #if os(macOS)
+                .accessibilityIdentifier("mac-conversation-transcript")
+                #endif
                 .clipped()
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
                 .onChange(of: state.selected) { _, _ in
@@ -111,6 +137,7 @@ struct ConversationView<Extras: View>: View {
                     }
                 }
             }
+            #if !os(macOS)
             if !state.notices.isEmpty {
                 DisclosureGroup("Extension status") {
                     ForEach(Array(state.notices.enumerated()), id: \.offset) { _, line in
@@ -118,7 +145,11 @@ struct ConversationView<Extras: View>: View {
                     }
                 }.font(.caption).padding(.horizontal, 20).padding(.bottom, 8)
             }
+            #endif
             Divider()
+            #if os(macOS)
+            macComposer
+            #else
             VStack(alignment: .leading, spacing: 8) {
                 if state.working {
                     Picker("Send as", selection: $delivery) {
@@ -148,10 +179,113 @@ struct ConversationView<Extras: View>: View {
                 }
             }
             .padding(16)
+            #endif
         }
         .onChange(of: state.working) { _, working in delivery = working ? .steer : .prompt }
         .onAppear { delivery = state.working ? .steer : .prompt }
     }
+
+    #if os(macOS)
+    private var macCanSend: Bool {
+        canCompose && !sending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var macEmptyTitle: String {
+        if state.selected == nil { return "No session selected" }
+        switch state.phase {
+        case "starting": return "Starting Pi…"
+        case "stopping": return "Stopping Pi…"
+        case "recovering": return "Pi status is uncertain"
+        case "waiting": return "Pi is waiting for input"
+        default: break
+        }
+        if !canCompose { return "Pi is not running" }
+        return state.working ? "Pi is working" : "Pi is idle and ready"
+    }
+
+    var macEmptyDescription: String {
+        if state.selected == nil { return "Choose a workspace and open a session to start." }
+        switch state.phase {
+        case "starting": return "Wait while Pi opens the session. No instruction is resent."
+        case "stopping": return "Wait for Pi to stop. File changes are not undone."
+        case "recovering": return "Use Stop, then reopen the saved session. Do not resend uncertain instructions."
+        case "waiting": return "Complete or cancel the open request. Stop remains available."
+        default: break
+        }
+        if !canCompose { return "Open the saved session to continue. Previous instructions are not resent." }
+        return state.working ? "Waiting for output. Stop remains available." : "Send an instruction to start working in this session."
+    }
+
+    private var macComposer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextEditor(text: $text)
+                .font(.system(size: 15)).scrollContentBackground(.hidden)
+                .frame(height: macEditorHeight)
+                .overlay(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text("Message Pi…").font(.system(size: 15)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 5).padding(.vertical, 8).allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .background {
+                    // Measure only enough text to fill the bounded editor viewport.
+                    Text(String(text.prefix(4_096)) + "\n").font(.system(size: 15)).lineLimit(8)
+                        .padding(.horizontal, 5).padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true).hidden().accessibilityHidden(true)
+                        .onGeometryChange(for: CGFloat.self) { min(180, max(76, $0.size.height)) } action: { macEditorHeight = $0 }
+                }
+                .accessibilityLabel("Instruction").accessibilityIdentifier("instruction")
+                .disabled(!canCompose)
+            if state.working {
+                Picker("Send as", selection: $delivery) {
+                    Text("Steer now").tag(Delivery.steer)
+                    Text("Follow up").tag(Delivery.followUp)
+                }
+                .pickerStyle(.menu).frame(maxWidth: 210, alignment: .leading)
+            }
+            HStack(spacing: 6) {
+                extras()
+                    .labelStyle(.titleAndIcon)
+                Spacer(minLength: 0)
+                if state.working {
+                    Button(action: stop) {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .accessibilityLabel("Stop")
+                    .accessibilityHint("Clear queued instructions and stop current work. File changes are not undone.")
+                }
+                Button {
+                    guard macCanSend else { return }
+                    send()
+                } label: {
+                    Label("Send", systemImage: "arrow.up")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityLabel("Send")
+                .disabled(!macCanSend)
+                .keyboardShortcut(.return, modifiers: .command)
+            }
+            .labelStyle(.titleAndIcon).controlSize(.small)
+            Text("⌘Return to send · Return for a new line")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(.background, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(.primary.opacity(0.15), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Message composer").accessibilityIdentifier("mac-composer-container")
+        .frame(maxWidth: 784)
+        .frame(maxWidth: .infinity)
+        .padding(16)
+    }
+    #endif
 }
 
 extension RemoteFault {

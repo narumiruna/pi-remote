@@ -121,7 +121,10 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 
 - Keep the main screen to a compact header, transcript, and composer.
 - Show the session title, a compact working-directory label, and connection or run status in the header; make the full Mac path available in session details.
-- Open session selection from the header and group model, thinking-level, and other secondary controls in a session menu or sheet rather than a permanent toolbar.
+- On iPhone, open session selection from the header. On Mac, select sessions beneath their workspace in the sidebar. Group model, thinking-level and other secondary controls in a session menu or inspector rather than a permanent toolbar.
+- Resolve Mac display labels from actual Pi names, first meaningful user instructions or stable IDs without changing persisted names. Disambiguate collisions within each workspace, including generated suffix collisions. Read saved metadata through a bounded, local-only, validated file path; do not activate Pi to obtain a label.
+- Keep one prominent Mac New session action in the toolbar, with contextual creation in workspace menus. Keep Add workspace and Import in the workspace actions menu and pin Devices/Settings below the workspace list.
+- Use a bounded multiline Mac composer with labelled controls. Return inserts a newline; Command-Return sends. Disable empty or unavailable Send. Keep extension diagnostics in Activity, outside the conversation footer.
 - Keep the composer and Send action available while idle; while working, keep Stop visible and make the steering or follow-up choice explicit before submitting another instruction.
 - Show concise tool activity in the transcript with expandable output; keep errors and pending extension dialogs visible without requiring users to expand a tool result.
 - Keep the reader's scroll position when new output arrives; follow live output only when already at the bottom and offer a return-to-latest action otherwise.
@@ -277,6 +280,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 ### Mac UI/UX review follow-up
 
 - [ ] Finish acceptance for the five Mac UI/UX corrections. Direct Commands access, one Files destination, native Mac control density, consolidated header status and compact folder navigation are implemented. All 22 Mac tests, nine phone directory-model tests, four focused phone UI checks and unsigned Mac/iOS builds pass. [Evidence and limits](docs/mac-interface.md#uiux-correction-verification) distinguish automated/layout checks from normal launch. The [tracked plan](docs/plans/2026-10-17_mac-uiux-plan.md) remains open for normal local Mac operation, manual breadcrumb-menu selection and full Mac keyboard/accessibility review.
+
+### Mac usability refinement
+
+- [x] Refine the existing Mac interface: read-only Pi-name/instruction display labels with stable collision handling, one global New session action, pinned management navigation, a compact session header, readable bounded-width messages, a 76–180-point multiline composer and Activity diagnostics. Existing names/IDs, catalog/JSONL formats, RPC actions, lifecycle, authentication and iPhone layouts remain unchanged. Verification: 35 Mac tests, 16 focused host tests, three primary-phone UI smoke checks and unsigned Mac/iOS builds pass. Real JSONL fixtures verify asynchronous display labels without activating Pi or changing session files. See [behavior, checks and limits](docs/mac-interface.md#mac-usability-refinement-verification). Hosted captures do not complete the separate normal-launch or live accessibility gates.
 
 ### 4. Build the iOS client
 

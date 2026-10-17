@@ -95,6 +95,21 @@ public actor HostCoordinator {
     }
 
     public func state() -> HostSnapshot { snapshot }
+
+    /// Local, read-only display hints for a saved session. Does not activate Pi.
+    public func sessionDisplayMetadata(sessionID: UUID) async -> SessionDisplayMetadata? {
+        guard !Task.isCancelled, let item = sessions.first(where: { $0.info.id == sessionID }),
+              let file = item.file else { return nil }
+        do {
+            let metadata = try await history.displayMetadata(file: file,
+                root: support.appendingPathComponent("pi-sessions", isDirectory: true),
+                piID: item.piID, directory: item.directory, parentFile: item.parentFile)
+            guard !Task.isCancelled, !closing, sessions.contains(where: {
+                $0.info.id == sessionID && $0.file == file && $0.piID == item.piID && $0.directory == item.directory
+            }) else { return nil }
+            return metadata
+        } catch { return nil }
+    }
     public func inspectPi() async {
         guard rpc == nil, !closing, mutations.isEmpty, utility == nil else { return }
         do {

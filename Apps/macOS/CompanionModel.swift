@@ -8,7 +8,14 @@ import PiRemoteSecurity
 @MainActor @Observable
 final class CompanionModel {
     static let shared = CompanionModel()
-    var state = HostSnapshot(host: UUID(), epoch: UUID())
+    var state = HostSnapshot(host: UUID(), epoch: UUID()) {
+        didSet { refreshSessionDisplayMetadata() }
+    }
+    private(set) var sessionDisplayMetadata: [UUID: SessionDisplayMetadata] = [:]
+    @ObservationIgnored private var metadataRefresh: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var metadataCatalog: [SessionDisplayCatalogEntry] = []
+    private var displayLabels: [UUID: String] = [:]
+    private var presentationMetadata: [UUID: SessionDisplayMetadata] = [:]
     var text = "" { didSet { scheduleDraftSave() } }
     var destination: MacDestination? = .overview { didSet { saveWorkspacePreferences() } }
     var inspectorVisible = false { didSet { saveWorkspacePreferences() } }
@@ -66,9 +73,15 @@ final class CompanionModel {
     var piStatus: String {
         guard state.selected != nil else { return "Pi: Not started" }
         switch state.phase {
-        case "unavailable", "interrupted": return "Pi: Not running"
+        case "unavailable", "interrupted": return "Pi: Unavailable"
         case "recovering": return "Pi: Status uncertain"
-        default: return "Pi: " + state.phase.capitalized
+        case "idle": return "Pi: Idle and ready"
+        case "starting": return "Pi: Starting"
+        case "waiting": return "Pi: Waiting for input"
+        case "stopping": return "Pi: Stopping"
+        case "retrying": return "Pi: Retrying"
+        case "compacting": return "Pi: Compacting"
+        default: return state.working ? "Pi: Processing…" : "Pi: " + state.phase.capitalized
         }
     }
     var code = ""
@@ -124,6 +137,52 @@ final class CompanionModel {
         } catch {
             coordinator = nil; registry = nil
             startupError = "Cannot open private host storage. Check disk access and whether another Pi Remote companion is already running."
+        }
+    }
+
+    func displayName(for session: SessionInfo) -> String {
+        displayLabels[session.id] ?? SessionDisplayName.full(session, metadata: nil)
+    }
+
+    func fullDisplayName(for session: SessionInfo) -> String {
+        SessionDisplayName.full(session, metadata: presentationMetadata[session.id])
+    }
+
+    private func rebuildDisplayLabels(catalogChanged: Bool = false) {
+        var metadata = sessionDisplayMetadata
+        // Only a complete displayed transcript can supply the first instruction.
+        if let id = state.selected, !state.hasOlderMessages, metadata[id]?.firstInstruction == nil,
+           let message = state.messages.first(where: { $0.role == "user" && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            var hints = metadata[id] ?? SessionDisplayMetadata()
+            hints.firstInstruction = message.text
+            metadata[id] = hints
+        }
+        guard catalogChanged || metadata != presentationMetadata else { return }
+        presentationMetadata = metadata
+        displayLabels = SessionDisplayName.labels(sessions: state.sessions, metadata: metadata)
+    }
+
+    private func refreshSessionDisplayMetadata() {
+        let catalog = state.sessions.map { SessionDisplayCatalogEntry(id: $0.id, updated: $0.updated, title: $0.title, directory: $0.directory) }
+        guard catalog != metadataCatalog else { rebuildDisplayLabels(); return }
+        let old = Dictionary(uniqueKeysWithValues: metadataCatalog.map { ($0.id, $0) })
+        metadataCatalog = catalog
+        let current = Dictionary(uniqueKeysWithValues: catalog.map { ($0.id, $0) })
+        for id in Array(metadataRefresh.keys) where old[id] != current[id] {
+            metadataRefresh.removeValue(forKey: id)?.cancel()
+        }
+        sessionDisplayMetadata = sessionDisplayMetadata.filter { current[$0.key] != nil }
+        rebuildDisplayLabels(catalogChanged: true)
+        guard let coordinator, !shuttingDown else { return }
+        for entry in catalog where old[entry.id] != entry {
+            metadataRefresh[entry.id] = Task { [weak self] in
+                let metadata = await coordinator.sessionDisplayMetadata(sessionID: entry.id)
+                guard let self, !Task.isCancelled, !self.shuttingDown,
+                      self.metadataCatalog.contains(entry) else { return }
+                self.metadataRefresh.removeValue(forKey: entry.id)
+                self.sessionDisplayMetadata[entry.id] = metadata
+                self.rebuildDisplayLabels()
+            }
         }
     }
 
@@ -184,6 +243,12 @@ final class CompanionModel {
             fault = error; throw error
         }
         if action.mutates { submissions.finish(request.id, fault: nil) }
+        if case .rename = action, let expectedSession {
+            // A real Pi name can equal the old directory fallback. Refresh hints
+            // even when the persisted catalog title did not change.
+            metadataCatalog.removeAll { $0.id == expectedSession }
+            refreshSessionDisplayMetadata()
+        }
         return result
     }
 
@@ -349,6 +414,8 @@ final class CompanionModel {
         startup?.cancel()
         if let startup { await startup.value }
         observation?.cancel(); pairingObservation?.cancel(); connectionObservation?.cancel(); codeExpiry?.cancel()
+        for task in metadataRefresh.values { task.cancel() }
+        metadataRefresh.removeAll()
         draftSave?.cancel(); persistDrafts()
         await server?.stop(); await coordinator?.shutdown()
     }
@@ -476,6 +543,64 @@ struct MacWorkspace: Identifiable, Equatable {
     var sessions: [SessionInfo]
     var id: String { directory }
     var name: String { URL(fileURLWithPath: directory).lastPathComponent.isEmpty ? directory : URL(fileURLWithPath: directory).lastPathComponent }
+}
+
+private struct SessionDisplayCatalogEntry: Equatable {
+    var id: UUID
+    var updated: Date
+    var title: String
+    var directory: String
+}
+
+/// Pure local naming policy. Never changes the catalog or a Pi session name.
+enum SessionDisplayName {
+    static func full(_ session: SessionInfo, metadata: SessionDisplayMetadata?) -> String {
+        let raw = usable(session.title)
+        let basename = usable(URL(fileURLWithPath: session.directory).lastPathComponent)
+        if let raw, raw != basename { return raw }
+        if let name = usable(metadata?.name) { return name }
+        if let instruction = usable(metadata?.firstInstruction) { return instruction }
+        return "Session · " + shortID(session.id)
+    }
+
+    static func resolve(_ session: SessionInfo, sessions: [SessionInfo], metadata: [UUID: SessionDisplayMetadata]) -> String {
+        labels(sessions: sessions, metadata: metadata)[session.id] ?? concise(full(session, metadata: metadata[session.id]))
+    }
+
+    static func labels(sessions: [SessionInfo], metadata: [UUID: SessionDisplayMetadata]) -> [UUID: String] {
+        var result: [UUID: String] = [:]
+        for workspace in Dictionary(grouping: sessions, by: \.directory).values {
+            let base = Dictionary(uniqueKeysWithValues: workspace.map { ($0.id, concise(full($0, metadata: metadata[$0.id]))) })
+            var lengths: [UUID: Int] = [:]
+            var labels = base
+            // Each collision increases a suffix, up to the unique full UUID.
+            while true {
+                let collisions = Dictionary(grouping: workspace, by: { labels[$0.id]! }).values.filter { $0.count > 1 }
+                if collisions.isEmpty { break }
+                for group in collisions {
+                    for session in group {
+                        let length = min(36, lengths[session.id].map { $0 + 1 } ?? 8)
+                        lengths[session.id] = length
+                        labels[session.id] = concise(base[session.id]!, limit: 70 - length - 3) + " · " + shortID(session.id, length: length)
+                    }
+                }
+            }
+            result.merge(labels) { _, new in new }
+        }
+        return result
+    }
+
+    private static func usable(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let normalized = text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return normalized.isEmpty ? nil : String(normalized.prefix(4_096))
+    }
+    private static func concise(_ text: String, limit: Int = 70) -> String {
+        text.count <= limit ? text : String(text.prefix(limit - 1)) + "…"
+    }
+    private static func shortID(_ id: UUID, length: Int = 8) -> String {
+        String(id.uuidString.lowercased().prefix(length))
+    }
 }
 
 private struct MacWorkspacePreferences: Codable {

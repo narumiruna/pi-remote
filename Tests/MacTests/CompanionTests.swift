@@ -116,18 +116,21 @@ done
 file="$folder/$session.jsonl"
 if [ ! -f "$file" ]; then printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"; fi
 streaming=false
+name=null
 reply() { printf '{"id":"%s","type":"response","command":"%s","success":true,"data":%s}\n' "$id" "$command" "$1"; }
 while IFS= read -r line; do
     id=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
     command=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
     case "$command" in
-        get_state) reply "{\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"sessionId\":\"$session\",\"sessionFile\":\"$file\"}" ;;
+        get_state) reply "{\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"sessionId\":\"$session\",\"sessionFile\":\"$file\",\"sessionName\":$name}" ;;
+        # This fixture renames only to its UUID directory basename.
+        set_session_name) name=$(printf '%s' "$line" | /usr/bin/plutil -extract name raw -o - -); name="\"$name\""; printf '{"type":"session_info","name":%s}\n' "$name" >> "$file"; reply '{}' ;;
         get_available_models) reply '{"models":[]}' ;;
         get_available_thinking_levels) reply '{"levels":["off","low"]}' ;;
         get_commands) reply '{"commands":[{"name":"ask","source":"extension"}]}' ;;
         get_messages) if [ -f "$file.messages" ]; then IFS= read -r history < "$file.messages"; reply "{\"messages\":$history}"; else reply '{"messages":[]}'; fi ;;
-        switch_session) file=$(printf '%s' "$line" | /usr/bin/plutil -extract sessionPath raw -o - -); session=${file##*/}; session=${session%.jsonl}; streaming=false; reply '{"cancelled":false}' ;;
-        new_session) session=$(/usr/bin/uuidgen); file="$folder/$session.jsonl"; streaming=false; printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"; reply '{"cancelled":false}' ;;
+        switch_session) file=$(printf '%s' "$line" | /usr/bin/plutil -extract sessionPath raw -o - -); session=${file##*/}; session=${session%.jsonl}; streaming=false; name=null; reply '{"cancelled":false}' ;;
+        new_session) session=$(/usr/bin/uuidgen); file="$folder/$session.jsonl"; streaming=false; name=null; printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"; reply '{"cancelled":false}' ;;
         prompt)
             case "$line" in
                 *'/ask'*) pending=$id; printf '{"type":"extension_ui_request","id":"local-question","method":"confirm","title":"Test confirmation"}\n' ;;
@@ -175,6 +178,17 @@ done
             let first = try XCTUnwrap(model.state.selected)
             XCTAssertNil(model.fault)
             XCTAssertFalse(model.listening)
+            let initialSession = try XCTUnwrap(model.state.sessions.first { $0.id == first })
+            let originalTitle = initialSession.title
+            try await waitUntil { model.sessionDisplayMetadata[first] != nil }
+            XCTAssertTrue(model.displayName(for: initialSession).hasPrefix("Session · "))
+            _ = try await model.request(.rename(name: originalTitle))
+            try await waitUntil {
+                guard let session = model.state.sessions.first(where: { $0.id == first }) else { return false }
+                return model.displayName(for: session) == originalTitle
+            }
+            XCTAssertEqual(model.state.sessions.first { $0.id == first }?.title, originalTitle,
+                           "An explicit Pi name equal to the directory fallback still needs fresh display metadata")
             model.text = "Local before pairing"
             model.send(context: model.state.context)
             try await waitUntil { !model.sending && model.state.working && model.state.messages.last?.text == "Shared state" }
@@ -355,5 +369,76 @@ done
         do { try await model.addWorkspace(path: denied.path); XCTFail("Inaccessible folder must fail") }
         catch { XCTAssertEqual(error as? RemoteFault, .permissionDenied) }
         await model.shutdown()
+    }
+}
+
+final class SessionDisplayNameTests: XCTestCase {
+    @MainActor func testCompleteLiveTranscriptSuppliesInstructionWithoutRenaming() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.DisplayNameTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        let session = SessionInfo(id: UUID(), title: "workspace", directory: "/tmp/workspace")
+        model.state.sessions = [session]; model.state.selected = session.id
+        model.state.messages = [TranscriptMessage(role: "user", text: " \n "),
+                                TranscriptMessage(role: "user", text: " Fix\n session restoration ")]
+        XCTAssertEqual(model.displayName(for: session), "Fix session restoration")
+        XCTAssertEqual(model.state.sessions.first?.title, "workspace")
+        model.state.hasOlderMessages = true
+        XCTAssertTrue(model.displayName(for: session).hasPrefix("Session · "), "A bounded transcript must not invent the first instruction")
+        await model.shutdown()
+    }
+
+    func testNamingPrecedenceAndExplicitDirectoryName() {
+        let id = UUID()
+        var session = SessionInfo(id: id, title: "workspace", directory: "/tmp/workspace")
+        let hints = SessionDisplayMetadata(name: "Pi name", firstInstruction: "First instruction")
+        XCTAssertEqual(SessionDisplayName.full(session, metadata: hints), "Pi name")
+        session.title = "  Explicit\n title "
+        XCTAssertEqual(SessionDisplayName.full(session, metadata: hints), "Explicit title")
+        session.title = "workspace"
+        XCTAssertEqual(SessionDisplayName.full(session, metadata: SessionDisplayMetadata(name: "workspace", firstInstruction: "First instruction")), "workspace")
+        XCTAssertEqual(SessionDisplayName.full(session, metadata: SessionDisplayMetadata(firstInstruction: "  Fix\n tests  ")), "Fix tests")
+        XCTAssertEqual(SessionDisplayName.full(session, metadata: nil), "Session · " + id.uuidString.lowercased().prefix(8))
+        session.title = " \n "
+        XCTAssertEqual(SessionDisplayName.full(session, metadata: hints), "Pi name")
+    }
+
+    func testConciseNamesAndWorkspaceScopedCollisions() {
+        let first = SessionInfo(id: UUID(uuidString: "12345678-0000-0000-0000-000000000001")!, title: "Same", directory: "/tmp/one")
+        var second = SessionInfo(id: UUID(uuidString: "87654321-0000-0000-0000-000000000002")!, title: "Same", directory: "/tmp/one")
+        XCTAssertEqual(SessionDisplayName.resolve(first, sessions: [first, second], metadata: [:]), "Same · 12345678")
+        XCTAssertEqual(SessionDisplayName.resolve(second, sessions: [second, first], metadata: [:]), "Same · 87654321")
+        second.directory = "/tmp/two"
+        XCTAssertEqual(SessionDisplayName.resolve(first, sessions: [first, second], metadata: [:]), "Same")
+        var long = first
+        long.title = String(repeating: "界", count: 100)
+        XCTAssertEqual(SessionDisplayName.resolve(long, sessions: [long], metadata: [:]).count, 70)
+        XCTAssertEqual(SessionDisplayName.full(long, metadata: nil).count, 100)
+    }
+
+    func testGeneratedSuffixCannotCollideWithExplicitThirdTitle() {
+        let first = SessionInfo(id: UUID(uuidString: "12345678-0000-0000-0000-000000000001")!, title: "Same", directory: "/tmp/one")
+        let second = SessionInfo(id: UUID(uuidString: "87654321-0000-0000-0000-000000000002")!, title: "Same", directory: first.directory)
+        let third = SessionInfo(id: UUID(), title: "Same · 12345678", directory: first.directory)
+        let sessions = [first, second, third]
+        let labels = SessionDisplayName.labels(sessions: sessions, metadata: [:])
+        XCTAssertEqual(Set(labels.values).count, 3)
+        XCTAssertEqual(labels, SessionDisplayName.labels(sessions: Array(sessions.reversed()), metadata: [:]))
+        XCTAssertTrue(labels.values.allSatisfy { $0.count <= 70 })
+        XCTAssertEqual(Set(labels.keys), Set(sessions.map(\.id)))
+    }
+
+    func testTruncationCollisionsAndStablePrefixCollisions() {
+        let first = SessionInfo(id: UUID(uuidString: "12345678-1000-0000-0000-000000000001")!, title: String(repeating: "a", count: 80), directory: "/tmp/one")
+        var second = SessionInfo(id: UUID(uuidString: "12345678-2000-0000-0000-000000000002")!, title: first.title + "b", directory: first.directory)
+        let left = SessionDisplayName.resolve(first, sessions: [first, second], metadata: [:])
+        let right = SessionDisplayName.resolve(second, sessions: [first, second], metadata: [:])
+        XCTAssertNotEqual(left, right)
+        XCTAssertLessThanOrEqual(left.count, 70)
+        XCTAssertLessThanOrEqual(right.count, 70)
+        second.title = "Unique"
+        XCTAssertFalse(SessionDisplayName.resolve(first, sessions: [first, second], metadata: [:]).contains(" · "))
     }
 }
