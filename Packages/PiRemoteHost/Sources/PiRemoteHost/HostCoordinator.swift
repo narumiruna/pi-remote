@@ -271,7 +271,7 @@ public actor HostCoordinator {
                 }
             } else { fault = .unavailable }
             if request.action.mutates {
-                if fault == .unknownOutcome { unresolvedQuitOutcome = true }
+                if fault == .unknownOutcome || fault == .storageFailure { unresolvedQuitOutcome = true }
                 journal.finish(device: device, request: request, fault: fault)
                 do { try saveJournal() }
                 catch {

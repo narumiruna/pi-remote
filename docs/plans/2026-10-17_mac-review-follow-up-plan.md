@@ -121,6 +121,13 @@ PR #7 startup correction:
 - Command: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac -destination 'platform=macOS,arch=arm64' -derivedDataPath /tmp/pi-remote-review-main CODE_SIGNING_ALLOWED=NO -only-testing:PiRemoteMacTests/CompanionTests -resultBundlePath /tmp/pi-remote-pr7-model-final.xcresult test`.
 - The unsigned Mac build passes with the same scheme, destination and derived-data path; log `/tmp/pi-remote-pr7-mac-build.log`. Earlier full-suite, root, sanitizer and phone checkpoints above were not rerun for this Mac-only correction. The live acceptance checks remain open. See the [review ledger](../reviews/2026-10-17_pr-7-review.md).
 
+PR #7 storage-failure correction:
+
+- Review R4 found that a successful Pi mutation followed by `.storageFailure` did not retain Quit consent. The corrected Rename fixture reproduces this on the original code in `/tmp/pi-remote-pr7-storage-before-2.log`. Its first attempt used an unsupported top-level `plutil` JSON conversion; `/tmp/pi-remote-pr7-storage-before.log` records that harness failure, not product evidence.
+- The host now retains `.storageFailure` for admitted mutations, as it does for `.unknownOutcome`. A later read error cannot clear consent. Successful explicit Stop/lifecycle recovery still clears the flag. Read-only failures do not set it.
+- All 169 root tests, 20 focused host tests normally and with Thread Sanitizer, and 23 focused Mac model/delegate tests pass. The unsigned Mac build passes. Logs: `/tmp/pi-remote-pr7-storage-{root,host,tsan,model}-final.log`, `/tmp/pi-remote-pr7-storage-mac-build.log`; Mac result bundle: `/tmp/pi-remote-pr7-storage-model-final.xcresult`.
+- The new host test covers confirmed Quit and successful Stop/Close recovery after a catalog write failure. It checks that Pi accepted the rename, Quit requires consent, an unrelated read error cannot hide uncertainty and unconfirmed Quit is rejected. Exact commands and outcomes are in the [review ledger](../reviews/2026-10-17_pr-7-review.md). Phone and full presentation checks were not repeated for this host-only correction. The live acceptance checks remain open.
+
 Failure record and limits:
 
 - The first Quit fixture lacked `new_session` support; the changed-session test failed with incompatiblePi. The fixture now implements that core reply and the full Mac suite passes.

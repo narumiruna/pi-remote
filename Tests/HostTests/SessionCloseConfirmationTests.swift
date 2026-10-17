@@ -18,7 +18,7 @@ private struct CloseConfirmationFixture {
         let script = #"""
         #!/bin/sh
         if [ "${1:-}" = --version ]; then printf '1.3.0\n'; exit 0; fi
-        root='ROOT'; streaming=false; file=''
+        root='ROOT'; streaming=false; file=''; name=null
         printf '%s\n' "$$" >> "$root/pids"
         while [ "$#" -gt 0 ]; do
           case "$1" in
@@ -35,10 +35,15 @@ private struct CloseConfirmationFixture {
           command=$(printf '%s' "$line" | /usr/bin/plutil -extract type raw -o - -)
           printf '%s\n' "$command" >> "$root/commands"
           case "$command" in
-            get_state) reply "{\"sessionId\":\"$session\",\"sessionFile\":\"$file\",\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"model\":{\"provider\":\"test\",\"id\":\"fixture\"},\"thinkingLevel\":\"off\",\"steeringMode\":\"one-at-a-time\",\"followUpMode\":\"one-at-a-time\",\"autoCompactionEnabled\":false}" ;;
+            get_state) reply "{\"sessionId\":\"$session\",\"sessionFile\":\"$file\",\"sessionName\":$name,\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"model\":{\"provider\":\"test\",\"id\":\"fixture\"},\"thinkingLevel\":\"off\",\"steeringMode\":\"one-at-a-time\",\"followUpMode\":\"one-at-a-time\",\"autoCompactionEnabled\":false}" ;;
             get_available_models) reply '{"models":[{"provider":"test","id":"fixture","name":"Fixture"}]}' ;;
             get_available_thinking_levels) reply '{"levels":["off"]}' ;;
             get_commands) reply '{"commands":[{"name":"fixture","source":"extension","description":"Fixture"}]}' ;;
+            set_session_name)
+              name=$(printf '%s' "$line" | /usr/bin/plutil -extract name raw -o - -)
+              printf '%s\n' "$name" > "$root/accepted-name"
+              name="\"$name\""
+              reply '{}' ;;
             get_messages) reply '{"messages":[]}' ;;
             get_last_assistant_text)
               if [ -f "$root/hold-read" ]; then
@@ -563,6 +568,49 @@ func quitConfirmationRequiresConsentForIdleUnknownOutcome(reviewWithStop: Bool) 
         try await f.host.reserveShutdown(confirmation: reviewed, confirmed: false)
         try await f.cleanup()
     } catch { try? await f.cleanup(pending: request); throw error }
+}
+
+@Test(arguments: ["stop", "close", "quit"])
+func quitConfirmationRetainsMutatingStorageFailureAfterSuccessfulRename(recovery: String) async throws {
+    let f = try await CloseConfirmationFixture()
+    do {
+        #expect(await f.send(.createSession(directory: f.directory)) == .ok)
+        let before = await f.host.state()
+        let catalog = f.root.appendingPathComponent("support/sessions.json")
+        let backup = f.root.appendingPathComponent("sessions-backup.json")
+        try FileManager.default.moveItem(at: catalog, to: backup)
+        try FileManager.default.createDirectory(at: catalog, withIntermediateDirectories: false)
+        #expect(await f.send(.rename(name: "Accepted rename")) == .failure(.storageFailure))
+        let accepted = try String(contentsOf: f.root.appendingPathComponent("accepted-name"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(accepted == "Accepted rename")
+        #expect(try f.calls("set_session_name") == 1)
+        let failed = await f.host.state()
+        #expect(failed.context == before.context)
+        #expect(failed.phase == "idle")
+        #expect(failed.error == .storageFailure)
+        let uncertain = try await f.host.quitConfirmation()
+        #expect(uncertain.requiresConfirmation)
+        // Restore only fixture storage. This must not clear unresolved consent.
+        try FileManager.default.removeItem(at: catalog)
+        try FileManager.default.moveItem(at: backup, to: catalog)
+        guard uncertain.requiresConfirmation else { try await f.cleanup(); return }
+        await #expect(throws: RemoteFault.busy) {
+            try await f.host.reserveShutdown(confirmation: uncertain, confirmed: false)
+        }
+        #expect(await f.send(.outputImage(id: UUID())) == .failure(.expired))
+        #expect(await f.host.state().error == .expired)
+        let afterRead = try await f.host.quitConfirmation()
+        #expect(afterRead.requiresConfirmation)
+        if recovery == "quit" {
+            try await f.host.reserveShutdown(confirmation: afterRead, confirmed: true)
+        } else {
+            #expect(await f.send(recovery == "stop" ? .stop : .closeSession) == .ok)
+            let reviewed = try await f.host.quitConfirmation()
+            #expect(!reviewed.requiresConfirmation)
+            try await f.host.reserveShutdown(confirmation: reviewed, confirmed: false)
+        }
+        try await f.cleanup()
+    } catch { try? await f.cleanup(); throw error }
 }
 
 @Test func quitConfirmationDoesNotTreatAnIdleReadAsStateChangingWork() async throws {
