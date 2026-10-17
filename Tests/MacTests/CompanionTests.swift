@@ -218,6 +218,68 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         await restored.shutdown(); await model.shutdown()
     }
 
+    func testCloseReceiptRejectsAnAlreadyObservedSameSessionReactivation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.CloseReceipt." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        let session = SessionInfo(id: UUID(), title: "Reactivated", directory: "/tmp/close-receipt")
+        model.state.sessions = [session]; model.state.selected = session.id
+        model.state.sequence = 10
+        let context = model.state.context
+        var closed = model.state; closed.selected = nil; closed.sequence = 11
+        model.state.sequence = 12
+        model.destination = .session(session.id); model.text = "Keep draft"
+        XCTAssertThrowsError(try model.finishSessionClose(session.id, context: context, receipt: closed)) {
+            XCTAssertEqual($0 as? RemoteFault, .conflict)
+        }
+        XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+        XCTAssertEqual(model.workspaces.first?.sessions, [session])
+        XCTAssertNil(defaults.data(forKey: "closedSessionIDs"))
+        XCTAssertEqual(model.text, "Keep draft")
+        XCTAssertEqual(model.destination, .session(session.id))
+        await model.shutdown()
+    }
+
+    func testLaterActivationRevealsClosedSessionButStaleSnapshotsDoNot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.CloseReceipt." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let session = SessionInfo(id: UUID(), title: "Reopen remotely", directory: "/tmp/close-receipt")
+        let draft = try JSONEncoder().encode([session.id: "Saved draft"])
+        defaults.set(draft, forKey: "sessionDrafts")
+        let model = CompanionModel(support: root, secrets: MemorySecrets(), defaults: defaults)
+        model.state.sessions = [session]; model.state.selected = session.id; model.state.sequence = 10
+        let old = model.state
+        var closed = old; closed.selected = nil; closed.sequence = 12
+        try model.finishSessionClose(session.id, context: old.context, receipt: closed)
+        XCTAssertTrue(model.closedSessionIDs.contains(session.id))
+        var stale = old; stale.sequence = 11
+        model.state = stale
+        XCTAssertTrue(model.closedSessionIDs.contains(session.id), "A delayed pre-close snapshot is not a new activation")
+        model.state = closed
+        model.removeWorkspace(session.directory)
+        var reopened = old; reopened.sequence = 13; reopened.phase = "working"
+        model.state = reopened
+        XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+        XCTAssertFalse(model.hiddenWorkspaces.contains(session.directory))
+        XCTAssertTrue(model.expandedWorkspaces.contains(session.directory))
+        XCTAssertEqual(model.workspaces.first?.sessions, [session])
+        XCTAssertEqual(model.state.sessions, [session])
+        XCTAssertEqual(defaults.data(forKey: "sessionDrafts"), draft)
+        let visibility = try JSONSerialization.jsonObject(with: try XCTUnwrap(defaults.data(forKey: "closedSessionIDs"))) as? [String: Any]
+        XCTAssertEqual((visibility?["closed"] as? [String])?.count, 0)
+        // A new host epoch can start its sequence again without being stale.
+        model.state = closed
+        try model.finishSessionClose(session.id, context: old.context, receipt: closed)
+        reopened.epoch = UUID(); reopened.sequence = 1
+        model.state = reopened
+        XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+        await model.shutdown()
+    }
+
     func testCorruptAndUnknownVisibilityPreferencesRemainUntouched() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "PiRemote.VisibilityTests." + UUID().uuidString
@@ -250,9 +312,8 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         XCTAssertTrue(model.closeSessionRequiresConfirmation(session.id))
         let unconfirmed = await model.closeSession(session.id)
         XCTAssertFalse(unconfirmed)
-        var stale = model.state.context; stale.epoch = UUID()
-        let staleClose = await model.closeSession(session.id, confirmedContext: stale)
-        XCTAssertFalse(staleClose)
+        let invalidConfirmation = await model.prepareSessionClose(session.id)
+        XCTAssertNil(invalidConfirmation, "A synthetic or stale context must not create a host token")
         XCTAssertEqual(model.fault, .conflict)
         model.sending = true
         XCTAssertNotNil(model.closeSessionDisabledReason(session.id))
@@ -583,10 +644,24 @@ done
             let unconfirmedClose = await model.closeSession(second)
             XCTAssertFalse(unconfirmedClose)
             XCTAssertTrue(model.state.working)
-            let confirmed = model.state.context
-            let stopAndClose = Task { await model.closeSession(second, confirmedContext: confirmed) }
+            let oldConfirmation = await model.prepareSessionClose(second)
+            let staleRun = try XCTUnwrap(oldConfirmation)
+            _ = try await client.request(.snapshot)
+            _ = try await client.request(.stop)
+            _ = try await client.request(.prompt(text: "New remote run in the same session", delivery: .prompt, image: nil))
+            try await waitUntil { model.state.selected == second && model.state.working }
+            let staleRunClose = await model.closeSession(second, confirmation: staleRun)
+            XCTAssertFalse(staleRunClose, "The previous run's confirmation must not stop new remote work")
+            XCTAssertEqual(model.fault, .conflict)
+            XCTAssertFalse(model.closedSessionIDs.contains(second))
+            let stillWorking = await host.state()
+            XCTAssertEqual(stillWorking.selected, second)
+            XCTAssertTrue(stillWorking.working)
+            let currentConfirmation = await model.prepareSessionClose(second)
+            let confirmed = try XCTUnwrap(currentConfirmation)
+            let stopAndClose = Task { await model.closeSession(second, confirmation: confirmed) }
             try await waitUntil { model.closingSession == second }
-            let duplicate = await model.closeSession(second, confirmedContext: confirmed)
+            let duplicate = await model.closeSession(second, confirmation: confirmed)
             XCTAssertFalse(duplicate)
             let stoppedAndClosed = await stopAndClose.value
             XCTAssertTrue(stoppedAndClosed)

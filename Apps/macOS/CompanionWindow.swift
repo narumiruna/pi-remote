@@ -1,5 +1,6 @@
 import AppKit
 import PiRemoteCore
+import PiRemoteHost
 import SwiftUI
 
 struct CompanionWindow: View {
@@ -11,7 +12,7 @@ struct CompanionWindow: View {
     @State private var removingWorkspace: String?
     @State private var remoteDetailsVisible = false
     @State private var renamingSession: UUID?
-    @State private var closingSession: (id: UUID, context: SessionContext)?
+    @State private var closingSession: LocalCloseConfirmation?
     @State private var hoveredSession: UUID?
     @State private var sheetFocusTarget: NSView?
 
@@ -67,8 +68,8 @@ struct CompanionWindow: View {
             get: { closingSession != nil }, set: { if !$0 { closingSession = nil } }
         )) {
             Button("Stop and Close", role: .destructive) {
-                if let target = closingSession {
-                    Task { await model.closeSession(target.id, confirmedContext: target.context) }
+                if let target = closingSession, let id = target.context.session {
+                    Task { await model.closeSession(id, confirmation: target) }
                 }
                 closingSession = nil
             }.accessibilityIdentifier("mac-session-stop-and-close")
@@ -281,7 +282,9 @@ struct CompanionWindow: View {
     private func beginClose(_ id: UUID) {
         guard model.closeSessionDisabledReason(id) == nil else { return }
         if model.closeSessionRequiresConfirmation(id) {
-            closingSession = (id, model.state.context)
+            Task {
+                if let confirmation = await model.prepareSessionClose(id) { closingSession = confirmation }
+            }
         } else {
             Task { await model.closeSession(id) }
         }

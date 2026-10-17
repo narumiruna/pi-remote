@@ -61,7 +61,7 @@ Clean setup evidence: two Mac-model tests pass with new private support storage 
 
 ## Mac session management
 
-Use **Close Session** on a session row, in its context menu or with Command-Shift-W. This closes the chosen session, not its workspace, and keeps saved history and the draft. A working session requires **Stop and Close** confirmation; stopping cannot undo file changes. A failed or uncertain close does not hide the session. Reopen closed sessions explicitly through `/resume` or **Switch session**.
+Use **Close Session** on a session row, in its context menu or with Command-Shift-W. This closes the chosen session, not its workspace, and keeps saved history and the draft. A working session requires **Stop and Close** confirmation; stopping cannot undo file changes. A failed or uncertain close does not hide the session. Stop and Close applies only to the work captured before the dialog; changed work requires a new confirmation. Reopen closed sessions explicitly through `/resume` or **Switch session**. A later remote activation also restores that session to the sidebar.
 
 **Overview** groups saved sessions by workspace and distinguishes loaded execution from saved or closed history. Command-Shift-O opens the searchable session switcher. Command-Shift-P opens the native action palette. Search does not execute an action; choose a result explicitly. Return opens the selected search result, and Escape dismisses the picker. The palette preserves the message draft.
 

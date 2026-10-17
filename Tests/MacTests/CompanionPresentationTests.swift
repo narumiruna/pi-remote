@@ -82,6 +82,73 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
         await model.shutdown()
     }
 
+    private func waitForPresentationState(_ condition: () -> Bool) async throws {
+        for _ in 0..<200 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTFail("Timed out waiting for host state")
+        throw RemoteFault.unavailable
+    }
+
+    private func withWorkingCloseModel(_ body: (CompanionModel, UUID) async throws -> Void) async throws {
+        let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let suite = "PiRemote.WorkingClosePresentation." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("fake-pi")
+        // The private JSONL child stays working until a real host Stop arrives.
+        // It uses no provider, credentials or network listener.
+        let script = #"""
+#!/bin/sh
+if [ "${1:-}" = --version ]; then printf '1.3.0\n'; exit 0; fi
+folder=''; session=''
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --session-dir) folder=$2; shift 2 ;;
+        --session-id) session=$2; shift 2 ;;
+        *) shift ;;
+    esac
+done
+file="$folder/$session.jsonl"
+printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+streaming=false
+reply() { printf '{"id":"%s","type":"response","command":"%s","success":true,"data":%s}\n' "$id" "$command" "$1"; }
+while IFS= read -r line; do
+    id=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+    command=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"type":"\([^"]*\)".*/\1/p')
+    case "$command" in
+        get_state) reply "{\"isStreaming\":$streaming,\"isCompacting\":false,\"pendingMessageCount\":0,\"sessionId\":\"$session\",\"sessionFile\":\"$file\"}" ;;
+        get_available_models) reply '{"models":[]}' ;;
+        get_available_thinking_levels) reply '{"levels":["off"]}' ;;
+        get_commands) reply '{"commands":[]}' ;;
+        get_messages) reply '{"messages":[]}' ;;
+        prompt) streaming=true; reply '{"disposition":"started"}'; printf '{"type":"agent_start"}\n' ;;
+        abort) streaming=false; reply '{}'; printf '{"type":"agent_settled"}\n' ;;
+        *) reply '{}' ;;
+    esac
+done
+"""#
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let model = CompanionModel(support: root.appendingPathComponent("support"), secrets: PresentationSecrets(), defaults: defaults)
+        XCTAssertNil(model.startupError)
+        do {
+            let host = try XCTUnwrap(model.coordinator)
+            try await host.setExecutable(executable)
+            let directory = try await host.directories.register(root)
+            model.observe()
+            _ = try await model.request(.createSession(directory: directory))
+            try await waitForPresentationState { model.state.selected != nil && !model.state.working }
+            _ = try await model.request(.prompt(text: "Hold fixture work", delivery: .prompt, image: nil))
+            try await waitForPresentationState { model.state.working && model.state.phase == "working" }
+            XCTAssertFalse(model.listening)
+            try await body(model, directory)
+        } catch { await model.shutdown(); throw error }
+        await model.shutdown()
+    }
+
     func testSavedInstructionsNameDuplicateSessionsWithoutActivatingPi() async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
         let project = root.appendingPathComponent("pi-remote"), support = root.appendingPathComponent("support")
@@ -372,11 +439,8 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
     }
 
     func testManagementWorkingCloseCancelAndStaleConfirmationKeepVisibility() async throws {
-        try await withModel { model in
-            let session = SessionInfo(id: UUID(), title: "Working close fixture", directory: "/tmp/management-working")
-            let other = SessionInfo(id: UUID(), title: "Different active work", directory: session.directory)
-            model.state.sessions = [session, other]
-            model.state.selected = session.id; model.state.phase = "working"
+        try await withWorkingCloseModel { model, directory in
+            let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
             model.destination = .session(session.id); model.expandedWorkspaces = [session.directory]
             model.text = "Keep draft after cancellation"
             try await capture(CompanionWindow(model: model), name: "management-working-cancel-900", width: 900, height: 600) { host, window in
@@ -391,14 +455,41 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
                 XCTAssertEqual(model.state.phase, "working")
                 XCTAssertEqual(model.text, "Keep draft after cancellation")
                 XCTAssertTrue(model.closedSessionIDs.isEmpty)
+                let afterCancel = await model.coordinator?.state()
+                XCTAssertEqual(afterCancel?.selected, session.id)
+                XCTAssertEqual(afterCancel?.phase, "working", "Native Cancel must leave the real child working")
 
                 try await self.press("mac-session-close-" + session.id.uuidString, in: host)
-                model.state.selected = other.id
-                try await Task.sleep(for: .milliseconds(150))
+                let originalContext = model.state.context
+                _ = try await model.request(.stop)
+                try await self.waitForPresentationState { !model.state.working }
+                _ = try await model.request(.prompt(text: "New run in the same session", delivery: .prompt, image: nil))
+                try await self.waitForPresentationState { model.state.working && model.state.phase == "working" }
+                XCTAssertEqual(model.state.context, originalContext, "Only the run changes while confirmation is open")
+                let newerRunDialog = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
+                try await self.press("mac-session-stop-and-close", in: newerRunDialog, title: "Stop and Close")
+                XCTAssertEqual(model.fault, .conflict, "The old confirmation must not stop a newer run")
+                XCTAssertEqual(model.state.selected, session.id)
+                XCTAssertEqual(model.state.phase, "working")
+                XCTAssertTrue(model.closedSessionIDs.isEmpty)
+                let running = await model.coordinator?.state()
+                XCTAssertEqual(running?.selected, session.id)
+                XCTAssertEqual(running?.phase, "working", "Rejection must leave the real child working")
+
+                try await self.press("mac-session-close-" + session.id.uuidString, in: host)
+                _ = try await model.request(.stop)
+                try await self.waitForPresentationState { !model.state.working }
+                _ = try await model.request(.closeSession)
+                try await self.waitForPresentationState { model.state.selected == nil }
+                _ = try await model.request(.createSession(directory: directory))
+                try await self.waitForPresentationState { model.state.selected != nil && model.state.selected != session.id }
+                let other = try XCTUnwrap(model.state.selected)
+                _ = try await model.request(.prompt(text: "Different session work", delivery: .prompt, image: nil))
+                try await self.waitForPresentationState { model.state.working && model.state.phase == "working" }
                 let staleDialog = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
                 try await self.press("mac-session-stop-and-close", in: staleDialog, title: "Stop and Close")
                 XCTAssertEqual(model.fault, .conflict, "Confirmation must retain the original runtime context")
-                XCTAssertEqual(model.state.selected, other.id)
+                XCTAssertEqual(model.state.selected, other)
                 XCTAssertEqual(model.state.phase, "working")
                 XCTAssertTrue(model.closedSessionIDs.isEmpty, "A stale confirmation must hide neither session")
             }
