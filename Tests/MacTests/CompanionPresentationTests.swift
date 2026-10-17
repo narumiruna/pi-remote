@@ -200,7 +200,15 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
             if identifier.hasPrefix("session-command-"), identifier != "session-command-error" {
                 return label.hasPrefix("/" + identifier.replacingOccurrences(of: "session-command-", with: "") + ",")
             }
+            if identifier.hasPrefix("mac-session-close-") {
+                let sessionID = identifier.replacingOccurrences(of: "mac-session-close-", with: "mac-session-")
+                return node.accessibilityIdentifier() == sessionID && label == "Close Session"
+            }
             switch identifier {
+            case "mac-session-overview": return value == "Sessions"
+            case "mac-resume-open": return label == "Open selected session"
+            case "mac-session-search":
+                return (node.object as? NSTextField)?.placeholderString == "Search sessions, workspaces, paths or IDs"
             case "session-commands-form": return label == "Commands, skills, and templates"
             case "session-commands-empty": return value == "No commands are available for this session."
             case "session-command-error": return value == RemoteFault.unsupportedFeature.explanation
@@ -266,6 +274,323 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
         window.sendEvent(event)
         window.makeFirstResponder(nil)
         XCTAssertEqual(field.stringValue, text)
+    }
+
+    // These hosted fixtures do not start a provider or prove normal-launch,
+    // desktop permissions, VoiceOver speech or signed-app behavior.
+    private func managementKey(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = [], in window: NSWindow) async throws {
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code))
+        if !modifiers.contains(.command) || !window.performKeyEquivalent(with: event) { window.sendEvent(event) }
+        try await Task.sleep(for: .milliseconds(180))
+        window.contentView?.layoutSubtreeIfNeeded()
+    }
+
+    private func managementClick(_ point: NSPoint, in window: NSWindow) async throws {
+        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime + 0.01, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+        // Native outline rows can track inside mouseDown until mouseUp arrives.
+        NSApp.postEvent(up, atStart: true)
+        window.sendEvent(down)
+        try await Task.sleep(for: .milliseconds(180))
+    }
+
+    private func managementDump(_ root: NSView, name: String) throws {
+        let dump = accessibilityElements(in: root).map {
+            "\(type(of: $0.object)) id=\($0.accessibilityIdentifier() ?? "") label=\($0.value("accessibilityLabel") ?? "") value=\($0.value("accessibilityValue") ?? "")"
+        }.joined(separator: "\n")
+        try dump.write(to: URL(fileURLWithPath: "/tmp/pi-remote-mac-ux-captures/management-" + name + "-sheet-accessibility.txt"), atomically: true, encoding: .utf8)
+    }
+
+    private func managementDialogRoots(_ window: NSWindow) -> [NSView] {
+        window.sheets.compactMap(\.contentView) + (window.childWindows ?? []).compactMap(\.contentView)
+            + NSApp.windows.filter { $0 !== window }.compactMap(\.contentView)
+            + [window.contentView].compactMap { $0 }
+    }
+
+    func testManagementNativeRowCloseKeepsWorkspaceCatalogAndDraftAtBothSizes() async throws {
+        try await withModel { model in
+            for (width, height) in [(900, 600), (1300, 800)] {
+                let session = SessionInfo(id: UUID(), title: "Close only this session", directory: "/tmp/management-workspace")
+                model.state.sessions = [session]
+                model.state.selected = nil
+                model.destination = .session(session.id)
+                model.expandedWorkspaces = [session.directory]
+                model.text = "Retain this unsent instruction"
+                let context = model.state.context
+                try await capture(CompanionWindow(model: model), name: "management-row-close-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
+                    try await self.press("mac-session-close-" + session.id.uuidString, in: host)
+                    XCTAssertTrue(model.closedSessionIDs.contains(session.id))
+                    XCTAssertEqual(model.destination, .workspace(session.directory), "Close must not select another session")
+                    XCTAssertEqual(model.state.sessions, [session], "Close must not delete saved history metadata")
+                    XCTAssertEqual(model.state.context, context, "Closing an unloaded session must not change the runtime")
+                    XCTAssertEqual(model.text, "Retain this unsent instruction")
+                    XCTAssertFalse(model.hiddenWorkspaces.contains(session.directory), "Session close must not remove its workspace")
+                    let workspace = try XCTUnwrap(model.workspaces.first { $0.directory == session.directory })
+                    XCTAssertTrue(workspace.sessions.isEmpty, "The workspace must remain when every session is closed")
+                    XCTAssertNil(model.closingSession)
+                }
+            }
+        }
+    }
+
+    func testManagementNativePointerCloseDoesNotSelectRowOrRemoveWorkspace() async throws {
+        try await withModel { model in
+            let active = SessionInfo(id: UUID(), title: "Keep active work", directory: "/tmp/management-pointer")
+            let saved = SessionInfo(id: UUID(), title: "Close this saved row", directory: active.directory)
+            model.state.sessions = [active, saved]; model.state.selected = active.id; model.state.phase = "working"
+            model.destination = .session(active.id); model.expandedWorkspaces = [active.directory]
+            try await capture(CompanionWindow(model: model), name: "management-native-pointer-1300", width: 1300, height: 800) { host, window in
+                let activeClose = try self.element("mac-session-close-" + active.id.uuidString, in: host)
+                let activeFrame = try XCTUnwrap(activeClose.frame())
+                let savedRow = try self.element("mac-session-" + saved.id.uuidString, in: host)
+                let savedFrame = try XCTUnwrap(savedRow.frame())
+                // Opacity-hidden controls can be absent from AX. Use the same
+                // close column and the saved row title to locate their area.
+                let point = window.convertPoint(fromScreen: NSPoint(x: activeFrame.midX, y: savedFrame.midY))
+                try await self.managementClick(point, in: window)
+                XCTAssertFalse(model.closedSessionIDs.contains(saved.id), "An invisible close control must not receive pointer input")
+                model.destination = .session(saved.id)
+                try await Task.sleep(for: .milliseconds(180))
+                let visible = try self.element("mac-session-close-" + saved.id.uuidString, in: host)
+                let visibleFrame = try XCTUnwrap(visible.frame())
+                let visiblePoint = window.convertPoint(fromScreen: NSPoint(x: visibleFrame.midX, y: visibleFrame.midY))
+                try await self.managementClick(visiblePoint, in: window)
+                XCTAssertTrue(model.closedSessionIDs.contains(saved.id), "Native pointer input must activate the visible row close button")
+                XCTAssertEqual(model.destination, .workspace(saved.directory), "The close click must not bubble to session selection")
+                XCTAssertEqual(model.state.selected, active.id)
+                XCTAssertEqual(model.state.phase, "working")
+                XCTAssertFalse(model.hiddenWorkspaces.contains(saved.directory))
+                XCTAssertEqual(model.state.sessions.count, 2)
+            }
+        }
+    }
+
+    func testManagementWorkingCloseCancelAndStaleConfirmationKeepVisibility() async throws {
+        try await withModel { model in
+            let session = SessionInfo(id: UUID(), title: "Working close fixture", directory: "/tmp/management-working")
+            let other = SessionInfo(id: UUID(), title: "Different active work", directory: session.directory)
+            model.state.sessions = [session, other]
+            model.state.selected = session.id; model.state.phase = "working"
+            model.destination = .session(session.id); model.expandedWorkspaces = [session.directory]
+            model.text = "Keep draft after cancellation"
+            try await capture(CompanionWindow(model: model), name: "management-working-cancel-900", width: 900, height: 600) { host, window in
+                try await self.press("mac-session-close-" + session.id.uuidString, in: host)
+                let dialog = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
+                try self.managementDump(dialog, name: "working-confirmation")
+                XCTAssertTrue(self.hasLabel("Stop clears queued instructions and waits for Pi to become idle before closing this session. File changes cannot be undone. Saved history and the draft are kept.", in: dialog))
+                XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+                XCTAssertNil(model.closingSession, "Opening confirmation must not send Stop")
+                try await self.press("management-cancel", in: dialog, title: "Cancel")
+                XCTAssertEqual(model.state.selected, session.id)
+                XCTAssertEqual(model.state.phase, "working")
+                XCTAssertEqual(model.text, "Keep draft after cancellation")
+                XCTAssertTrue(model.closedSessionIDs.isEmpty)
+
+                try await self.press("mac-session-close-" + session.id.uuidString, in: host)
+                model.state.selected = other.id
+                try await Task.sleep(for: .milliseconds(150))
+                let staleDialog = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
+                try await self.press("mac-session-stop-and-close", in: staleDialog, title: "Stop and Close")
+                XCTAssertEqual(model.fault, .conflict, "Confirmation must retain the original runtime context")
+                XCTAssertEqual(model.state.selected, other.id)
+                XCTAssertEqual(model.state.phase, "working")
+                XCTAssertTrue(model.closedSessionIDs.isEmpty, "A stale confirmation must hide neither session")
+            }
+        }
+    }
+
+    func testManagementOverviewShowsTruthfulRuntimeAndClosedOnlyStates() async throws {
+        try await withModel { model in
+            let active = SessionInfo(id: UUID(), title: "Runtime fixture", directory: "/tmp/management-overview")
+            let saved = SessionInfo(id: UUID(), title: "Unloaded fixture", directory: active.directory, interrupted: true)
+            model.state.sessions = [active, saved]; model.destination = .overview
+            model.state.selected = active.id
+            for (phase, expected) in [("idle", "Idle"), ("working", "Working"), ("waiting", "Waiting for input"),
+                                      ("starting", "Starting"), ("stopping", "Stopping"), ("recovering", "Status uncertain"),
+                                      ("retrying", "Retrying"), ("compacting", "Compacting"), ("future-phase", "Unknown"),
+                                      ("interrupted", "Interrupted · review required"), ("unavailable", "Unavailable")] {
+                model.state.phase = phase
+                try await capture(CompanionWindow(model: model), name: "management-overview-\(phase)-900", width: 900, height: 600) { host, _ in
+                    _ = try self.element("mac-session-overview", in: host)
+                    XCTAssertTrue(self.hasLabel(expected, in: host))
+                    XCTAssertTrue(self.hasLabel("Saved · Not loaded · Interrupted", in: host), "Unloaded history must not be labelled Idle")
+                }
+            }
+            model.state.phase = "waiting"
+            model.state.dialogs = [ExtensionDialog(id: "management-question", method: "confirm", title: "Question", message: "Proceed?", options: [], text: "", expires: nil)]
+            try await capture(CompanionWindow(model: model), name: "management-overview-waiting-900", width: 900, height: 600) { host, _ in
+                XCTAssertTrue(self.hasLabel("Waiting for input", in: host))
+            }
+            model.state.dialogs = []; model.state.phase = "idle"; model.state.error = .unavailable
+            try await capture(CompanionWindow(model: model), name: "management-overview-error-900", width: 900, height: 600) { host, _ in
+                XCTAssertTrue(self.hasLabel("Idle · Error", in: host))
+            }
+            model.state.selected = nil; model.state.error = nil
+            let closedActive = await model.closeSession(active.id)
+            let closedSaved = await model.closeSession(saved.id)
+            XCTAssertTrue(closedActive); XCTAssertTrue(closedSaved)
+            for (width, height) in [(900, 600), (1300, 800)] {
+                try await capture(CompanionWindow(model: model), name: "management-overview-closed-only-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
+                    _ = try self.element("mac-session-overview", in: host)
+                    XCTAssertTrue(self.hasLabel("Saved · Closed", in: host))
+                    XCTAssertTrue(self.hasLabel("Saved · Closed · Interrupted", in: host))
+                    XCTAssertFalse(self.hasLabel("Idle", in: host))
+                    XCTAssertEqual(model.state.sessions.count, 2)
+                    XCTAssertNil(model.state.selected)
+                }
+            }
+            model.state.sessions = []
+            try await capture(CompanionWindow(model: model), name: "management-overview-empty-900", width: 900, height: 600) { host, _ in
+                XCTAssertTrue(self.hasLabel("No saved sessions. Add a workspace, then use New session.", in: host))
+            }
+        }
+    }
+
+    func testManagementSavedPickerSearchIncludesClosedAndNeverActivatesWhileFiltering() async throws {
+        try await withModel { model in
+            let directory = "/tmp/management/" + String(repeating: "long-workspace/", count: 8)
+            let first = SessionInfo(id: UUID(), title: "Duplicate title", directory: directory, updated: Date(timeIntervalSince1970: 20))
+            let second = SessionInfo(id: UUID(), title: "Duplicate title", directory: directory, updated: Date(timeIntervalSince1970: 10))
+            model.state.sessions = [first, second]
+            let closed = await model.closeSession(second.id)
+            XCTAssertTrue(closed)
+            model.text = "Picker must preserve this draft"
+            let context = model.state.context
+            for (width, height) in [(900, 600), (1300, 800)] {
+                model.panel = "resume"
+                try await capture(CompanionWindow(model: model), name: "management-switcher-initial-\(width)", width: CGFloat(width), height: CGFloat(height), sheet: true)
+                try await capture(CompanionWindow(model: model), name: "management-switcher-search-\(width)", width: CGFloat(width), height: CGFloat(height), sheet: true) { _, window in
+                    let host = try XCTUnwrap(window.sheets.first?.contentView)
+                    try self.managementDump(host, name: "switcher-\(width)")
+                    _ = try self.element("mac-session-search", in: host)
+                    _ = try self.element("mac-resume-session-" + first.id.uuidString, in: host)
+                    _ = try self.element("mac-resume-session-" + second.id.uuidString, in: host)
+                    XCTAssertTrue(self.hasLabel("Saved · Closed", in: host))
+                    try self.enter(second.id.uuidString, placeholder: "Search sessions, workspaces, paths or IDs", in: host)
+                    try await Task.sleep(for: .milliseconds(180))
+                    XCTAssertFalse(self.accessibilityElements(in: host).contains { $0.accessibilityIdentifier() == "mac-resume-session-" + first.id.uuidString })
+                    _ = try self.element("mac-resume-session-" + second.id.uuidString, in: host)
+                    XCTAssertEqual(model.state.context, context)
+                    XCTAssertTrue(model.closedSessionIDs.contains(second.id))
+                    XCTAssertEqual(model.text, "Picker must preserve this draft")
+                    XCTAssertNil(model.fault, "Filtering must not attempt an RPC request")
+                    try self.enter("no-matching-session", placeholder: "Search sessions, workspaces, paths or IDs", in: host)
+                    try await Task.sleep(for: .milliseconds(150))
+                    XCTAssertTrue(self.hasLabel("No matching sessions.", in: host))
+                    XCTAssertFalse(try self.element("mac-resume-open", in: host).isAccessibilityEnabled())
+                    XCTAssertEqual(model.state.context, context)
+                    model.panel = nil
+                }
+            }
+        }
+    }
+
+    func testManagementSavedPickerKeyboardChoosesOnlyOnReturnAndKeepsFailedClosedEntry() async throws {
+        try await withModel { model in
+            let first = SessionInfo(id: UUID(), title: "Keyboard first", directory: "/tmp/management-keyboard", updated: Date(timeIntervalSince1970: 20))
+            let second = SessionInfo(id: UUID(), title: "Keyboard second", directory: first.directory, updated: Date(timeIntervalSince1970: 10))
+            model.state.sessions = [first, second]
+            let closed = await model.closeSession(second.id)
+            XCTAssertTrue(closed)
+            model.panel = "resume"
+            try await capture(CompanionWindow(model: model), name: "management-switcher-keyboard-900", width: 900, height: 600, sheet: true) { _, window in
+                let sheet = try XCTUnwrap(window.sheets.first)
+                let host = try XCTUnwrap(sheet.contentView)
+                XCTAssertTrue(sheet.firstResponder is NSTextView, "Opening the switcher must focus native search input")
+                try await self.managementKey("\u{f701}", code: 125, in: sheet)
+                XCTAssertNil(model.state.selected, "Moving selection must not start Pi")
+                XCTAssertNil(model.fault)
+                try await self.managementKey("\r", code: 36, in: sheet)
+                XCTAssertEqual(model.destination, .session(second.id), "Down then Return must explicitly choose the second row")
+                XCTAssertNotNil(model.fault, "Synthetic catalog activation must fail visibly, not claim readiness")
+                XCTAssertNil(model.state.selected)
+                XCTAssertTrue(model.closedSessionIDs.contains(second.id), "Failed activation must not reveal the closed entry")
+                XCTAssertEqual(model.panel, "resume", "A failed open must leave recovery available")
+                _ = try self.element("mac-resume-session-" + second.id.uuidString, in: host)
+            }
+        }
+    }
+
+    func testManagementPaletteSearchDispatchPreservesDraftAndShowsDisabledReasons() async throws {
+        try await withModel { model in
+            let session = SessionInfo(id: UUID(), title: "Palette fixture", directory: "/tmp/management-palette")
+            model.state.sessions = [session]; model.state.selected = session.id; model.state.phase = "working"
+            model.destination = .session(session.id); model.text = "Do not replace my draft"
+            model.state.commands = [CommandOption(name: "provider-command", detail: "Must not execute from palette", source: "extension")]
+            for (width, height) in [(900, 600), (1300, 800)] {
+                model.panel = "palette"
+                try await capture(CompanionWindow(model: model), name: "management-palette-initial-\(width)", width: CGFloat(width), height: CGFloat(height), sheet: true)
+                try await capture(CompanionWindow(model: model), name: "management-palette-\(width)", width: CGFloat(width), height: CGFloat(height), sheet: true) { _, window in
+                    let host = try XCTUnwrap(window.sheets.first?.contentView)
+                    try self.managementDump(host, name: "palette-\(width)")
+                    _ = try self.element("mac-command-palette", in: host)
+                    XCTAssertFalse(try self.element("mac-palette-tree", in: host).isAccessibilityEnabled())
+                    XCTAssertTrue((try self.element("mac-palette-tree", in: host).value("accessibilityLabel") as? String ?? "").contains("Wait for the session to become idle."))
+                    XCTAssertFalse(try self.element("mac-palette-history", in: host).isAccessibilityEnabled())
+                    XCTAssertTrue((try self.element("mac-palette-history", in: host).value("accessibilityLabel") as? String ?? "").contains("Wait for the session to finish working."))
+                    XCTAssertFalse(self.hasLabel("/provider-command", in: host), "The palette must not add a second Pi command dispatcher")
+                    try self.enter("resume", placeholder: "Search actions", in: host)
+                    try await Task.sleep(for: .milliseconds(180))
+                    XCTAssertEqual(model.panel, "palette", "Search must not execute the selected action")
+                    XCTAssertEqual(model.text, "Do not replace my draft")
+                    XCTAssertNil(model.fault)
+                    XCTAssertTrue(try self.element("mac-palette-resume", in: host).isAccessibilityEnabled())
+                    try await self.press("mac-palette-resume", in: host)
+                    XCTAssertEqual(model.panel, "resume", "Explicit activation must use the native saved-session workflow")
+                    XCTAssertEqual(model.state.selected, session.id)
+                    XCTAssertEqual(model.state.phase, "working")
+                    XCTAssertEqual(model.text, "Do not replace my draft")
+                    model.panel = nil
+                }
+            }
+        }
+    }
+
+    func testManagementNativeShortcutsEscapeFocusAndFocusedCloseAtBothSizes() async throws {
+        try await withModel { model in
+            for (width, height) in [(900, 600), (1300, 800)] {
+                let active = SessionInfo(id: UUID(), title: "Active runtime", directory: "/tmp/management-shortcuts")
+                let focused = SessionInfo(id: UUID(), title: "Focused saved session", directory: active.directory)
+                model.state.sessions = [active, focused]; model.state.selected = active.id; model.state.phase = "idle"
+                model.destination = .session(active.id); model.expandedWorkspaces = [active.directory]
+                model.text = "Keyboard draft"
+                try await capture(CompanionWindow(model: model), name: "management-shortcuts-\(width)", width: CGFloat(width), height: CGFloat(height), hostingController: true) { host, window in
+                    let editor = try self.nativeEditor(in: host)
+                    XCTAssertTrue(window.makeFirstResponder(editor))
+                    try await self.managementKey("o", code: 31, modifiers: [.command, .shift], in: window)
+                    XCTAssertEqual(model.panel, "resume")
+                    let switcher = try XCTUnwrap(window.sheets.first)
+                    _ = try self.element("mac-session-search", in: try XCTUnwrap(switcher.contentView))
+                    XCTAssertTrue(switcher.firstResponder is NSTextView)
+                    try await self.managementKey("\u{1b}", code: 53, in: switcher)
+                    XCTAssertNil(model.panel)
+                    XCTAssertTrue(window.firstResponder === editor, "Escape must return focus to the composer")
+                    try await self.managementKey("p", code: 35, modifiers: [.command, .shift], in: window)
+                    XCTAssertEqual(model.panel, "palette")
+                    let palette = try XCTUnwrap(window.sheets.first)
+                    _ = try self.element("mac-command-palette-search", in: try XCTUnwrap(palette.contentView))
+                    XCTAssertTrue(palette.firstResponder is NSTextView)
+                    try await self.managementKey("\u{1b}", code: 53, in: palette)
+                    XCTAssertNil(model.panel)
+                    XCTAssertTrue(window.firstResponder === editor)
+                    XCTAssertEqual(model.text, "Keyboard draft")
+                    model.destination = .session(focused.id)
+                    try await Task.sleep(for: .milliseconds(180))
+                    try await self.managementKey("w", code: 13, modifiers: [.command, .shift], in: window)
+                    XCTAssertTrue(model.closedSessionIDs.contains(focused.id), "Close shortcut must target the focused saved session")
+                    XCTAssertFalse(model.closedSessionIDs.contains(active.id))
+                    XCTAssertEqual(model.state.selected, active.id, "Closing the focused saved row must not close another loaded runtime")
+                    XCTAssertEqual(model.destination, .workspace(active.directory))
+                    XCTAssertTrue(window.isVisible, "Command-Shift-W must not close the native window")
+                }
+            }
+        }
     }
 
     func testServerAndSessionStatusAreIndependent() async throws {
@@ -445,7 +770,7 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
         }
     }
 
-    private func capture<V: View>(_ view: V, name: String, width: CGFloat = 1000, height: CGFloat = 700, sheet: Bool = false, scrollToBottom: Bool = false,
+    private func capture<V: View>(_ view: V, name: String, width: CGFloat = 1000, height: CGFloat = 700, sheet: Bool = false, scrollToBottom: Bool = false, hostingController: Bool = false,
                                   exercise: ((NSView, NSWindow) async throws -> Void)? = nil) async throws {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -459,9 +784,19 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
             NSApp.setActivationPolicy(previousPolicy)
             previousApplication?.activate()
         }
-        let host = NSHostingView(rootView: view.environment(\.colorScheme, .light).environment(\.accessibilityEnabled, true).frame(width: width, height: height))
-        host.sizingOptions = []
-        window.contentView = host
+        let rendered = view.environment(\.colorScheme, .light).environment(\.accessibilityEnabled, true).frame(width: width, height: height)
+        let host: NSView
+        if hostingController {
+            let controller = NSHostingController(rootView: rendered)
+            controller.sizingOptions = []
+            window.contentViewController = controller
+            host = controller.view
+        } else {
+            let content = NSHostingView(rootView: rendered)
+            content.sizingOptions = []
+            window.contentView = content
+            host = content
+        }
         window.setContentSize(NSSize(width: width, height: height))
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()

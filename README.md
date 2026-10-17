@@ -59,6 +59,14 @@ The companion catalog and managed sessions use `~/Library/Application Support/Pi
 
 Clean setup evidence: two Mac-model tests pass with new private support storage and isolated preferences, including Start listener, local approval, persisted devices, listener restart and revocation. Thirty-one simulator tests pass with fresh phone preferences and a private local provider fixture, including product-model pairing, saved connections, nested directory selection and coding. These are local model/transport and simulator checks, not signed installation, hardware authentication, camera or off-site evidence. [Repeat the checks](docs/workflow-verification.md#clean-setup-controls).
 
+## Mac session management
+
+Use **Close Session** on a session row, in its context menu or with Command-Shift-W. This closes the chosen session, not its workspace, and keeps saved history and the draft. A working session requires **Stop and Close** confirmation; stopping cannot undo file changes. A failed or uncertain close does not hide the session. Reopen closed sessions explicitly through `/resume` or **Switch session**.
+
+**Overview** groups saved sessions by workspace and distinguishes loaded execution from saved or closed history. Command-Shift-O opens the searchable session switcher. Command-Shift-P opens the native action palette. Search does not execute an action; choose a result explicitly. Return opens the selected search result, and Escape dismisses the picker. The palette preserves the message draft.
+
+These controls retain the current single-active-Pi limit. Independent concurrent runtimes and split conversations are proposed, not implemented; see the [runtime design and compatibility gate](docs/mac-session-runtime-design.md). Verification and remaining limits are recorded in [Mac interface checks](docs/mac-interface.md).
+
 ## Mac slash commands
 
 - `/resume` opens saved companion-managed sessions. Opening the picker does not start or stop Pi; choose a session explicitly while idle. Terminal-owned Pi sessions are not listed.
