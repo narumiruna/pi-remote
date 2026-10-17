@@ -17,7 +17,7 @@ struct SessionListView: View {
                 }.frame(minHeight: 44).disabled(state.working)
             }
             if state.capabilities.contains("session-import") {
-                NavigationLink("Import JSONL session") { SessionImportView(request: request, canChooseDirectory: state.capabilities.contains("session-import-directory"), imported: selected) }
+                NavigationLink("Import JSONL session") { SessionImportView(request: request, canChooseDirectory: state.capabilities.contains("session-import-directory"), canEnterPath: state.capabilities.contains("directory-path"), imported: selected) }
                     .frame(minHeight: 44).disabled(state.working)
             }
             if let error { Text(error).foregroundStyle(.primary) }

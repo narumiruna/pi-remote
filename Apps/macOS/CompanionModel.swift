@@ -29,6 +29,9 @@ final class CompanionModel {
     var address = ""
     var listening = false
     var starting = false
+    var serverStatus: String { starting ? "Server: Updating" : (listening ? "Server: Listening" : "Server: Stopped") }
+    var serverEndpoint: String { "wss://\(address):7443" }
+    var sessionStatus: String { state.selected == nil ? "Session: None" : "Session: \(state.phase)" }
     var code = ""
     var pending: PendingPair?
     var devices: [PairedDevice] = []

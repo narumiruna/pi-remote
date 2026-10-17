@@ -57,8 +57,10 @@ targets:
     sources:
       - Tests/MacTests
       - Apps/macOS/CompanionModel.swift
-      - Apps/Shared/EditorOffer.swift
-      - Apps/Shared/Clipboard.swift
+      - Apps/macOS/CompanionWindow.swift
+      - Apps/macOS/CompanionConnectionViews.swift
+      - Apps/macOS/PairingQRView.swift
+      - Apps/Shared
     dependencies:
       - package: PiRemoteSpikes
         product: PiRemoteHost

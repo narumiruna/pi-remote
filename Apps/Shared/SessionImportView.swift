@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct SessionImportView: View {
     let request: (SessionAction) async throws -> AppResult
     var canChooseDirectory = false
+    var canEnterPath = false
     let imported: () -> Void
     @State private var choosing = false
     @State private var choosingDirectory = false
@@ -66,11 +67,14 @@ struct SessionImportView: View {
         }
         .sheet(isPresented: $choosingDirectory) {
             NavigationStack {
-                DirectoryBrowser(selecting: true, request: request, selectionTitle: "Use this folder") { id, path in
+                DirectoryBrowser(selecting: true, request: request, selectionTitle: "Use this folder", pathEntry: canEnterPath) { id, path in
                     target = (id, path); choosingDirectory = false
                 }
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { choosingDirectory = false } } }
             }
+            #if os(macOS)
+            .frame(width: 520, height: 520)
+            #endif
         }
         .alert("Import and open this session?", isPresented: $confirming) {
             Button("Import and open") { Task { await performImport() } }

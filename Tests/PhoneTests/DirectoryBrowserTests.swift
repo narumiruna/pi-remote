@@ -119,4 +119,50 @@ final class DirectoryBrowserTests: XCTestCase {
         XCTAssertEqual(browser.page?.id, next)
         XCTAssertNil(browser.fault)
     }
+
+    func testTypedPathClearsOldSelectionAndRetriesTheExactPath() async {
+        let browser = DirectoryBrowserModel(), first = page(), path = "~/project with spaces"
+        await browser.open(first.id) { _ in .directories(first) }
+        await browser.open(path: path) { action in
+            XCTAssertEqual(action, .directoryAtPath(path: path))
+            throw RemoteFault.permissionDenied
+        }
+        XCTAssertNil(browser.page)
+        XCTAssertTrue(browser.previousPages.isEmpty)
+        XCTAssertEqual(browser.fault, .permissionDenied)
+        let expected = page()
+        await browser.retry { action in
+            XCTAssertEqual(action, .directoryAtPath(path: path))
+            return .directories(expected)
+        }
+        XCTAssertEqual(browser.page, expected)
+        await browser.open(expected.id) { action in
+            XCTAssertEqual(action, .directories(id: expected.id, cursor: nil))
+            return .directories(expected)
+        }
+    }
+
+    func testOldTypedPathReplyCannotReplaceNewNavigation() async throws {
+        let browser = DirectoryBrowserModel(), pending = PendingRequest(), expected = page()
+        let old = Task { await browser.open(path: "/old", request: pending.call) }
+        try await pending.wait()
+        await browser.open(path: "/new") { action in
+            XCTAssertEqual(action, .directoryAtPath(path: "/new"))
+            return .directories(expected)
+        }
+        pending.finish(.success(.directories(page()))); await old.value
+        XCTAssertEqual(browser.page, expected)
+        XCTAssertNil(browser.fault)
+        XCTAssertFalse(browser.loading)
+    }
+
+    func testCancelledTypedPathReplyCannotEnableSelection() async throws {
+        let browser = DirectoryBrowserModel(), pending = PendingRequest()
+        let task = Task { await browser.open(path: "/cancelled", request: pending.call) }
+        try await pending.wait(); task.cancel()
+        pending.finish(.success(.directories(page()))); await task.value
+        XCTAssertNil(browser.page)
+        XCTAssertFalse(browser.loading)
+        XCTAssertNil(browser.fault)
+    }
 }

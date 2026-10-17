@@ -1080,12 +1080,14 @@ func jsonlExportRejectsInvalidLiveStateAndBoundsTheResponse(mode: String) async 
         await #expect(throws: (any Error).self) { try await wrongHostname.receive(timeout: 5) }
         #expect(wrongHostname.didRejectIdentity)
         wrongHostname.close()
-        let unauthenticated = try PinnedChannel(url: URL(string: "wss://127.0.0.1:\(port)/")!, certificate: identity.certificate)
-        _ = try await unauthenticated.receive()
-        try await unauthenticated.send(AppPacket(ClientMessage.request(AppRequest(epoch: host.epoch, session: nil, action: .directories(id: nil, cursor: nil)))).encode())
-        let denied = try AppPacket<ServerMessage>.decode(await unauthenticated.receive()).payload
-        guard case .denied = denied else { throw RemoteFault.invalidRequest }
-        unauthenticated.close()
+        for action in [SessionAction.directories(id: nil, cursor: nil), .directoryAtPath(path: root.path)] {
+            let unauthenticated = try PinnedChannel(url: URL(string: "wss://127.0.0.1:\(port)/")!, certificate: identity.certificate)
+            _ = try await unauthenticated.receive()
+            try await unauthenticated.send(AppPacket(ClientMessage.request(AppRequest(epoch: host.epoch, session: nil, action: action))).encode())
+            let denied = try AppPacket<ServerMessage>.decode(await unauthenticated.receive()).payload
+            guard case .denied = denied else { throw RemoteFault.invalidRequest }
+            unauthenticated.close()
+        }
         let grant = try await server.openPairing()
         let code = PairingCode(host: host.hostID, name: "Fixture Mac", url: URL(string: "wss://127.0.0.1:\(port)/")!, certificate: identity.certificate, grant: grant, expires: Date().addingTimeInterval(120))
         let updates = await server.pairingUpdates()
@@ -1681,7 +1683,7 @@ func directoryReplacementDuringActivationCannotStartRPC(phase: String) async thr
 @Test func protocolRoundTripsAndRejectsUnknownVersions() throws {
     let id = UUID(), epoch = UUID()
     let actions: [SessionAction] = [
-        .snapshot, .synchronize(epoch: epoch, after: 4), .directories(id: id, cursor: UUID()),
+        .snapshot, .synchronize(epoch: epoch, after: 4), .directories(id: id, cursor: UUID()), .directoryAtPath(path: "~/project"),
         .preview(id: id), .createSession(directory: id), .resumeSession(id: id),
         .prompt(text: "Hello 日本語", delivery: .prompt, image: ImageAttachment(data: Data([1, 2]), mimeType: "image/png")),
         .prompt(text: "Steer", delivery: .steer, image: nil), .prompt(text: "Next", delivery: .followUp, image: nil),

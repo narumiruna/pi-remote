@@ -14,6 +14,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case snapshot
     case synchronize(epoch: UUID?, after: UInt64?)
     case directories(id: UUID?, cursor: UUID?)
+    case directoryAtPath(path: String)
     case preview(id: UUID)
     case createSession(directory: UUID)
     case newSession(parent: Bool)
@@ -52,7 +53,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var mutates: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .sessionTree, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession, .exportJSONL, .releaseNotes: false
+        case .snapshot, .synchronize, .directories, .directoryAtPath, .preview, .history, .historyPage, .historyEntry, .sessionTree, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession, .exportJSONL, .releaseNotes: false
         default: true
         }
     }
@@ -66,7 +67,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var needsSession: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .createSession, .importSession, .importSessionInDirectory, .resumeSession, .releaseNotes: false
+        case .snapshot, .synchronize, .directories, .directoryAtPath, .preview, .createSession, .importSession, .importSessionInDirectory, .resumeSession, .releaseNotes: false
         default: true
         }
     }

@@ -264,6 +264,7 @@ public actor HostCoordinator {
         case .synchronize(let epoch, let after):
             return .synchronized(replay.synchronize(current: snapshot, epoch: epoch, after: after))
         case .directories(let id, let cursor): return .directories(try await directories.list(id: id, cursor: cursor))
+        case .directoryAtPath(let path): return .directories(try await directories.list(path: path))
         case .preview(let id): return .preview(try await directories.preview(id))
         case .createSession(let id):
             guard !snapshot.working, sessions.count < 256 else { throw RemoteFault.busy }

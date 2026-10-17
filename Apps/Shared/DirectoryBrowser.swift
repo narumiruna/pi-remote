@@ -6,8 +6,10 @@ struct DirectoryBrowser: View {
     var request: (SessionAction) async throws -> AppResult
     var attach: ((FilePreview) throws -> Void)? = nil
     var selectionTitle = "Start Pi Here"
+    var pathEntry = false
     var selected: (UUID, String) async throws -> Void
-    @State private var directory: UUID?
+    @State private var typedPath = ""
+    @FocusState private var editingPath: Bool
     @State private var browser = DirectoryBrowserModel()
     @State private var error: String?
     @State private var selectingSession = false
@@ -17,9 +19,34 @@ struct DirectoryBrowser: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if pathEntry {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        TextField("Mac folder path", text: $typedPath, prompt: Text("~/src/project"))
+                            .textFieldStyle(.roundedBorder).font(.body.monospaced())
+                            .autocorrectionDisabled().focused($editingPath)
+                            .accessibilityIdentifier("mac-folder-path")
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .submitLabel(.go)
+                            #endif
+                            .onSubmit { openPath() }
+                        Button(action: openPath) { Text("Go").frame(minWidth: 44, minHeight: 44) }
+                            .disabled(loading || typedPath.isEmpty || typedPath.utf8.count > 4_096)
+                            .accessibilityIdentifier("mac-folder-go")
+                            .accessibilityHint("Open this folder without starting Pi. Review the resolved path before selecting it.")
+                    }
+                    Text("Absolute Mac path or ~/folder")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if typedPath.utf8.count > 4_096 {
+                        Text("The path exceeds the 4 KiB limit.").font(.caption)
+                    }
+                }.padding(.horizontal).padding(.top, 8)
+            }
             if let page {
                 HStack {
-                    Button { directory = page.parent } label: {
+                    Button { openDirectory(page.parent) } label: {
                         Label("Parent folder", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
                     }.disabled(page.parent == nil || loading)
                     HStack(spacing: 0) {
@@ -35,8 +62,12 @@ struct DirectoryBrowser: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.padding(.horizontal)
             }
-            if let error = error ?? browser.fault?.explanation { Text(error).foregroundStyle(.primary).padding() }
             List {
+                if let error = error ?? browser.fault?.explanation {
+                    Text(error).foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("folder-error")
+                }
                 if loading { ProgressView("Loading folders") }
                 if !loading, let page {
                     if page.items.isEmpty { Text("This folder is empty.").foregroundStyle(.primary.opacity(0.75)) }
@@ -57,7 +88,7 @@ struct DirectoryBrowser: View {
                             Text(fault.explanation).font(.caption).foregroundStyle(.primary.opacity(0.75))
                         }.frame(minHeight: 44)
                     } else if item.isDirectory {
-                        Button { directory = item.id } label: { Label(item.name, systemImage: "folder") }
+                        Button { openDirectory(item.id) } label: { Label(item.name, systemImage: "folder") }
                             .frame(minHeight: 44)
                     } else if !selecting {
                         Button { Task { await browser.openPreview(item.id, request: request) } } label: { Label(item.name, systemImage: "doc") }
@@ -81,14 +112,27 @@ struct DirectoryBrowser: View {
                     }
                 } label: { Text(selectionTitle).frame(minHeight: 44) }
                     .buttonStyle(.borderedProminent).foregroundStyle(.background).padding()
-                    .disabled(loading || page == nil)
+                    .disabled(loading || page == nil || (pathEntry && typedPath != page?.path))
             }
         }
         .navigationTitle(selecting ? "Choose a Mac folder" : "Mac files")
-        .task(id: directory) { error = nil; await browser.open(directory, request: request) }
+        .task { await browser.open(nil, request: request) }
+        .onChange(of: page?.path) { _, value in if let value { typedPath = value } }
         .sheet(isPresented: Binding(get: { browser.preview != nil }, set: { if !$0 { browser.preview = nil } })) {
             if let preview = browser.preview { FilePreviewView(preview: preview, request: request, attach: attach) }
         }
+    }
+    private func openDirectory(_ id: UUID?) {
+        guard !loading else { return }
+        editingPath = false; error = nil
+        Task { await browser.open(id, request: request) }
+    }
+
+    private func openPath() {
+        guard !loading, !typedPath.isEmpty, typedPath.utf8.count <= 4_096 else { return }
+        editingPath = false; error = nil
+        let path = typedPath
+        Task { await browser.open(path: path, request: request) }
     }
 }
 

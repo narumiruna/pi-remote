@@ -4,7 +4,7 @@
 
 The repository now contains SwiftUI iOS and macOS apps and an authenticated Mac host. This is a development implementation, not a supported release. `PLAN.md` remains open. The physical transport spike is not evidence that the product apps pass a physical-device coding task.
 
-Verified on macOS 26.6.2 with Xcode 26.6 and the iOS/macOS 26.5 SDKs:
+Earlier checkpoint, verified on macOS 26.6.2 with Xcode 26.6 and the iOS/macOS 26.5 SDKs (later Mac UI/path checks are recorded [separately](mac-interface.md)):
 
 - The macOS app and iOS app build without signing, including the physical iOS SDK build.
 - All 72 root package tests pass, including production TLS pairing, LAN/Tailscale binding and fake-Pi integration tests.
@@ -41,7 +41,7 @@ The generated `PiRemote.xcodeproj` is ignored. No TypeScript backend, terminal, 
 - The authenticated folder picker starts at the Mac home directory and can navigate to `/`. It has no approved-root list. Listings use opaque IDs, 100-entry pages, and canonical filesystem identities. Selection identity and read/search permissions are checked again before creation or resumption, before replacing the current Pi process. Checks run again after process shutdown and executable inspection, before RPC launch. Executable selection is blocked during these operations. Inaccessible entries, broken links and symbolic-link loops are reported. File previews are separate from folder selection.
 - The companion owns one Pi RPC process. Sessions use private storage under `~/Library/Application Support/PiRemote/`, not the user's terminal session directory. A process lock prevents two companions from writing the catalog. Resume checks the saved directory identity, session path, session header ID, and header working directory. Missing populated sessions fail instead of starting an empty replacement.
 - Local and remote controls use the same coordinator. Incompatible actions return a conflict or busy error. Stop clears queues, cancels pending dialogs, aborts work, and checks Pi's idle state. It cannot undo file changes.
-- Native controls include prompts/queues/Stop, model/thinking selection and cycling, normalized names, reviewed custom-instruction compaction, retry controls, command discovery, authoritative tree/fork inspection, clone, image/text input, file previews, diff, copy, settings, export/import and idle close. [Same-directory core lifecycle](session-lifecycle.md) and the [current local acceptance checkpoint](core-rpc-acceptance.md) pass. Core shell controls remain open; all 27 compact-interface tests pass in the final accepted batch set.
+- Native controls include prompts/queues/Stop, model/thinking selection and cycling, normalized names, reviewed custom-instruction compaction, retry controls, command discovery, authoritative tree/fork inspection, clone, image/text input, file previews, diff, copy, settings, export/import and idle close. [Same-directory core lifecycle](session-lifecycle.md) and the [earlier local acceptance checkpoint](core-rpc-acceptance.md) pass. Core shell controls remain open; all 27 compact-interface tests pass in the final accepted batch set.
 - The working directory uses a compact folder label in the header and the complete path in Session controls. The folder picker scrolls long paths horizontally. Short error banners open full recovery instructions. Editor actions remain above the keyboard.
 - Final messages and completed content blocks replace deltas. Only `agent_settled` indicates completion of automatic work. Thinking and tool output are expandable. The display retains 100 messages and 256 KiB of UTF-8 text, with 16 KiB shared by text and thinking per message. Redacted thinking and signatures are not displayed. Pi keeps the full managed session on the Mac.
 - Published state events are authoritative display snapshots with an epoch and sequence. Replay keeps a contiguous suffix of at most 32 events and 2 MiB. A stale cursor or changed epoch requires a fresh snapshot. Registration of a state observer and its initial snapshot occur in the same actor operation. Slow clients retain only the latest pending state; they do not block Pi stdout.
@@ -52,7 +52,7 @@ The generated `PiRemote.xcodeproj` is ignored. No TypeScript backend, terminal, 
 
 ## Security
 
-Pairing uses a two-minute high-entropy code scanned or copied from the Mac. Select **Pair a device** on the Mac to display its QR code. On the phone, use **Connections → Pair a Mac → Scan QR code**, review the Mac name and address, then select **Request pairing**. The in-app scanner requires camera permission; it does not use the system Camera app or a web service. Copy and paste remain available if scanning is unavailable or the code exceeds QR capacity. This interaction is implemented and simulator-tested, but physical camera scanning remains unverified.
+Pairing uses a two-minute high-entropy code scanned or copied from the Mac. Select **Pair iPhone** on the Mac to display its QR code. On the phone, use **Connections → Pair a Mac → Scan QR code**, review the Mac name and address, then select **Request pairing**. The in-app scanner requires camera permission; it does not use the system Camera app or a web service. Copy and paste remain available if scanning is unavailable or the code exceeds QR capacity. This interaction is implemented and simulator-tested, but physical camera scanning remains unverified.
 
 The phone pins the certificate in that code before sending the pairing grant. The Mac user must approve the displayed device ID. Codes permit at most five attempts, and the host accepts at most 16 paired devices. A code is sensitive: do not put it in logs or share it through an untrusted channel.
 
@@ -80,6 +80,12 @@ A paired phone has Pi control with the Mac user's permissions. Folder selection 
 - A certificate is valid for 365 days and includes addresses available when it was generated. After expiry or an address change, use **Replace connection identity** on the Mac. This stops the listener and revokes devices without stopping Pi or deleting sessions. Start the listener again and pair each phone with a new code. The recovery UI is compiled, but not physically tested.
 - To change from LAN to Tailscale, stop the listener, select the Mac's Tailscale address, and start it again. Edit the saved phone URL while retaining the certificate pin. The certificate must cover that address. This path still needs an off-site phone test.
 - A sleeping Mac is unavailable. There is no remote wake, login item, continuous phone background connection, public account service or TestFlight release.
+
+## Mac setup and folder paths
+
+The Mac window now separates server and session status. Use **Start server**, then **Pair iPhone**; maintenance, paired-device details and Advanced identity replacement are in **Connection settings**. No session means explicit folder/saved-session actions, not an inactive composer. Mac sheets use bounded frames, scrollable grouped forms and a pinned Close action. Paired devices indicate saved access, not live connections.
+
+The folder picker accepts an absolute Mac path or `~/folder`. **Go** opens a validated canonical directory and does not start Pi. **Start Pi Here** remains separate and is disabled while edited path text is unvalidated. Read/search permissions, symbolic-link checks, authenticated access and opaque launch IDs remain in force. Missing paths are not created; shell variables, relative paths and `~otheruser` are not expanded. See [current UI/path checks](mac-interface.md).
 
 ## Automated checks
 

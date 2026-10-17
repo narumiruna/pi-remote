@@ -22,8 +22,8 @@ struct ConversationView<Extras: View>: View {
                     // The host bounds this view to 100 messages and 256 KiB. Eager layout keeps live row heights stable.
                     VStack(alignment: .leading, spacing: 20) {
                         if state.messages.isEmpty {
-                            ContentUnavailableView("Ready for a task", systemImage: "bubble.left.and.text.bubble.right",
-                                                   description: Text("Choose a folder and start a session, then send an instruction."))
+                            ContentUnavailableView(state.selected == nil ? "No session selected" : "Ready for a task", systemImage: "bubble.left.and.text.bubble.right",
+                                                   description: Text(state.selected == nil ? "Choose a folder and start a session, then send an instruction." : "Send an instruction to start working in this session."))
                                 .frame(maxWidth: .infinity)
                         }
                         if state.hasOlderMessages {

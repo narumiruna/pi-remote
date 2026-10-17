@@ -4,6 +4,8 @@
 
 The current host, client and native controls pass the local checks below against Pi 1.3.0. **The plan is not complete:** the approved core `bash`/`abort_bash` controls and `bash_execution_update` output still need implementation and verification. No terminal-only or individual-extension integration is required.
 
+This checkpoint predates the later Mac UI and manual folder-path changes. Its full product/interface counts and source hashes apply to that earlier revision, not the later changes. See [separate UI/path verification](mac-interface.md).
+
 ## Verified results
 
 | Check | Result | Evidence |

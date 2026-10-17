@@ -71,6 +71,22 @@ public actor DirectoryRegistry {
         return node.path
     }
 
+    /// Resolve an explicit Mac path without shell expansion or filesystem changes.
+    public func list(path: String) throws -> DirectoryPage {
+        guard !path.isEmpty, path.utf8.count <= 4_096, !path.utf8.contains(0) else { throw RemoteFault.invalidRequest }
+        let url: URL
+        if path == "~" { url = FileManager.default.homeDirectoryForCurrentUser }
+        else if path.hasPrefix("~/") {
+            url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(String(path.dropFirst(2)))
+        } else {
+            guard path.hasPrefix("/") else { throw RemoteFault.invalidRequest }
+            url = URL(fileURLWithPath: path)
+        }
+        let identified = try Self.identify(url)
+        try Self.validateDirectory(identified)
+        return try list(id: register(identified.url), cursor: nil)
+    }
+
     public func list(id supplied: UUID?, cursor cursorID: UUID?) throws -> DirectoryPage {
         cursors = cursors.filter { Date().timeIntervalSince($0.value.created) < 60 }
         let id = try supplied ?? register(FileManager.default.homeDirectoryForCurrentUser)

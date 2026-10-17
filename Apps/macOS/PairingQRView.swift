@@ -8,7 +8,7 @@ struct PairingQRView: View {
             VStack(spacing: 16) {
                 Text("Pair your iPhone").font(.title2)
                 if code.isEmpty {
-                    Text("This pairing code is no longer available. Close this sheet and select Pair a device to create a new code.")
+                    Text("This pairing code is no longer available. Close this sheet and select Pair iPhone to create a new code.")
                 } else {
                     if let image = PairingQRCode.image(for: code) {
                         Image(image, scale: 1, label: Text("Pairing QR code"))
