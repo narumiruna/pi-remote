@@ -280,6 +280,101 @@ done
     await #expect(throws: RPCFailure.unknownOutcome) { try await request.value }
 }
 
+private func gatedWriterFixture() throws -> (child: RPCProcess, root: URL) {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("rpc-writer-" + UUID().uuidString)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+    let gate = root.appendingPathComponent("release").path
+    let log = root.appendingPathComponent("commands").path
+    let body = """
+    printf '{"type":"ready"}\\n'
+    deadline=$((SECONDS + 10))
+    while [ ! -f '\(gate)' ] && [ "$SECONDS" -lt "$deadline" ]; do /bin/sleep 0.01; done
+    """ + "\n" + readCommand + """
+        printf '%s\\n' "$command" >> '\(log)'
+        printf '{"id":"%s","type":"response","command":"%s","success":true}\\n' "$id" "$command"
+    done
+    """
+    do { return (try fake(body, executable: "/bin/bash"), root) }
+    catch { try? FileManager.default.removeItem(at: root); throw error }
+}
+
+private func writerWait(_ condition: () -> Bool) async throws {
+    for _ in 0..<500 {
+        if condition() { return }
+        try await Task.sleep(for: .milliseconds(2))
+    }
+    throw RPCFailure.invalidResponse
+}
+
+@Test(.timeLimit(.minutes(1))) func writerSlotsRemainReservedAfterResponseTimeoutsUntilDiscarded() async throws {
+    let (child, root) = try gatedWriterFixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    do {
+        var events = child.events.makeAsyncIterator()
+        #expect(try await events.next()?["type"]?.string == "ready")
+        let blocked = Task { try await child.request("blocked", fields: ["message": .string(String(repeating: "x", count: 1_024 * 1_024))], timeout: 5) }
+        try await writerWait { child.queuedWriteUsage.active }
+        blocked.cancel()
+        await #expect(throws: RPCFailure.unknownOutcome) { try await blocked.value }
+        for index in 0..<63 {
+            await #expect(throws: RPCFailure.unknownOutcome) { try await child.request("cancelled-\(index)", timeout: 0.005) }
+        }
+        #expect(child.queuedWriteUsage.count == 64)
+        #expect(child.queuedWriteUsage.bytes <= 8 * 1_024 * 1_024)
+        for _ in 0..<20 {
+            await #expect(throws: RPCFailure.tooManyRequests) { try await child.request("excess", timeout: 0.005) }
+        }
+        #expect(child.queuedWriteUsage.count == 64)
+        try Data().write(to: root.appendingPathComponent("release"))
+        try await writerWait { child.queuedWriteUsage.count == 0 }
+        _ = try await child.request("get_state")
+        let commands = try String(contentsOf: root.appendingPathComponent("commands"), encoding: .utf8).split(separator: "\n")
+        #expect(commands == ["blocked", "get_state"])
+    } catch { await child.shutdown(); throw error }
+    #expect(await child.shutdown())
+}
+
+@Test(.timeLimit(.minutes(1))) func writerByteBudgetSurvivesCancellationAndReleasesAfterDrain() async throws {
+    let (child, root) = try gatedWriterFixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    do {
+        var events = child.events.makeAsyncIterator()
+        #expect(try await events.next()?["type"]?.string == "ready")
+        let payload = String(repeating: "x", count: 2 * 1_024 * 1_024)
+        for index in 0..<3 {
+            let request = Task { try await child.request(index == 0 ? "blocked" : "cancelled", fields: ["message": .string(payload)], timeout: 5) }
+            try await writerWait { child.queuedWriteUsage.count == index + 1 && child.queuedWriteUsage.active }
+            request.cancel()
+            await #expect(throws: RPCFailure.unknownOutcome) { try await request.value }
+        }
+        let usage = child.queuedWriteUsage
+        #expect(usage.count == 3 && usage.bytes > 6 * 1_024 * 1_024 && usage.bytes <= 8 * 1_024 * 1_024)
+        await #expect(throws: RPCFailure.tooManyRequests) { try await child.request("excess", fields: ["message": .string(payload)]) }
+        try Data().write(to: root.appendingPathComponent("release"))
+        try await writerWait { child.queuedWriteUsage.count == 0 }
+        #expect(child.queuedWriteUsage.bytes == 0)
+        _ = try await child.request("get_state")
+        let commands = try String(contentsOf: root.appendingPathComponent("commands"), encoding: .utf8).split(separator: "\n")
+        #expect(commands == ["blocked", "get_state"])
+    } catch { await child.shutdown(); throw error }
+    #expect(await child.shutdown())
+}
+
+@Test(.timeLimit(.minutes(1))) func writerAdmissionDoesNotExtendBlockedShutdown() async throws {
+    let (child, root) = try gatedWriterFixture()
+    defer { try? FileManager.default.removeItem(at: root) }
+    do {
+        let request = Task { try await child.request("blocked", fields: ["message": .string(String(repeating: "x", count: 1_024 * 1_024))]) }
+        try await writerWait { child.queuedWriteUsage.active }
+        request.cancel()
+        await #expect(throws: RPCFailure.unknownOutcome) { try await request.value }
+        #expect(await child.shutdown())
+        try await writerWait { child.queuedWriteUsage.count == 0 }
+        #expect(child.queuedWriteUsage.bytes == 0)
+        await #expect(throws: RPCFailure.closed) { try await child.request("get_state") }
+    } catch { await child.shutdown(); throw error }
+}
+
 @Test func rejectsReservedCommandFields() async throws {
     let child = try fake("while IFS= read -r line; do :; done")
     await #expect(throws: RPCFailure.invalidCommand) {

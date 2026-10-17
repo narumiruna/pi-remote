@@ -29,6 +29,16 @@ public final class RPCProcess: @unchecked Sendable {
     private var closed = false
     private var stopping = false
     private var pending: [String: Pending] = [:]
+    // Admission includes both queued blocks and the write currently blocked on stdin.
+    // Timeout/cancellation ends response tracking, not ownership of queued bytes.
+    private static let maximumQueuedWrites = 64
+    private static let maximumQueuedWriteBytes = 8 * 1_024 * 1_024
+    private var queuedWrites = 0
+    private var queuedWriteBytes = 0
+    private var writing = false
+
+    /// Internal accounting for deterministic backpressure tests; contains no request data.
+    var queuedWriteUsage: (count: Int, bytes: Int, active: Bool) { lock.withLock { (queuedWrites, queuedWriteBytes, writing) } }
 
     private struct Pending {
         let command: String
@@ -57,6 +67,11 @@ public final class RPCProcess: @unchecked Sendable {
         let stderr = Pipe()
         input = stdin.fileHandleForWriting
         process = child
+        // A child can close stdin while a large write is blocked. Report EPIPE as
+        // an unknown outcome instead of terminating the companion with SIGPIPE.
+        guard fcntl(input.fileDescriptor, F_SETNOSIGPIPE, 1) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
         child.executableURL = executable
         child.arguments = arguments
         child.currentDirectoryURL = workingDirectory
@@ -151,7 +166,9 @@ public final class RPCProcess: @unchecked Sendable {
                 let failure: RPCFailure? = lock.withLock {
                     if closed || stopping { return .closed }
                     if Task.isCancelled { return .unknownOutcome }
-                    guard pending.count < 64 else { return .tooManyRequests }
+                    guard pending.count < 64, queuedWrites < Self.maximumQueuedWrites,
+                          bytes.count <= Self.maximumQueuedWriteBytes - queuedWriteBytes else { return .tooManyRequests }
+                    queuedWrites += 1; queuedWriteBytes += bytes.count
                     pending[id] = Pending(command: command, continuation: continuation, deadline: deadline)
                     return nil
                 }
@@ -161,7 +178,18 @@ public final class RPCProcess: @unchecked Sendable {
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
                 writer.async { [weak self] in
-                    guard let self, self.lock.withLock({ self.pending[id] != nil && !self.stopping }) else { return }
+                    guard let self else { return }
+                    defer {
+                        self.lock.withLock {
+                            self.writing = false
+                            self.queuedWrites -= 1; self.queuedWriteBytes -= bytes.count
+                        }
+                    }
+                    guard self.lock.withLock({
+                        guard self.pending[id] != nil, !self.stopping, !self.closed else { return false }
+                        self.writing = true
+                        return true
+                    }) else { return }
                     do {
                         try self.input.write(contentsOf: bytes)
                         if !expectsResponse, let entry = self.lock.withLock({ self.pending.removeValue(forKey: id) }) {
