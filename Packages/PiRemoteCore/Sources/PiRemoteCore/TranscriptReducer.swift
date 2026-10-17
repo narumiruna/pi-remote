@@ -18,8 +18,12 @@ public struct TranscriptReducer: Sendable {
     public private(set) var omitted = false
     private var assistant: UUID?
     private var tools: [String: UUID] = [:]
-    private struct Block: Sendable { var kind: String; var text: String; var truncated = false }
+    private struct Block: Sendable { var kind: String; var text: String; var name = ""; var truncated = false }
     private var blocks: [Int: Block] = [:]
+    private var activeRun = false
+    private var compacting = false
+    private var retrying = false
+    private var summaryRetryPhase: String?
 
     public init() {}
 
@@ -33,14 +37,37 @@ public struct TranscriptReducer: Sendable {
 
     public mutating func consume(_ event: JSONValue) {
         switch event["type"]?.string {
-        case "agent_start": phase = "working"
+        case "agent_start": activeRun = true; restorePhase()
         case "agent_settled":
+            activeRun = false; compacting = false; retrying = false; summaryRetryPhase = nil
             phase = "idle"
             for i in messages.indices where messages[i].streaming {
                 messages[i].streaming = false
             }
-        case "compaction_start": phase = "compacting"
-        case "auto_retry_start", "summarization_retry_scheduled": phase = "retrying"
+        case "compaction_start":
+            // Automatic compaction can precede agent_start, but only settlement ends that operation.
+            if let reason = event["reason"]?.string, reason != "manual" { activeRun = true }
+            compacting = true; restorePhase()
+        case "compaction_end":
+            compacting = false; summaryRetryPhase = nil
+            if event["willRetry"]?.bool == true { activeRun = true }
+            restorePhase()
+            if event["aborted"]?.bool != true, event["result"] == nil || event["result"] == .null {
+                appendError(event["errorMessage"]?.string)
+            }
+        case "auto_retry_start":
+            activeRun = true; retrying = true; restorePhase()
+        case "auto_retry_end":
+            retrying = false; restorePhase()
+            if event["success"]?.bool == false { appendError(event["finalError"]?.string) }
+        case "summarization_retry_scheduled":
+            if summaryRetryPhase == nil { summaryRetryPhase = phase }
+            phase = "retrying"
+        case "summarization_retry_attempt_start":
+            phase = event["source"]?.string == "compaction" ? "compacting" : (summaryRetryPhase ?? "working")
+        case "summarization_retry_finished":
+            if let previous = summaryRetryPhase { phase = previous }
+            summaryRetryPhase = nil
         case "message_start":
             if event["message"]?["role"]?.string == "assistant" {
                 let item = TranscriptMessage(role: "assistant", text: "", streaming: true)
@@ -58,8 +85,12 @@ public struct TranscriptReducer: Sendable {
                 } else { messages.remove(at: index) }
                 assistant = nil
             } else if raw["role"]?.string == "toolResult",
-                      let tool = raw["toolCallId"]?.string, tools[tool] != nil {
-                break
+                      let tool = raw["toolCallId"]?.string, let id = tools[tool],
+                      let index = messages.firstIndex(where: { $0.id == id }) {
+                if var complete = Self.message(raw) {
+                    complete.id = id
+                    messages[index] = complete
+                } else { messages.remove(at: index); tools.removeValue(forKey: tool) }
             } else if let item = Self.message(raw) { messages.append(item) }
         case "tool_execution_start":
             if let id = event["toolCallId"]?.string {
@@ -87,7 +118,8 @@ public struct TranscriptReducer: Sendable {
               !(role == "custom" && value["display"]?.bool == false) else { return nil }
         let text = content(value["content"])
         let fallback = value["summary"]?.string ?? value["output"]?.string ?? value["errorMessage"]?.string ?? ""
-        let body = text.isEmpty ? fallback : text
+        let toolPrefix = role == "toolResult" ? value["toolName"]?.string.flatMap { $0.isEmpty ? nil : $0 + "\n" } ?? "" : ""
+        let body = toolPrefix + (text.isEmpty ? fallback : text)
         let thinking = (value["content"]?.array ?? []).compactMap { block -> String? in
             guard block["type"]?.string == "thinking", block["redacted"]?.bool != true else { return nil }
             return block["thinking"]?.string
@@ -117,6 +149,7 @@ public struct TranscriptReducer: Sendable {
             switch block["type"]?.string {
             case "text": return block["text"]?.string
             case "image": return "[Image]"
+            case "toolCall": return toolCallText(block)
             default: return nil
             }
         }.joined(separator: "\n")
@@ -124,7 +157,8 @@ public struct TranscriptReducer: Sendable {
 
     private mutating func updateBlocks(_ update: JSONValue?) {
         guard let type = update?["type"]?.string,
-              ["text_start", "text_delta", "text_end", "thinking_start", "thinking_delta", "thinking_end"].contains(type),
+              ["text_start", "text_delta", "text_end", "thinking_start", "thinking_delta", "thinking_end",
+               "toolcall_start", "toolcall_delta", "toolcall_end"].contains(type),
               let id = assistant, let row = messages.firstIndex(where: { $0.id == id }) else { return }
         var index = 0
         if case .number(let value) = update?["contentIndex"] {
@@ -132,18 +166,44 @@ public struct TranscriptReducer: Sendable {
             index = Int(value)
         }
         guard blocks[index] != nil || blocks.count < 64 else { messages[row].truncated = true; return }
-        let kind = type.hasPrefix("thinking") ? "thinking" : "text"
+        let kind = type.hasPrefix("thinking") ? "thinking" : (type.hasPrefix("toolcall") ? "tool" : "text")
         var block = blocks[index] ?? Block(kind: kind, text: "")
-        if type.hasSuffix("_start") { block = Block(kind: kind, text: "") }
+        if type == "toolcall_start" {
+            let name = update?["toolName"]?.string ?? "Tool"
+            block = Block(kind: kind, text: "", name: DisplayLimit.text(name, bytes: 16_384), truncated: name.utf8.count > 16_384)
+        } else if type == "toolcall_end" {
+            block = Block(kind: kind, text: Self.toolCallText(update?["toolCall"]))
+        } else if type.hasSuffix("_start") { block = Block(kind: kind, text: "") }
         else if type.hasSuffix("_end") { block = Block(kind: kind, text: update?["content"]?.string ?? "") }
         else { block.text += update?["delta"]?.string ?? "" }
         if block.text.utf8.count > 16_384 { block.text = DisplayLimit.text(block.text, bytes: 16_384); block.truncated = true }
         blocks[index] = block
         let ordered = blocks.sorted { $0.key < $1.key }.map(\.value)
-        messages[row].text = ordered.filter { $0.kind == "text" }.map(\.text).joined(separator: "\n")
+        messages[row].text = ordered.filter { $0.kind != "thinking" }.map {
+            $0.name.isEmpty ? $0.text : $0.name + "\n" + $0.text
+        }.joined(separator: "\n")
         let thinking = ordered.filter { $0.kind == "thinking" }.map(\.text).joined(separator: "\n")
         messages[row].thinking = thinking.isEmpty ? nil : thinking
         messages[row].truncated = messages[row].truncated || ordered.contains { $0.truncated }
+    }
+
+    private mutating func restorePhase() {
+        phase = compacting ? "compacting" : (retrying ? "retrying" : (activeRun ? "working" : "idle"))
+    }
+
+    private mutating func appendError(_ text: String?) {
+        guard let text, !text.isEmpty else { return }
+        messages.append(TranscriptMessage(role: "assistant", text: DisplayLimit.text(text, bytes: 16_384),
+                                          isError: true, truncated: text.utf8.count > 16_384))
+    }
+
+    private static func toolCallText(_ call: JSONValue?) -> String {
+        let name = call?["name"]?.string ?? "Tool"
+        guard let args = call?["arguments"] else { return name }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(args) else { return name }
+        return name + "\n" + String(decoding: data, as: UTF8.self)
     }
 
     private mutating func bound() {

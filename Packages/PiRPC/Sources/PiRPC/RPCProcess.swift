@@ -20,7 +20,8 @@ public enum RPCFailure: Error, Sendable, Equatable {
 /// Local subprocess transport only; never expose this interface to a remote client.
 public final class RPCProcess: @unchecked Sendable {
     public let events: AsyncThrowingStream<JSONValue, any Error>
-    private let eventContinuation: AsyncThrowingStream<JSONValue, any Error>.Continuation
+    private var eventContinuation: AsyncThrowingStream<JSONValue, any Error>.Continuation
+    private let eventCapacity: Int
     private let process: Process
     private let input: FileHandle
     private let lock = NSLock()
@@ -49,6 +50,7 @@ public final class RPCProcess: @unchecked Sendable {
         )
         events = stream.stream
         eventContinuation = stream.continuation
+        self.eventCapacity = eventCapacity
         let child = Process()
         let stdin = Pipe()
         let stdout = Pipe()
@@ -92,6 +94,23 @@ public final class RPCProcess: @unchecked Sendable {
     deinit {
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         try? input.close()
+    }
+
+    /// Replace the event subscription with a fresh bounded buffer.
+    /// Only events received after replacement enter the new stream. Lost events are
+    /// not replayed; the caller must resynchronize authoritative session state.
+    /// A superseded subscription finishes with eventOverflow, even if still active.
+    /// The events property always refers to the initial subscription.
+    public func resumeEvents() throws -> AsyncThrowingStream<JSONValue, any Error> {
+        try lock.withLock {
+            guard !closed, !stopping else { throw RPCFailure.closed }
+            let stream = AsyncThrowingStream<JSONValue, any Error>.makeStream(
+                bufferingPolicy: .bufferingOldest(eventCapacity)
+            )
+            eventContinuation.finish(throwing: RPCFailure.eventOverflow)
+            eventContinuation = stream.continuation
+            return stream.stream
+        }
     }
 
     public func request(
@@ -213,9 +232,13 @@ public final class RPCProcess: @unchecked Sendable {
                 entry.continuation.resume(throwing: authentication ? RPCFailure.providerAuthenticationRequired : RPCFailure.rejected(entry.command))
             }
         } else {
-            if case .dropped = eventContinuation.yield(record) {
-                // Keep reading stdout and resolving commands after a slow consumer fails.
-                eventContinuation.finish(throwing: RPCFailure.eventOverflow)
+            lock.withLock {
+                guard !closed else { return }
+                if case .dropped = eventContinuation.yield(record) {
+                    // Keep draining stdout. Replacement and termination use this same
+                    // lock so an old overflow cannot finish a new subscription.
+                    eventContinuation.finish(throwing: RPCFailure.eventOverflow)
+                }
             }
         }
     }
@@ -227,18 +250,18 @@ public final class RPCProcess: @unchecked Sendable {
     }
 
     private func finish(error: any Error) {
-        let result = lock.withLock { () -> ([Pending], Bool) in
+        let entries = lock.withLock {
             closed = true
             let entries = Array(pending.values)
             pending.removeAll()
-            return (entries, stopping)
+            if stopping { eventContinuation.finish() }
+            else { eventContinuation.finish(throwing: error) }
+            return entries
         }
-        for entry in result.0 {
+        for entry in entries {
             entry.deadline.cancel()
             // The child can exit after performing a command but before replying.
             entry.continuation.resume(throwing: RPCFailure.unknownOutcome)
         }
-        if result.1 { eventContinuation.finish() }
-        else { eventContinuation.finish(throwing: error) }
     }
 }
