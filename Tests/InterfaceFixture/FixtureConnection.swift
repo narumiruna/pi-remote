@@ -29,6 +29,7 @@ actor FixtureConnection: PhoneConnection {
         state.selected = session
         state.sessions = [SessionInfo(id: session, title: "Fixture session", directory: "/Users/fixture/project")]
         state.phase = phase == "working" || phase == "streaming" ? "working" : "idle"
+        if phase == "retrying" { state.phase = "retrying" }
         state.piVersion = "UI fixture"
         state.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
         state.models = [ModelOption(provider: "fixture", model: "one", name: "Fixture One"), ModelOption(provider: "fixture", model: "two", name: "Fixture Two")]
@@ -132,6 +133,16 @@ actor FixtureConnection: PhoneConnection {
             guard !snapshot.working else { throw RemoteFault.busy }
             return .exportSession(SessionExport(data: Data("<!doctype html><html>Private export fixture</html>".utf8)))
         case .lastAssistant: return .preview(FilePreview(name: "Last assistant text", text: "Native copy fixture", truncated: false))
+        case .cycleModel:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            snapshot.model = snapshot.model == snapshot.models[0].id ? snapshot.models[1].id : snapshot.models[0].id
+        case .cycleThinking:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            snapshot.thinking = snapshot.thinking == "low" ? "high" : "low"
+        case .autoRetry(let enabled):
+            guard !snapshot.working else { throw RemoteFault.busy }
+            snapshot.runtime?.acknowledgedAutoRetry = enabled
+        case .abortRetry: snapshot.phase = "idle"
         case .runtimeSettings:
             guard let runtime = snapshot.runtime else { throw RemoteFault.unavailable }
             return .runtimeSettings(runtime)

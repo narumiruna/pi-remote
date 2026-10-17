@@ -20,3 +20,14 @@ import Testing
     #expect(SessionAction.queueMode(kind: .steering, mode: .all).mutates)
     #expect(SessionAction.autoCompaction(enabled: false).mutates)
 }
+
+@Test func retryAcknowledgementsAreOptionalAndCoreControlsRoundTrip() throws {
+    let old = Data(#"{"steeringMode":"all","followUpMode":"all","autoCompactionEnabled":false}"#.utf8)
+    #expect(try JSONDecoder().decode(RuntimeSettings.self, from: old).acknowledgedAutoRetry == nil)
+    let settings = RuntimeSettings(steeringMode: .all, followUpMode: .all, autoCompactionEnabled: false, acknowledgedAutoRetry: false)
+    #expect(try JSONDecoder().decode(RuntimeSettings.self, from: JSONEncoder().encode(settings)) == settings)
+    for action in [SessionAction.cycleModel, .cycleThinking, .autoRetry(enabled: false), .abortRetry] {
+        #expect(action.mutates && action.needsSession && !action.changesSession)
+        #expect(try JSONDecoder().decode(SessionAction.self, from: JSONEncoder().encode(action)) == action)
+    }
+}

@@ -96,6 +96,21 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             guard let level = configured.thinkingLevels.last else { throw CheckFailure.assertion(#line) }
             _ = try await send(.thinking(level: level))
             try require(await host.state().thinking == level)
+            _ = try await send(.cycleThinking)
+            try require(await host.state().thinking == configured.thinkingLevels.first)
+            _ = try await send(.cycleModel)
+            let cycled = await host.state()
+            try require(cycled.models.contains { $0.id == cycled.model })
+            _ = try await send(.model(provider: model.provider, id: model.model))
+            for enabled in [false, true] {
+                _ = try await send(.autoRetry(enabled: enabled))
+                guard case .runtimeSettings(let runtime) = try await send(.runtimeSettings) else { throw CheckFailure.assertion(#line) }
+                try require(runtime.acknowledgedAutoRetry == enabled)
+                let settings = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: root.appendingPathComponent("agent/settings.json")))
+                try require(settings["retry"]?["enabled"]?.bool == enabled)
+            }
+            _ = try await send(.abortRetry)
+            try require(await host.state().phase == "idle")
             _ = try await send(.rename(name: "Native workflow fixture"))
             try require(await host.state().sessions.first?.title == "Native workflow fixture")
             for (name, method) in [("rpc-input", "input"), ("rpc-editor", "editor"), ("fixture-select", "select"), ("fixture-confirm", "confirm")] {

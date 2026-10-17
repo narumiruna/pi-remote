@@ -29,9 +29,10 @@ final class InterfaceTests: XCTestCase {
                 if element.frame.midY > top + 25, element.frame.midY < app.frame.maxY - 60 { return }
                 down = element.frame.midY <= top + 25
             }
+            // Drag the leading gutter so menu pickers do not consume the gesture.
             // Short drags avoid skipping a row behind the navigation bar.
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.5 : 0.72))
-                .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.72 : 0.5)))
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: down ? 0.5 : 0.72))
+                .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: down ? 0.72 : 0.5)))
         }
         XCTFail("Control did not become fully reachable: " + element.label)
     }
@@ -81,6 +82,52 @@ final class InterfaceTests: XCTestCase {
         let use = app.buttons["Use this folder"]
         XCTAssertTrue(use.waitForExistence(timeout: 5)); use.tap()
         XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
+    }
+
+    func testCoreModelAndThinkingCyclingRefreshTheControls() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let modelCycle = app.buttons["Cycle model"]
+        reveal(modelCycle, app: app); reachable(modelCycle, app: app); modelCycle.tap()
+        let model = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model,")).firstMatch
+        reveal(model, app: app, towardTop: true)
+        XCTAssertTrue(model.label.contains("Fixture Two"))
+        let thinkingCycle = app.buttons["Cycle thinking level"]
+        reveal(thinkingCycle, app: app); reachable(thinkingCycle, app: app); thinkingCycle.tap()
+        let thinking = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Thinking,")).firstMatch
+        reveal(thinking, app: app, towardTop: true)
+        XCTAssertTrue(thinking.label.contains("high"))
+        capture(app, "compact-core-cycling")
+    }
+
+    func testRetrySettingsDistinguishAcknowledgementFromReadBack() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let retry = app.buttons["Automatic retry controls"]
+        reveal(retry, app: app); retry.tap()
+        let disable = app.buttons["Disable automatic retry"]
+        reveal(disable, app: app); disable.tap()
+        XCTAssertTrue(app.alerts["Update Pi settings on the Mac?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancel"].tap()
+        let acknowledgment = app.staticTexts["retry-acknowledgment"]
+        reveal(acknowledgment, app: app, towardTop: true)
+        XCTAssertTrue(acknowledgment.label.contains("No retry setting request"))
+        reveal(disable, app: app); disable.tap(); app.alerts.buttons["Apply"].tap()
+        reveal(acknowledgment, app: app, towardTop: true)
+        XCTAssertEqual(acknowledgment.label, "Last acknowledged request: disabled")
+        let refresh = app.buttons["Refresh settings"]
+        reveal(refresh, app: app); reachable(refresh, app: app); refresh.tap()
+        reveal(acknowledgment, app: app, towardTop: true)
+        XCTAssertEqual(acknowledgment.label, "Last acknowledged request: disabled")
+        capture(app, "compact-retry-acknowledgment")
+    }
+
+    func testRetryWaitCanBeCancelledWithoutOpeningIdleOnlySettings() throws {
+        let app = launch(["retrying"])
+        controls(app)
+        let cancel = app.buttons["Cancel retry wait"]
+        reveal(cancel, app: app); reachable(cancel, app: app); cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
     }
 
     func testReleaseNotesPageNavigationAndReload() throws {
@@ -391,12 +438,12 @@ final class InterfaceTests: XCTestCase {
         let applied = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "All queued messages"), object: steering)
         XCTAssertEqual(XCTWaiter.wait(for: [applied], timeout: 5), .completed)
         let compaction = app.switches["Automatic compaction"]
-        for _ in 0..<8 where !compaction.isHittable { app.swipeUp() }
+        reveal(compaction.switches.firstMatch, app: app)
         XCTAssertEqual(compaction.value as? String, "1")
-        compaction.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        compaction.switches.firstMatch.tap()
         XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5)); app.buttons["Cancel"].tap()
         XCTAssertEqual(compaction.value as? String, "1")
-        compaction.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        compaction.switches.firstMatch.tap()
         XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5)); app.buttons["Apply"].tap()
         let disabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '0'"), object: compaction)
         XCTAssertEqual(XCTWaiter.wait(for: [disabled], timeout: 5), .completed)

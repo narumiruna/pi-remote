@@ -124,6 +124,87 @@ private func temporaryDirectory() throws -> URL {
     #expect(state.phase == "idle")
 }
 
+@Test(.timeLimit(.minutes(1))) func coreCyclingAndRetryControlsAreDeduplicatedAndProcessScoped() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let support = root.appendingPathComponent("support")
+    let host = try HostCoordinator(support: support, executable: fakePi(at: root))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let session = try #require(await host.state().selected)
+        #expect(await host.state().runtime?.acknowledgedAutoRetry == nil)
+        for action in [SessionAction.cycleModel, .cycleThinking, .autoRetry(enabled: false), .autoRetry(enabled: true), .abortRetry] {
+            let request = AppRequest(epoch: host.epoch, session: session, action: action)
+            #expect(await host.handle(request, device: device) == .ok)
+            #expect(await host.handle(request, device: device) == .ok)
+        }
+        #expect(await host.state().thinking == "low")
+        #expect(await host.state().model == "test/fixture")
+        #expect(await host.state().runtime?.acknowledgedAutoRetry == true)
+        let refreshed = await host.handle(AppRequest(epoch: host.epoch, session: session, action: .runtimeSettings), device: device)
+        guard case .runtimeSettings(let value) = refreshed else { Issue.record("Missing runtime settings"); await host.shutdown(); return }
+        #expect(value.acknowledgedAutoRetry == true)
+        #expect(try String(contentsOf: support.appendingPathComponent("pi-sessions/" + session.uuidString + "/core-controls"), encoding: .utf8) == "MTDEA")
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: UUID(), action: .autoRetry(enabled: false)), device: device) == .failure(.conflict))
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .closeSession), device: device) == .ok)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .resumeSession(id: session)), device: device) == .ok)
+        #expect(await host.state().runtime?.acknowledgedAutoRetry == nil)
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func rejectedRetrySetterCannotInventAnAcknowledgement() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root)
+    let source = try String(contentsOf: executable, encoding: .utf8)
+    let marker = "set_auto_retry) case"
+    let start = try #require(source.range(of: marker)?.lowerBound)
+    let end = try #require(source[start...].firstIndex(of: "\n"))
+    let line = String(source[start..<end])
+    let replacement = "set_auto_retry) printf '{\"id\":\"%s\",\"type\":\"response\",\"command\":\"set_auto_retry\",\"success\":false,\"error\":\"Rejected fixture setting\"}\\n' \"$id\" ;;"
+    try source.replacingOccurrences(of: line, with: replacement).write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: executable)
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let session = try #require(await host.state().selected)
+        let request = AppRequest(epoch: host.epoch, session: session, action: .autoRetry(enabled: true))
+        #expect(await host.handle(request, device: device) == .failure(.invalidRequest))
+        #expect(await host.handle(request, device: device) == .failure(.invalidRequest))
+        #expect(await host.state().runtime?.acknowledgedAutoRetry == nil)
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
+@Test(.timeLimit(.minutes(1))) func retryCancellationBypassesPendingMutationsButDoesNotAnswerDialogs() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: fakePi(at: root, hold: true))
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let session = try #require(await host.state().selected)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .prompt(text: "Synthetic work", delivery: .prompt, image: nil)), device: device) == .ok)
+        for action in [SessionAction.cycleModel, .cycleThinking, .autoRetry(enabled: true)] {
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: action), device: device) == .failure(.busy))
+        }
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .abortRetry), device: device) == .ok)
+        for _ in 0..<100 { if await !host.state().working { break }; try await Task.sleep(for: .milliseconds(10)) }
+        #expect(await !host.state().working)
+        let command = Task { await host.handle(AppRequest(epoch: host.epoch, session: session, action: .command(name: "ask", arguments: "")), device: device) }
+        for _ in 0..<100 { if await !host.state().dialogs.isEmpty { break }; try await Task.sleep(for: .milliseconds(10)) }
+        let dialog = try #require(await host.state().dialogs.first)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .abortRetry), device: device) == .ok)
+        #expect(await host.state().dialogs.first?.id == dialog.id)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .answer(dialog: dialog.id, value: nil, confirmed: nil, cancelled: true)), device: device) == .ok)
+        #expect(await command.value == .ok)
+        await host.shutdown()
+    } catch { await host.shutdown(); throw error }
+}
+
 private func fakePi(at root: URL, hold: Bool = false, image: Data? = nil) throws -> URL {
     let url = root.appendingPathComponent("fake-pi")
     let script = #"""
@@ -163,6 +244,10 @@ while IFS= read -r line; do
         set_steering_mode) printf x >> "$folder/runtime-writes"; steering=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
         set_follow_up_mode) printf x >> "$folder/runtime-writes"; followup=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
         set_auto_compaction) printf x >> "$folder/runtime-writes"; case "$line" in *'"enabled":true'*) compaction=true ;; *) compaction=false ;; esac; reply '{}' ;;
+        cycle_model) printf M >> "$folder/core-controls"; reply 'null' ;;
+        cycle_thinking_level) printf T >> "$folder/core-controls"; thinking=low; reply '{"level":"low"}' ;;
+        set_auto_retry) case "$line" in *'"enabled":true'*) printf E >> "$folder/core-controls" ;; *) printf D >> "$folder/core-controls" ;; esac; reply '{}' ;;
+        abort_retry) printf A >> "$folder/core-controls"; reply '{}'; if [ "$streaming" = true ]; then streaming=false; printf '{"type":"agent_settled"}\n'; fi ;;
         get_session_stats) reply '{"userMessages":1,"assistantMessages":1,"toolCalls":0,"toolResults":0,"totalMessages":2,"tokens":{"input":10,"output":20,"cacheRead":0,"cacheWrite":0,"total":30},"cost":0.01,"contextUsage":{"tokens":30,"contextWindow":200000,"percent":0.015},"sessionFile":"private-fixture-path"}' ;;
         get_entries) entries=$(/usr/bin/tail -n +2 "$file" | /usr/bin/awk 'NF { if (seen++) printf ","; printf "%s", $0 }'); if [ -z "$entries" ]; then reply '{"entries":[],"leafId":null}'; else leaf=$(/usr/bin/tail -1 "$file" | /usr/bin/plutil -extract id raw -o - -); reply "{\"entries\":[$entries],\"leafId\":\"$leaf\"}"; fi ;;
         set_thinking_level) thinking=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"level":"\([^"]*\)".*/\1/p'); reply '{}' ;;

@@ -132,7 +132,7 @@ public actor HostCoordinator {
         let action = request.action
         if action.mutates || action.needsSession {
             let priority: Bool
-            switch action { case .stop, .answer: priority = true; default: priority = false }
+            switch action { case .stop, .answer, .abortRetry: priority = true; default: priority = false }
             guard priority || mutations.isEmpty else { throw RemoteFault.busy }
             mutations.insert(request.id)
         }
@@ -168,6 +168,15 @@ public actor HostCoordinator {
             _ = try await requireRPC().request("set_auto_compaction", fields: ["enabled": .bool(enabled)])
             let applied = try await refreshRuntime()
             guard applied.autoCompactionEnabled == enabled else { throw RemoteFault.conflict }
+        case .autoRetry(let enabled):
+            guard !snapshot.working else { throw RemoteFault.busy }
+            try await requireIdle()
+            var value = try await refreshRuntime()
+            _ = try await requireRPC().request("set_auto_retry", fields: ["enabled": .bool(enabled)])
+            value.acknowledgedAutoRetry = enabled
+            snapshot.runtime = value
+        case .abortRetry:
+            _ = try await requireRPC().request("abort_retry")
         case .closeSession:
             guard !snapshot.working else { throw RemoteFault.busy }
             try await requireIdle()
@@ -282,6 +291,12 @@ public actor HostCoordinator {
             guard !snapshot.working, snapshot.thinkingLevels.contains(level) else { throw RemoteFault.invalidRequest }
             try await requireIdle()
             _ = try await requireRPC().request("set_thinking_level", fields: ["level": .string(level)])
+            try await refreshConfiguration()
+        case .cycleModel, .cycleThinking:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            try await requireIdle()
+            let command = action == .cycleModel ? "cycle_model" : "cycle_thinking_level"
+            _ = try await requireRPC().request(command)
             try await refreshConfiguration()
         case .compact(let instructions):
             guard !snapshot.working, instructions.utf8.count <= 16_384 else { throw RemoteFault.busy }
@@ -483,7 +498,11 @@ public actor HostCoordinator {
     }
 
     private func decodeRuntime(_ data: JSONValue) throws -> RuntimeSettings {
-        do { return try JSONDecoder().decode(RuntimeSettings.self, from: JSONEncoder().encode(data)) }
+        do {
+            var value = try JSONDecoder().decode(RuntimeSettings.self, from: JSONEncoder().encode(data))
+            value.acknowledgedAutoRetry = snapshot.runtime?.acknowledgedAutoRetry
+            return value
+        }
         catch { throw RemoteFault.incompatiblePi }
     }
 

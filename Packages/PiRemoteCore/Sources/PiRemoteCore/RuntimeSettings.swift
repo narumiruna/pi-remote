@@ -11,8 +11,10 @@ public struct RuntimeSettings: Codable, Sendable, Equatable {
     public var steeringMode: QueueMode
     public var followUpMode: QueueMode
     public var autoCompactionEnabled: Bool
-    public init(steeringMode: QueueMode, followUpMode: QueueMode, autoCompactionEnabled: Bool) {
+    /// Last setter acknowledged in this Pi process; get_state does not report the effective retry setting.
+    public var acknowledgedAutoRetry: Bool?
+    public init(steeringMode: QueueMode, followUpMode: QueueMode, autoCompactionEnabled: Bool, acknowledgedAutoRetry: Bool? = nil) {
         self.steeringMode = steeringMode; self.followUpMode = followUpMode
-        self.autoCompactionEnabled = autoCompactionEnabled
+        self.autoCompactionEnabled = autoCompactionEnabled; self.acknowledgedAutoRetry = acknowledgedAutoRetry
     }
 }

@@ -4,7 +4,7 @@
 
 Native last-response copying, queue delivery settings, automatic compaction and idle-session closing now pass local checks with Pi 1.3.0. This does not complete the accepted native-workflow scope.
 
-The current checks pass 74 root tests, 27 shared tests, three macOS tests, 29 product simulator tests and eleven interface tests. Root and shared suites also pass with Thread Sanitizer. Product simulator tests pass on local LAN and Tailscale. Unsigned Mac, simulator and iOS device-SDK builds pass. These checks do not establish hardware, off-site or release support.
+The earlier copy/runtime checkpoint passed 74 root tests, 27 shared tests, three macOS tests, 29 product simulator tests and eleven interface tests. The newer core cycle/retry checkpoint is recorded below. Root and shared suites also pass with Thread Sanitizer. Product simulator tests pass on local LAN and Tailscale. Unsigned Mac, simulator and iOS device-SDK builds pass. These checks do not establish hardware, off-site or release support.
 
 ## Copy last response
 
@@ -24,7 +24,24 @@ The host requires idle state, serializes mutations through the same journal as o
 
 Installed-Pi tests change and restore all three settings in a private agent directory, query their actual values and verify unchanged real global settings. Fake-process tests cover unconfirmed writes, duplicate requests and working-state rejection. Production TLS tests query and change queue delivery on loopback, LAN and Tailscale. UI tests verify Cancel leaves values unchanged and Apply displays refreshed values.
 
-Automatic retry and the broader settings UI remain incomplete. Pi's inspected RPC state does not expose a current automatic-retry setting. No guessed value or arbitrary settings-file endpoint was added.
+Automatic retry now has separate native controls under **Session controls → Automatic retry controls**. Pi's RPC state still does not expose its effective setting. The screen therefore offers confirmed Enable/Disable requests and labels only the last acknowledged request in this Pi process. Refresh does not claim read-back verification. A new process resets that acknowledgement to unknown. No guessed current value or arbitrary settings-file endpoint was added. Preferences outside core RPC are not required by the user-confirmed scope.
+
+## Core model cycling and retry checkpoint
+
+The new `model-cycling` capability adds **Cycle model** and **Cycle thinking level** to Session controls. These call `cycle_model` and `cycle_thinking_level`, then refresh the actual model and supported thinking values. A null result is a valid no-change outcome. Pi controls its model cycle; the app does not invent a separate scope or sequence.
+
+The `retry-controls` capability adds confirmed `set_auto_retry` requests and **Cancel retry wait** when the displayed phase is retrying. The host requires idle state for settings and cycling. `abort_retry` can bypass a pending mutation, just like recovery controls must; it does not approve or dismiss extension dialogs, clear queues, claim idle or replace Stop. Pi's later events determine settlement. Cancelling a retry wait cannot undo tool side effects.
+
+Verification:
+
+- All 86 root tests and 36 shared tests pass normally and with Thread Sanitizer. New cases cover typed round trips, old settings payloads, optional acknowledgements, request deduplication, null model-cycle responses, stale sessions, working-state rejection, failed setters, refresh/process reset and retry cancellation while another mutation waits for a dialog.
+- Installed Pi 1.3.0 `NativeWorkflowCheck` passes normally and with Thread Sanitizer without inference. It checks actual cycle results, acknowledged retry requests, private fixture settings-file writes and idle retry cancellation, with unchanged real user settings. This is not yet an active real-retry lifecycle check.
+- Four focused compact-interface checks pass without skips: cycling, retry consent/acknowledgement/refresh, retry cancellation, and the existing queue/compaction confirmation regression. Captures verify large-text controls. The remaining interface suite still needs its final acceptance run.
+- All three Mac-model checks and unsigned Mac, simulator and device-SDK builds pass. A separate Herdr Pi agent then ran all 31 product E2E tests on LAN and Tailscale with no failures or skips. Parent inspection confirmed both result summaries, clean fixture shutdown, unchanged Pi settings and no surviving fixture processes. Evidence is `/tmp/pi-remote-delegated-core-e2e-u6sQps/`. Source code stayed unchanged during that delegation; only documentation was updated concurrently.
+
+Logs use `/tmp/pi-remote-core-controls-{root,tsan,core,core-tsan,installed,installed-tsan,ui-verified,mac-tests,ios,device}.log`; result summaries use the same prefix and `-summary.json`. The initial cached SwiftPM build linked an old initializer signature; a fresh scratch directory passed. UI attempts exposed short drags consumed by menu pickers and a coordinate tap on a clipped switch. The test now drags the leading gutter and targets the actual switch. Retry controls also use a separate, eager native screen rather than adding a large section to the delivery form. Failed attempts are not passing evidence.
+
+The remaining core RPC audit stays open. No installed-extension integration or terminal-only settings UI is required to close it.
 
 ## Close Pi session
 

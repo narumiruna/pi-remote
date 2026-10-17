@@ -23,6 +23,8 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case stop
     case model(provider: String, id: String)
     case thinking(level: String)
+    case cycleModel
+    case cycleThinking
     case compact(instructions: String)
     case rename(name: String)
     case history
@@ -42,6 +44,8 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case runtimeSettings
     case queueMode(kind: QueueKind, mode: QueueMode)
     case autoCompaction(enabled: Bool)
+    case autoRetry(enabled: Bool)
+    case abortRetry
     case closeSession
 
     public var mutates: Bool {

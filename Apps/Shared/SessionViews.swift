@@ -74,7 +74,18 @@ struct SessionControls: View {
                 Picker("Thinking", selection: Binding(get: { state.thinking }, set: { perform(.thinking(level: $0)) })) {
                     ForEach(state.thinkingLevels, id: \.self) { Text($0).tag($0) }
                 }
+                if state.capabilities.contains("model-cycling") {
+                    Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: 44)
+                    Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: 44)
+                }
             }.disabled(state.working || state.selected == nil)
+            if state.capabilities.contains("retry-controls"), state.phase == "retrying" {
+                Section("Retry recovery") {
+                    Text("Cancelling a retry wait does not undo tool actions or cancel every kind of active work. Use Stop to stop work and clear queued instructions.").font(.caption)
+                    Button("Cancel retry wait") { perform(.abortRetry) }.frame(minHeight: 44)
+                        .disabled(state.selected == nil || state.phase != "retrying")
+                }
+            }
             if state.capabilities.contains("session-statistics") {
                 Section("Usage") {
                     NavigationLink("Session tokens and cost") { SessionStatisticsView(request: request) }
@@ -97,6 +108,10 @@ struct SessionControls: View {
                 Section("Runtime") {
                     NavigationLink("Pi runtime settings") { RuntimeSettingsView(request: request) }
                         .frame(minHeight: 44).disabled(state.working || state.selected == nil)
+                    if state.capabilities.contains("retry-controls") {
+                        NavigationLink("Automatic retry controls") { RetrySettingsView(request: request) }
+                            .frame(minHeight: 44).disabled(state.working || state.selected == nil)
+                    }
                 }
             }
             Section("Session") {
