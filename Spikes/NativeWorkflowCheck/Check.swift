@@ -150,8 +150,29 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             let closed = await host.state()
             try require(closed.selected == nil && closed.messages.isEmpty)
             try require(await host.state().sessions == catalog)
+            // Seed synthetic history only while Pi is closed. No provider request is needed.
+            let stored = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: root.appendingPathComponent("support/sessions.json")))
+            guard let item = stored.array?.first(where: { $0["info"]?["id"]?.string == selected?.uuidString }),
+                  let path = item["file"]?.string, let file = URL(string: path), let piID = item["piID"]?.string else { throw CheckFailure.assertion(#line) }
+            let header: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(piID), "cwd": .string(folder.path), "timestamp": .string("2026-10-17T00:00:00.000Z")])
+            let entry: JSONValue = .object(["type": .string("message"), "id": .string("fixture-user"), "parentId": .null,
+                "timestamp": .string("2026-10-17T00:00:00.000Z"), "message": .object(["role": .string("user"), "content": .string("Private export fixture"), "timestamp": .number(1_792_195_200_000)])])
+            var seeded = try JSONEncoder().encode(header); seeded.append(10)
+            seeded.append(try JSONEncoder().encode(entry)); seeded.append(10)
+            try seeded.write(to: file)
             _ = try await send(.resumeSession(id: selected!))
             try require(await host.state().runtime == originalRuntime)
+            guard case .exportSession(let exported) = try await send(.exportSession) else { throw CheckFailure.assertion(#line) }
+            try exported.validate()
+            let html = String(decoding: exported.data, as: UTF8.self)
+            let prefix = "<script id=\"session-data\" type=\"application/json\">"
+            guard let start = html.range(of: prefix)?.upperBound,
+                  let end = html.range(of: "</script>", range: start..<html.endIndex)?.lowerBound,
+                  let data = Data(base64Encoded: String(html[start..<end])) else { throw CheckFailure.assertion(#line) }
+            try require(html.lowercased().contains("<!doctype html>"))
+            try require(String(decoding: data, as: UTF8.self).contains("Private export fixture"))
+            try require(try AppPacket(AppResult.exportSession(exported)).encode().count < 4 * 1_024 * 1_024)
+            try require(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("support").path).allSatisfy { !$0.hasPrefix("export-") })
             await host.shutdown()
             try require((try? Data(contentsOf: globalSettings)) == settingsBefore)
         } catch { await host.shutdown(); throw error }

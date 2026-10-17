@@ -155,6 +155,7 @@ while IFS= read -r line; do
         get_available_thinking_levels) reply '{"levels":["off","low"]}' ;;
         get_commands) reply '{"commands":[{"name":"ask","description":"Fixture dialog","source":"extension"}]}' ;;
         get_messages) reply '{"messages":[]}' ;;
+        export_html) output=$(printf '%s' "$line" | /usr/bin/plutil -extract outputPath raw -o - -); printf '<!doctype html><html>private fixture</html>' > "$output"; reply "{\"path\":\"$output\"}" ;;
         get_last_assistant_text) reply '{"text":"Fixture complete"}' ;;
         set_steering_mode) printf x >> "$folder/runtime-writes"; steering=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
         set_follow_up_mode) printf x >> "$folder/runtime-writes"; followup=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
@@ -403,6 +404,55 @@ func lastAssistantTextHasExplicitEmptyInvalidAndTruncatedResults(mode: String) a
     await host.shutdown()
 }
 
+@Test(.timeLimit(.minutes(1)), arguments: ["valid", "wrong-path", "missing", "large", "symlink", "busy"])
+func sessionExportIsBoundedPrivateAndSessionScoped(mode: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root, hold: true)
+    let support = root.appendingPathComponent("support")
+    let exportScript = #"""
+        export_html)
+            output=$(printf '%s' "$line" | /usr/bin/plutil -extract outputPath raw -o - -)
+            printf '<!doctype html><html>private fixture</html>' > "$output"
+            reply "{\"path\":\"$output\"}" ;;
+"""#
+    var body = exportScript
+    if mode == "wrong-path" { body = body.replacingOccurrences(of: "$output\\\"}", with: "/private/wrong.html\\\"}") }
+    if mode == "missing" { body = body.replacingOccurrences(of: "            reply", with: "            /bin/rm \"$output\"\n            reply") }
+    if mode == "large" { body = body.replacingOccurrences(of: "            reply", with: "            /usr/sbin/mkfile 3m \"$output\"\n            reply") }
+    if mode == "symlink" { body = body.replacingOccurrences(of: "            reply", with: "            /bin/rm \"$output\"; /bin/ln -s /etc/hosts \"$output\"\n            reply") }
+    let original = try String(contentsOf: executable, encoding: .utf8)
+    let exportLine = try #require(original.components(separatedBy: "\n").first { $0.hasPrefix("        export_html)") })
+    let script = original.replacingOccurrences(of: exportLine, with: body)
+    try script.write(to: executable, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let host = try HostCoordinator(support: support, executable: executable)
+    do {
+        let device = UUID(), directory = try await host.directories.register(root)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let session = try #require(await host.state().selected)
+        let request = AppRequest(epoch: host.epoch, session: session, action: .exportSession)
+        if mode == "busy" {
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .prompt(text: "Hold fixture", delivery: .prompt, image: nil)), device: device) == .ok)
+        }
+        let result = await host.handle(request, device: device)
+        switch mode {
+        case "valid":
+            #expect(result == .exportSession(SessionExport(data: Data("<!doctype html><html>private fixture</html>".utf8))))
+            let decoded = try AppPacket<AppResult>.decode(AppPacket(result).encode()).payload
+            #expect(decoded == result)
+        case "wrong-path": #expect(result == .failure(.incompatiblePi))
+        case "missing", "symlink": #expect(result == .failure(.permissionDenied))
+        case "large": #expect(result == .failure(.tooLarge))
+        default: #expect(result == .failure(.busy))
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: support.path).allSatisfy { !$0.hasPrefix("export-") })
+        var stale = request; stale.session = UUID()
+        #expect(await host.handle(stale, device: device) == .failure(.conflict))
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
 @Test(.timeLimit(.minutes(1))) func missingPiReportsFailureWithoutStartingAChild() async throws {
     let root = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: root) }
@@ -615,6 +665,7 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         guard case .runtimeSettings(let changedRuntime) = try await client.request(.runtimeSettings) else { throw RemoteFault.invalidRequest }
         #expect(changedRuntime.steeringMode == .all)
         #expect(try await client.request(.lastAssistant) == .preview(FilePreview(name: "Last assistant text", text: "Fixture complete", truncated: false)))
+        #expect(try await client.request(.exportSession) == .exportSession(SessionExport(data: Data("<!doctype html><html>private fixture</html>".utf8))))
         _ = try await client.request(.prompt(text: "Interface fixture", delivery: .prompt, image: nil))
         for _ in 0..<100 {
             if await host.state().messages.contains(where: { $0.images?.isEmpty == false }) { break }
@@ -627,6 +678,7 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         var wrongImageScope = before.context; wrongImageScope.session = UUID()
         await #expect(throws: RemoteFault.conflict) { try await client.request(.outputImage(id: reference.id), context: wrongImageScope) }
         #expect(before.working)
+        await #expect(throws: RemoteFault.busy) { try await client.request(.exportSession) }
         await client.disconnect()
         #expect(await host.state().working)
         try await client.connect(mac)
@@ -649,6 +701,7 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         _ = try await client.request(.stop)
         #expect(await !host.state().working)
         try await server.revoke(mac.device)
+        await #expect(throws: (any Error).self) { try await client.request(.exportSession) }
         await #expect(throws: (any Error).self) { try await client.request(.outputImage(id: reference.id)) }
         await #expect(throws: (any Error).self) { try await client.request(.snapshot) }
         await #expect(throws: (any Error).self) { try await client.connect(mac) }

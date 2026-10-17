@@ -78,6 +78,12 @@ struct SessionControls: View {
                         .frame(minHeight: 44).disabled(state.selected == nil)
                 }
             }
+            if state.capabilities.contains("session-export") {
+                Section("Export") {
+                    NavigationLink("Review and export session") { SessionExportView(request: request) }
+                        .frame(minHeight: 44).disabled(state.working || state.selected == nil)
+                }
+            }
             if state.capabilities.contains("runtime-settings"), state.runtime != nil {
                 Section("Runtime") {
                     NavigationLink("Pi runtime settings") { RuntimeSettingsView(request: request) }

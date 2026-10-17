@@ -21,6 +21,20 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(app.frame.contains(element.frame), element.label)
         if keyboard { XCTAssertLessThanOrEqual(element.frame.maxY, app.keyboards.firstMatch.frame.minY + 1) }
     }
+    private func reveal(_ element: XCUIElement, app: XCUIApplication, towardTop: Bool = false) {
+        for _ in 0..<32 {
+            let top = app.navigationBars.allElementsBoundByIndex.filter(\.isHittable).map { $0.frame.maxY }.max() ?? 0
+            var down = towardTop
+            if element.exists, element.isHittable {
+                if element.frame.midY > top + 25, element.frame.midY < app.frame.maxY - 60 { return }
+                down = element.frame.midY <= top + 25
+            }
+            // Short drags avoid skipping a row behind the navigation bar.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.5 : 0.72))
+                .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: down ? 0.72 : 0.5)))
+        }
+        XCTFail("Control did not become fully reachable: " + element.label)
+    }
     private func capture(_ app: XCUIApplication, _ name: String) {
         let image = XCTAttachment(screenshot: app.screenshot())
         image.name = name; image.lifetime = .keepAlways; add(image)
@@ -111,7 +125,7 @@ final class InterfaceTests: XCTestCase {
         reachable(app.buttons["Done"], app: app); app.buttons["Done"].tap()
         XCTAssertTrue(app.navigationBars["Session controls"].waitForExistence(timeout: 5))
         let close = app.buttons["Close Pi session"].firstMatch
-        for _ in 0..<8 where !close.isHittable { app.swipeUp() }
+        reveal(close, app: app)
         XCTAssertTrue(close.isHittable); close.tap()
         XCTAssertTrue(app.staticTexts["Close this Pi session?"].waitForExistence(timeout: 5))
         let confirm = try XCTUnwrap(app.buttons.matching(identifier: "Close Pi session").allElementsBoundByIndex.first { $0.isHittable })
@@ -122,6 +136,59 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Send"].isEnabled)
         XCTAssertFalse(app.buttons["Stop"].exists)
+    }
+
+    func testSessionExportRequiresConsentSupportsCancelDiscardAndSave() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let link = app.buttons["Review and export session"]
+        reveal(link, app: app)
+        XCTAssertTrue(link.isHittable); link.tap()
+        XCTAssertTrue(app.navigationBars["Export session"].waitForExistence(timeout: 5))
+        let prepare = app.buttons["Prepare HTML export"]
+        reveal(prepare, app: app)
+        XCTAssertFalse(prepare.isEnabled)
+        let consent = app.switches["export-consent"]
+        reveal(consent.switches.firstMatch, app: app, towardTop: true)
+        consent.switches.firstMatch.tap()
+        XCTAssertEqual(consent.value as? String, "1")
+        reveal(prepare, app: app)
+        XCTAssertTrue(prepare.isEnabled); prepare.tap()
+        let save = app.buttons["Save HTML file"]
+        reveal(save, app: app)
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["export-saved"].exists)
+        save.tap()
+        XCTAssertTrue(app.textFields["DOCPicker.filenameTextField"].waitForExistence(timeout: 5))
+        // The system picker exposes a misplaced Cancel proxy on this SDK.
+        // Dismiss its sheet with the standard downward gesture instead.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.065))
+            .press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        XCTAssertTrue(app.textFields["DOCPicker.filenameTextField"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["export-saved"].exists)
+        let discard = app.buttons["Discard export"]
+        reveal(discard, app: app)
+        reachable(discard, app: app); discard.tap()
+        XCTAssertTrue(prepare.waitForExistence(timeout: 5))
+        XCTAssertFalse(prepare.isEnabled)
+        XCTAssertFalse(save.exists)
+        reveal(consent.switches.firstMatch, app: app, towardTop: true)
+        consent.switches.firstMatch.tap()
+        XCTAssertEqual(consent.value as? String, "1")
+        reveal(prepare, app: app)
+        prepare.tap()
+        reveal(save, app: app)
+        save.tap()
+        let filename = app.textFields["DOCPicker.filenameTextField"]
+        XCTAssertTrue(filename.waitForExistence(timeout: 5))
+        filename.tap()
+        filename.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (filename.value as? String ?? "").count))
+        filename.typeText("pi-export-" + UUID().uuidString)
+        app.buttons["Save"].tap()
+        let saved = app.staticTexts["export-saved"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        XCTAssertFalse(save.exists)
     }
 
     func testRuntimeSettingsRequireConfirmationAndRefreshTheAppliedValue() throws {

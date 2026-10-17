@@ -181,6 +181,10 @@ public actor HostCoordinator {
             snapshot.model = ""; snapshot.thinking = ""; snapshot.models = []; snapshot.thinkingLevels = []; snapshot.commands = []
             snapshot.runtime = nil; snapshot.draft = nil; snapshot.draftID = nil; snapshot.notices = []; snapshot.hasOlderMessages = false
             dialogDeadlines = [:]; statuses = [:]; notifications = []
+        case .exportSession:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            try await requireIdle()
+            return .exportSession(try await SessionExporter.export(using: requireRPC(), support: support))
         case .statistics:
             let data = try await requireRPC().request("get_session_stats")
             let statistics: SessionStatistics

@@ -84,6 +84,9 @@ actor FixtureConnection: PhoneConnection {
         defer { if action.mutates { publish() } }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .exportSession:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            return .exportSession(SessionExport(data: Data("<!doctype html><html>Private export fixture</html>".utf8)))
         case .lastAssistant: return .preview(FilePreview(name: "Last assistant text", text: "Native copy fixture", truncated: false))
         case .runtimeSettings:
             guard let runtime = snapshot.runtime else { throw RemoteFault.unavailable }

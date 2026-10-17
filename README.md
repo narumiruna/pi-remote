@@ -6,7 +6,7 @@ Choose a Mac directory from your phone, start a managed session, watch output an
 
 ## Status
 
-**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Twenty-nine iOS simulator app tests pass with the explicit local provider fixture on LAN and Tailscale, including coding, image output, reconnection and host restart. Eleven separate compact-interface UI tests also pass. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
+**Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Twenty-nine iOS simulator app tests pass with the explicit local provider fixture on LAN and Tailscale, including coding, image output, reconnection and host restart. Twelve separate compact-interface UI tests also pass in bounded batches. The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
 
 The full Pi workflow review remains open. Local model/transport setup checks pass; signed installation remains unverified. Compact simulator checks now cover the real keyboard, large text, readable controls, error recovery and live scroll position. Signed physical-device coding, off-site Tailscale and hardware unlock are unverified limits, not completion gates for the current local plan. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
 
@@ -18,6 +18,7 @@ The full Pi workflow review remains open. Local model/transport setup checks pas
 - Streamed text and thinking, native Markdown blocks, fenced code, expandable tool output and authenticated native image viewing.
 - Native prompts, steering, follow-up, Stop, model/thinking controls, confirmed queue/compaction settings, command discovery and supported extension dialogs.
 - Explicit last-response copy and idle-session close/reopen controls; copying uses local-device clipboard options.
+- Consent-based local HTML session export through the native file picker, with no automatic upload; see [export limits and checks](docs/session-export.md).
 - Paged session history and entry inspection, fork/clone controls, real manual compaction, image/text input, explicit Mac-file text attachment, bounded file previews, working-tree diff and native session-usage statistics.
 - Saved Mac connections, QR-code or pasted-code pairing, explicit local approval, per-device credentials and revocation.
 - Bounded state replay and snapshot recovery, request deduplication, retained drafts and explicit unknown outcomes. Accepted prompts are not automatically resent.
