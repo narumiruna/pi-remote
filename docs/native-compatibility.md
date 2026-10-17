@@ -9,13 +9,13 @@ The current installed runtime is Pi 1.3.0 at `/Users/narumi/.bun/bin/pi`. The ex
 ## Evidence
 
 - `NativeWorkflowCheck`: selected-directory launch, models, thinking, rename, all four RPC dialog methods, actual dialog timeout and late-answer rejection, prefill, idle restoration, reviewed version-3 import and HTML export. No provider request.
-- `NativeResourceCheck`: normal private agent-directory discovery, quoted/default template expansion, skill expansion/location and native command dispatch. The fixture aborts before provider use and verifies no provider calls, tokens or cost. It does not load real personal resources or packages.
+- `NativeResourceCheck`: normal private agent-directory discovery, quoted/default template expansion, skill expansion/location, startup trust isolation, project precedence, local-package prompts and native command dispatch. The fixture aborts before provider use and verifies no provider calls, tokens or cost. It does not load real personal resources or installed packages.
 - `NativeProviderCheck`: real image input, live streaming, steering, follow-up, queue-clearing Stop, clone, fork, real manual compaction and nonempty restoration. Resources and tools are disabled.
 - `NativeFailureCheck`: installed-Pi missing-credential rejection, deduplication and empty-session restoration in an empty home/environment.
 - `NativeExtensionCheck`: the currently configured package set loaded together in an empty home/environment, command discovery, safe menu cancellation and explicit terminal-only rejection. This does not test provider/account operations, configuration changes, sync transfers or normal credential-backed startup behavior.
 - Package, Mac-model, simulator and interface checks: [workflow evidence](workflow-verification.md) and [interface evidence](interface-verification.md).
 
-`NativeExtensionCheck` loads explicit package entry points with extensions otherwise disabled. Its inventory matches `pi list` at this checkpoint, not every package left on disk. It does not invoke `/herdr` or control Herdr. It sends no inference prompt, retains no real credentials and makes no deliberate external write. Private fixture files are removed after shutdown.
+`NativeExtensionCheck` loads explicit package entry points and `builtin:llama.cpp` with other extensions disabled. Its inventory matches `pi list` at this checkpoint, not every package left on disk. It does not invoke `/herdr` or control Herdr. It sends no inference prompt, retains no real credentials and makes no deliberate external write. Private fixture files are removed after shutdown.
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -23,7 +23,7 @@ swift run NativeExtensionCheck "$(command -v pi)" \
   /Users/narumi/.pi/agent/npm/node_modules/@narumitw
 ```
 
-The check passes in `/tmp/pi-remote-installed-extensions.log`. Its three `GAP` records are expected unsupported results, not passing implementations of those workflows.
+The expanded check passes normally and with Thread Sanitizer in `/tmp/pi-remote-builtin-extensions.log` and `/tmp/pi-remote-builtin-extensions-tsan.log`. Its four `GAP` records are expected unsupported results, not passing implementations. The installed llama.cpp handler explicitly rejects RPC before checking configuration or contacting a router. No model download, load/unload, account change or router request was attempted.
 
 ## Installed extensions
 
@@ -65,7 +65,7 @@ The installed `docs/slash-commands.md` lists built-in commands; `get_commands` i
 | Attachments and files | Image input, original raster-image retrieval/viewing, phone/Mac text-file attachment, file preview and Git diff implemented; [image checks](output-images.md) and [attachment checks](workflow-verification.md#mac-text-file-attachment) pass | Image format/size, first-frame and combined text-budget limits remain explicit. The terminal file-context extension's range-selection/editor workflow is not implemented. |
 | `/settings`, `/scoped-models` | Models/thinking, queue delivery and automatic compaction have native controls; confirmed writes and read-back checks pass | Remaining preferences, current retry-setting inspection and model scopes need a supported interface and native controls. |
 | `/login`, `/logout` | Missing-credential recovery directs the user to the Mac | This is not a native authentication-management workflow. Secrets must not move to the phone. |
-| `/llama` | Not implemented | Inspect configured router capabilities and design native management. |
+| `/llama` | Installed built-in command discovery passes, but invoking it explicitly reports that it requires interactive mode; normal and Thread Sanitizer probes confirm the rejection | Native router management remains missing. Terminal source covers current catalog state, load/unload, download/quantization, gated access, cancellation and recovery. These require a native bridge or a Swift router client with Mac-side authentication; forwarding this command does not implement them. |
 | `/copy` | Native last-text review and explicit copy pass; iOS expiration and isolated clipboard tests pass | Text beyond 256 KiB is explicitly partial; clipboard restrictions are OS options, not protection from local clipboard managers. |
 | `/export`, `/share`, `/bug` | Native reviewed HTML/full-tree and JSONL/active-branch export, system saving and separately consented native service-picker sharing pass [local checks](session-export.md) | Pi's Radius/Gist upload and bug-report workflows remain. Native service delivery is not verified. No automatic upload or redaction is claimed. |
 | `/import` | Reviewed versions 1–3 JSONL import and Pi-managed legacy migration pass [host, installed-Pi, transport and native picker checks](session-import.md); sources remain unchanged and no prompt is sent | Explicit directory choice also passes missing-folder, permission, identity and native picker checks. Switch-hook lifecycle equivalence remains. Automatic history import remains excluded. |

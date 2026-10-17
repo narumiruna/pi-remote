@@ -43,7 +43,7 @@ private struct Manifest: Decodable {
         let flags = extensions.map { "--extension " + quoted($0.path) }.joined(separator: " ")
         let script = """
         #!/bin/sh
-        exec /usr/bin/env -i HOME=\(quoted(root.path)) PATH=\(quoted(path)) TMPDIR=\(quoted(root.path)) PI_CODING_AGENT_DIR=\(quoted(root.appendingPathComponent("agent").path)) PI_TELEMETRY=0 \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-context-files --no-skills --no-prompt-templates --no-tools --provider openai --model gpt-4o \(flags) "$@"
+        exec /usr/bin/env -i HOME=\(quoted(root.path)) PATH=\(quoted(path)) TMPDIR=\(quoted(root.path)) PI_CODING_AGENT_DIR=\(quoted(root.appendingPathComponent("agent").path)) PI_TELEMETRY=0 \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-context-files --no-skills --no-prompt-templates --no-tools --provider openai --model gpt-4o --extension builtin:llama.cpp \(flags) "$@"
         """
         try script.write(to: wrapper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
@@ -61,7 +61,7 @@ private struct Manifest: Decodable {
             let initial = await host.state()
             try require(initial.error == nil)
             for command in initial.commands { print("COMMAND: \(command.name)") }
-            let names = ["accounts", "btw", "caffeinate", "stamp", "sync", "file-context", "tool", "usage", "progress", "starship", "inspect", "codex-compact", "notify"]
+            let names = ["accounts", "btw", "caffeinate", "stamp", "sync", "file-context", "tool", "usage", "progress", "starship", "inspect", "codex-compact", "notify", "llama"]
             for name in names {
                 try require(initial.commands.contains { $0.name == name })
                 let before = await host.state()
@@ -87,7 +87,7 @@ private struct Manifest: Decodable {
                 let after = await host.state()
                 try require(after.phase == "idle" && after.messages.isEmpty && after.dialogs.isEmpty)
                 try require(after.selected == before.selected)
-                let terminalOnly = ["btw": "requires interactive TUI", "file-context": "requires Pi's interactive TUI", "inspect": "requires TUI mode"]
+                let terminalOnly = ["btw": "requires interactive TUI", "file-context": "requires Pi's interactive TUI", "inspect": "requires TUI mode", "llama": "/llama is available in interactive mode"]
                 if let expected = terminalOnly[name] {
                     try require(methods.isEmpty && after.notices.contains { $0.contains(expected) })
                     print("GAP: \(name) rejects RPC with an explicit TUI requirement")
