@@ -1,8 +1,33 @@
-# Native Pi compatibility review
+# Pi core RPC coverage and compatibility
 
 ## Result
 
-The review is incomplete. Pi Remote does not yet provide the complete accepted workflow. No feature exclusion has been approved. Passing discovery, menu cancellation or an explicit unsupported notification does not establish feature parity.
+The user confirmed that app compatibility targets only the RPC protocol provided by Pi's core packages. The earlier complete-terminal and installed-extension parity requirement is superseded. The core coverage audit remains incomplete; this scope correction is not evidence that every RPC operation is implemented or tested.
+
+## Accepted boundary
+
+- Cover core RPC operations, responses and events, plus its standard extension UI subprotocol.
+- Discover extension commands and invoke them through the standard protocol without imports, required packages, name-based adapters or custom extension RPC formats.
+- Render standard dialogs, notifications, status, text widgets and editor updates generically. Controlled fixtures can verify this contract without the user's installed extensions.
+- Do not require terminal-only built-in commands, custom terminal components, individual extension workflows or custom extension protocols for acceptance.
+- Do not add a bundled Pi-side adapter or modify Pi/upstream extensions to achieve terminal parity. Such changes are not needed for the accepted scope.
+- Retain existing app-owned security, networking, filesystem and session requirements and implemented convenience features.
+
+## Core RPC audit inventory
+
+The following groups list the operations in installed Pi 1.3.0's `docs/rpc-commands.md`. Each operation still needs an explicit app mapping and direct evidence audit; grouping is not a claim that its implementation is missing or complete.
+
+| Area | Core operations | Acceptance status |
+| --- | --- | --- |
+| Work and queues | `prompt`, `steer`, `follow_up`, `abort`, `clear_queue` | Audit pending |
+| Session changes | `new_session`, `switch_session`, `set_session_name`, `fork`, `clone` | Audit pending |
+| State and history | `get_state`, `get_messages`, `get_fork_messages`, `get_entries`, `get_tree`, `get_last_assistant_text`, `get_session_stats` | Audit pending |
+| Models and thinking | `set_model`, `cycle_model`, `get_available_models`, `set_thinking_level`, `cycle_thinking_level`, `get_available_thinking_levels` | Audit pending |
+| Runtime controls | `set_steering_mode`, `set_follow_up_mode`, `compact`, `set_auto_compaction`, `set_auto_retry`, `abort_retry` | Audit pending |
+| Shell and export | `bash`, `abort_bash`, `export_html` | Audit pending; shell controls must also respect the no-general-terminal requirement |
+| Discovery | `get_commands` | Audit pending |
+
+Also inventory the core event stream and extension UI request/response methods, including cancellation, timeouts and unsupported-method behavior. Keep authenticated typed app actions, opaque filesystem/session identities, deduplication and bounded output; core RPC scope does not mean exposing an arbitrary raw RPC endpoint.
 
 The current installed runtime is Pi 1.3.0 at `/Users/narumi/.bun/bin/pi`. The executable is a Node.js entry point. `pi auth check --provider openai-codex --model gpt-6.1-sol --json --no-refresh` reports ready with OAuth, without exposing credentials. This is the only runtime version exercised here; it is not a supported-version range.
 
@@ -25,7 +50,12 @@ swift run NativeExtensionCheck "$(command -v pi)" \
 
 The expanded check passes normally and with Thread Sanitizer in `/tmp/pi-remote-builtin-extensions.log` and `/tmp/pi-remote-builtin-extensions-tsan.log`. Its four `GAP` records are expected unsupported results, not passing implementations. The installed llama.cpp handler explicitly rejects RPC before checking configuration or contacting a router. No model download, load/unload, account change or router request was attempted.
 
-## Installed extensions
+## Historical installed-extension audit (not an acceptance gate)
+
+The following package-specific checks came from the superseded terminal-parity scope. They remain diagnostic evidence only. Their unimplemented workflows are not required tasks, dependencies or blockers for this app.
+
+<details>
+<summary>Historical package observations</summary>
 
 | Package | Version | Current local evidence | Remaining native gap or check |
 | --- | --- | --- | --- |
@@ -46,9 +76,14 @@ The expanded check passes normally and with Thread Sanitizer in `/tmp/pi-remote-
 
 The earlier review incorrectly treated direct `custom()` references as proof that whole packages lacked RPC support. Current runtime evidence shows functional RPC menus in accounts, usage and progress. The remaining terminal-only cases above are explicit mode guards in the installed package sources, also verified at runtime.
 
-## Built-in and resource workflows
+</details>
 
-The installed `docs/slash-commands.md` lists built-in commands; `get_commands` intentionally excludes them. Pi Remote must map their behavior to typed native actions rather than forward arbitrary RPC.
+## Historical terminal workflow comparison (not an acceptance gate)
+
+The installed `docs/slash-commands.md` includes terminal-only commands. Their presence does not put them in core RPC scope. The following table records earlier comparisons, not current implementation requirements. Only corresponding core RPC behavior belongs in the audit above.
+
+<details>
+<summary>Historical terminal comparisons</summary>
 
 | Workflow or terminal commands | Native state | Remaining requirement |
 | --- | --- | --- |
@@ -76,14 +111,10 @@ The installed `docs/slash-commands.md` lists built-in commands; `get_commands` i
 
 Managed-session activation currently starts a new Pi child with the selected cwd. Startup/shutdown is not equivalent to Pi's `session_before_switch` or `session_before_tree` hooks. Cancellation, summary and extension lifecycle parity need an adapter or upstream interface; the passing companion-managed create/resume checks do not prove those terminal hooks.
 
-## Adapter investigation
+</details>
 
-Pi 1.3.0's RPC UI contract explicitly returns `undefined` for `custom()`. Terminal input registration is a no-op. Footer/header/editor-component overrides and custom renderers do not become serializable native UI records. The installed btw and file-context commands reject RPC before entering their terminal components; inspect also rejects browser opening in RPC. Swift cannot recover an interaction that the subprocess does not emit.
+## Disposition of the former adapter blocker
 
-The following alternatives require further work or approval; none is silently accepted:
+Pi 1.3.0's RPC `custom()` returns `undefined`, and terminal-input registration is a no-op. Installed btw, file-context, inspect and llama commands explicitly reject RPC. Those observations remain valid protocol limits, but the user-confirmed scope no longer requires adapting these workflows.
 
-1. Add RPC-native workflows to the upstream extensions and expose missing core commands through a maintained Pi interface. Changes to installed packages or upstream repositories are external writes and require approval.
-2. Add a bundled Pi extension/SDK adapter and native Swift screens. That changes the current all-Swift app-owned-service boundary and requires an explicit architecture decision. It must not embed a terminal, forward arbitrary RPC, expose credentials or mutate session files behind Pi. Authorization for a bundled adapter was requested; no explicit decision has been received. The fresh audit in `/tmp/pi-remote-runtime-extension-audit.log` still verifies the same three terminal-only rejections with Pi 1.3.0 and the current `pi list` inventory.
-3. Obtain explicit agreement to exclude the named terminal-only/configuration workflows. No such agreement exists; this would reduce the current objective and cannot be assumed.
-
-Independent Swift work remains, including sharing and other built-in workflows. Explicit import-directory choice now passes installed-Pi, secure transport and native browser checks without a silent fallback. Reviewed JSONL import (versions 1–3), Pi-managed legacy migration and HTML/JSONL export now pass installed-Pi, authenticated transport and native file-picker checks. Last-text copy, queue/automatic-compaction settings, idle-session close, session statistics, bounded raster output, Mac text-file attachment and clean setup controls are implemented and verified. See [runtime evidence](runtime-controls.md). None of this closes the full-scope acceptance gate. These gaps are not a reason to mark the plan complete or to stop all implementation work.
+No adapter approval is pending for this plan. Do not treat an extension's unsupported terminal UI as a failed app acceptance check. Remaining work is the core RPC audit and implementation/verification of its in-scope gaps, not installed-extension or terminal-feature parity.

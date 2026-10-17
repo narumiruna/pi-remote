@@ -29,7 +29,7 @@ A separate typed action and advertised capability control directory choice. An o
 - Validation precedes storage creation and Pi replacement. Missing/invalid directory IDs, file IDs, removed folders, denied access, malformed history and stale-session requests preserve the current session and catalog. There is no fallback to the saved directory when a chosen directory fails.
 - Each import gets a new companion ID and private `0700` folder. The copied file retains its Pi ID and uses `0600`. The caller cannot choose a destination. Pi owns the copy after activation and can migrate it or append runtime metadata; the source remains unchanged.
 - Launch failure can leave the copied catalog item for explicit recovery. No prompt or import retry occurs automatically.
-- Pi's `session_before_switch` lifecycle equivalence remains open. No feature exclusion has been approved, and this does not complete `PLAN.md`.
+- Core `switch_session` behavior still needs the separate RPC coverage audit. Installed-extension hook parity is not a completion gate under the user-confirmed scope. These import checks do not complete `PLAN.md`.
 
 ## Verified checks
 

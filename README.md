@@ -8,7 +8,7 @@ Choose a Mac directory from your phone, start a managed session, watch output an
 
 **Development implementation; `PLAN.md` is not complete.** Both native app targets build without signing. Package tests cover the host, client, protocol and process adapter. Thirty-one iOS simulator app tests pass with the explicit local provider fixture on LAN and Tailscale, including coding, image output, reconnection and host restart. Eighteen compact-interface tests have passing evidence across bounded checkpoints; see [system sharing checks](docs/session-export.md#system-sharing-checkpoint). The older secure transport diagnostic also passed on a physical iPhone 16 Pro.
 
-The full Pi workflow review remains open. Local model/transport setup checks pass; signed installation remains unverified. Compact simulator checks now cover the real keyboard, large text, readable controls, error recovery and live scroll position. Signed physical-device coding, off-site Tailscale and hardware unlock are unverified limits, not completion gates for the current local plan. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
+The core RPC coverage audit remains open. The app targets the protocol supplied by Pi's core packages, not terminal-feature parity or compatibility with individual extensions. Local model/transport setup checks pass; signed installation remains unverified. Compact simulator checks now cover the real keyboard, large text, readable controls, error recovery and live scroll position. Signed physical-device coding, off-site Tailscale and hardware unlock are unverified limits, not completion gates for the current local plan. This is not a supported release. See [workflow verification](docs/workflow-verification.md), [native app verification](docs/native-apps.md), [RPC evidence](docs/verification.md), [transport evidence](docs/secure-transport-spike.md) and the remaining checks in [PLAN.md](PLAN.md).
 
 ## Implemented foundation
 
@@ -27,7 +27,7 @@ The full Pi workflow review remains open. Local model/transport setup checks pas
 - Session-bound UI actions and attachments. Editor text replaces a nonempty draft only after an explicit decision.
 - Local Mac session controls and menu-bar status. Disconnecting the phone does not stop accepted work.
 
-These are implemented controls, not proof of complete terminal parity. Real-Pi and physical-device checks remain open for several paths. Terminal-only extension UI, in-place branch switching, custom renderers and several built-in commands still have gaps. [Image output](docs/output-images.md) has explicit size, format and first-frame limits. The [current compatibility review](docs/native-compatibility.md) records implemented workflows and unresolved requirements. Text and thinking displays have explicit size limits. No reduction of the accepted workflow scope has been approved.
+These controls do not prove complete core RPC coverage. The app supports extension commands and interactions generically where Pi's core protocol exposes them; it must not depend on individual extensions such as `pi-btw`. Terminal-only UI, custom extension protocols and terminal commands without core RPC equivalents are outside scope. They do not require adapters or block app completion. The [current compatibility review](docs/native-compatibility.md) records the remaining core audit. [Image output](docs/output-images.md), text and thinking retain their documented limits. Physical-device checks remain unverified, not current completion gates.
 
 ## Security and network limits
 
@@ -42,7 +42,7 @@ These are implemented controls, not proof of complete terminal parity. Real-Pi a
 
 ## Local development setup
 
-Pi **1.3.0** is the tested development runtime. Other Pi versions are unverified. Complete workflow compatibility is still pending; this is not a supported release.
+Pi **1.3.0** is the tested development runtime. Other Pi versions are unverified. Complete core RPC coverage is still unverified; this is not a supported release.
 
 1. Install and configure Pi on the Mac before using the companion. Provider credentials stay in Pi's Mac configuration. Check `pi --version` and use a status-only authentication check for your provider. This laptop passes `pi auth check --provider openai-codex --model gpt-6.1-sol --json --no-refresh`. Do not use credential-printing commands or copy keys to the phone.
 2. Generate and build the apps with the [verified commands](docs/native-apps.md#automated-checks). Launching a signed personal build is separate and remains unverified. The simulator checks below use injected authentication results and memory credentials, not a production unlock bypass.
