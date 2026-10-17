@@ -34,6 +34,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
     case diff
     case statistics
     case exportSession
+    case exportJSONL
     case outputImage(id: UUID)
     case lastAssistant
     case runtimeSettings
@@ -43,7 +44,7 @@ public enum SessionAction: Codable, Sendable, Equatable {
 
     public var mutates: Bool {
         switch self {
-        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession: false
+        case .snapshot, .synchronize, .directories, .preview, .history, .historyPage, .historyEntry, .diff, .statistics, .outputImage, .lastAssistant, .runtimeSettings, .exportSession, .exportJSONL: false
         default: true
         }
     }

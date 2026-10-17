@@ -15,7 +15,7 @@ struct SessionImportView: View {
 
     var body: some View {
         Form {
-            Text("Choose a Pi version-3 JSONL session. Import copies it into companion-owned storage. It does not attach to or change the source file and does not resend a prompt.")
+            Text("Choose a Pi JSONL session (versions 1–3). Import copies it into companion-owned storage. It does not attach to or change the source file and does not resend a prompt.")
             Button("Choose session file") { choosing = true }.frame(minHeight: 44).disabled(loading)
             if let error { Text(error).accessibilityIdentifier("import-error") }
             if let review {
@@ -23,7 +23,8 @@ struct SessionImportView: View {
                     Text(review.title)
                     Text("Mac working directory")
                     Text(review.directory).font(.caption.monospaced()).textSelection(.enabled)
-                    Text("\(review.entryCount) saved entries · \(data?.count ?? 0) bytes")
+                    Text("Version \(review.version) · \(review.entryCount) saved entries · \(data?.count ?? 0) bytes")
+                    if review.version < 3 { Text("Pi migrates the managed copy to its current session format. The source file remains unchanged.") }
                     Text("The Mac must have read and search access to this directory. Import opens Pi there and can load its trusted extensions with your Mac permissions. Saved instructions and tool output can be untrusted. Review the transcript before sending anything.")
                     Button("Import and open") { confirming = true }.frame(minHeight: 44).disabled(loading)
                     Button("Discard import", role: .destructive) { data = nil; self.review = nil }.frame(minHeight: 44).disabled(loading)

@@ -191,8 +191,33 @@ final class InterfaceTests: XCTestCase {
         XCTAssertFalse(save.exists)
     }
 
+    func testJSONLExportSavesThroughTheNativeFilePicker() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let link = app.buttons["Review and export session"]
+        reveal(link, app: app); link.tap()
+        let format = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Export format")).firstMatch
+        XCTAssertTrue(format.waitForExistence(timeout: 5)); format.tap()
+        app.buttons["JSONL (.jsonl)"].tap()
+        let consent = app.switches["export-consent"]
+        reveal(consent.switches.firstMatch, app: app)
+        consent.switches.firstMatch.tap()
+        XCTAssertEqual(consent.value as? String, "1")
+        let prepare = app.buttons["Prepare JSONL export"]
+        reveal(prepare, app: app); prepare.tap()
+        let save = app.buttons["Save JSONL file"]
+        reveal(save, app: app); save.tap()
+        let filename = app.textFields["DOCPicker.filenameTextField"]
+        XCTAssertTrue(filename.waitForExistence(timeout: 5)); filename.tap()
+        filename.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (filename.value as? String ?? "").count))
+        filename.typeText("pi-jsonl-export-" + UUID().uuidString)
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.staticTexts["export-saved"].waitForExistence(timeout: 5))
+        XCTAssertFalse(save.exists)
+    }
+
     func testSessionImportReviewsTheDirectoryAndRequiresConfirmation() throws {
-        let app = launch(["import"])
+        let app = launch(["legacy-import"])
         app.buttons["Sessions"].tap()
         XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
         app.buttons["Import JSONL session"].tap()
@@ -209,6 +234,8 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(file.waitForExistence(timeout: 5)); file.tap()
         reveal(app.staticTexts["/Users/fixture/project"], app: app)
         XCTAssertTrue(app.staticTexts["/Users/fixture/project"].exists)
+        let migration = app.staticTexts["Pi migrates the managed copy to its current session format. The source file remains unchanged."]
+        reveal(migration, app: app); XCTAssertTrue(migration.exists)
         let open = app.buttons["Import and open"]
         reveal(open, app: app); open.tap()
         XCTAssertTrue(app.alerts["Import and open this session?"].waitForExistence(timeout: 5))

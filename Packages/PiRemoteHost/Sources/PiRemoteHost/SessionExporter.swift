@@ -3,7 +3,7 @@ import Foundation
 import PiRPC
 import PiRemoteCore
 
-/// Only reads the exact private output path, never a path supplied by Pi or the phone.
+/// Creates bounded exports from the managed Pi child, never a phone-supplied path.
 enum SessionExporter {
     static func export(using rpc: RPCProcess, support: URL) async throws -> SessionExport {
         let folder = support.appendingPathComponent("export-" + UUID().uuidString, isDirectory: true)
@@ -13,6 +13,48 @@ enum SessionExporter {
         let result = try await rpc.request("export_html", fields: ["outputPath": .string(file.path)])
         guard result["path"]?.string == file.path else { throw RemoteFault.incompatiblePi }
         return try read(file)
+    }
+
+    /// Match Pi's serializeSessionBranch: fresh header, active ancestors, normalized parents.
+    static func branch(_ response: JSONValue, piID: String, directory: String) throws -> SessionExport {
+        guard let entries = response["entries"]?.array, let leaf = response["leafId"],
+              leaf == .null || leaf.string != nil else { throw RemoteFault.incompatiblePi }
+        let date = ISO8601DateFormatter()
+        date.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let header: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(piID),
+            "timestamp": .string(date.string(from: Date())), "cwd": .string(directory)])
+        func encode(_ records: [JSONValue]) throws -> Data {
+            var bytes = Data()
+            for record in records {
+                bytes.append(try JSONEncoder().encode(record)); bytes.append(10)
+                guard bytes.count <= SessionExport.maximumBytes else { throw RemoteFault.tooLarge }
+            }
+            return bytes
+        }
+        do { _ = try SessionImport(data: encode([header] + entries)) }
+        catch let fault as RemoteFault { throw fault == .tooLarge ? fault : RemoteFault.incompatiblePi }
+        var byID: [String: JSONValue] = [:]
+        for entry in entries {
+            guard let id = entry["id"]?.string else { throw RemoteFault.incompatiblePi }
+            byID[id] = entry
+        }
+        var selected: [JSONValue] = []
+        var current = leaf.string
+        var visited: Set<String> = []
+        while let id = current {
+            guard visited.insert(id).inserted, let entry = byID[id] else { throw RemoteFault.incompatiblePi }
+            selected.append(entry)
+            current = entry["parentId"]?.string
+        }
+        var records = [header]
+        var parent: JSONValue = .null
+        for entry in selected.reversed() {
+            guard case .object(var value) = entry, let id = value["id"]?.string else { throw RemoteFault.incompatiblePi }
+            value["parentId"] = parent; records.append(.object(value)); parent = .string(id)
+        }
+        let result = SessionExport(data: try encode(records), format: .jsonl)
+        try result.validate()
+        return result
     }
 
     static func read(_ file: URL) throws -> SessionExport {

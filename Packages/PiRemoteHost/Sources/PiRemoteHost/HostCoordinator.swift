@@ -185,6 +185,12 @@ public actor HostCoordinator {
             guard !snapshot.working else { throw RemoteFault.busy }
             try await requireIdle()
             return .exportSession(try await SessionExporter.export(using: requireRPC(), support: support))
+        case .exportJSONL:
+            guard !snapshot.working, let index = selectedIndex else { throw RemoteFault.busy }
+            try await requireIdle()
+            let item = sessions[index]
+            let response = try await requireRPC().request("get_entries")
+            return .exportSession(try SessionExporter.branch(response, piID: item.piID, directory: item.directory.url.path))
         case .statistics:
             let data = try await requireRPC().request("get_session_stats")
             let statistics: SessionStatistics
@@ -223,7 +229,10 @@ public actor HostCoordinator {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let file = folder.appendingPathComponent("imported.jsonl")
             do {
-                try data.write(to: file, options: .withoutOverwriting)
+                var contents = data
+                // Keep later Pi appends on a new line, including header-only imports.
+                if contents.last != 10 { contents.append(10) }
+                try contents.write(to: file, options: .withoutOverwriting)
                 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
             } catch {
                 try? FileManager.default.removeItem(at: folder)

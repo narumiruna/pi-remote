@@ -9,6 +9,11 @@ import PiRemoteCore
 actor FixtureConnection: PhoneConnection {
     static let host = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
     private static let imageID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+    private static let sessionJSONL = #"""
+{"type":"session","version":3,"id":"native-import-fixture","cwd":"/Users/fixture/project"}
+{"type":"message","id":"user-1","parentId":null,"message":{"role":"user","content":"Imported native fixture"}}
+{"type":"session_info","id":"name","parentId":"user-1","name":"Imported fixture"}
+"""# + "\n"
     private let home = UUID(), project = UUID(), nested = UUID(), root = UUID(), file = UUID()
     private var snapshot: HostSnapshot
     private let unavailable: Bool
@@ -44,16 +49,12 @@ actor FixtureConnection: PhoneConnection {
             state.messages = (0..<99).map { TranscriptMessage(role: $0.isMultiple(of: 2) ? "user" : "assistant", text: "Record \($0).\n\n" + text) }
             state.messages.append(TranscriptMessage(role: "tool", text: "Bounded transcript complete"))
         }
-        if phase == "import" {
+        if phase == "import" || phase == "legacy-import" {
             do {
                 let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                 try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
-                let fixture = #"""
-{"type":"session","version":3,"id":"native-import-fixture","cwd":"/Users/fixture/project"}
-{"type":"message","id":"user-1","parentId":null,"message":{"role":"user","content":"Imported native fixture"}}
-{"type":"session_info","id":"name","parentId":"user-1","name":"Imported fixture"}
-"""#
-                try Data((fixture + "\n").utf8).write(to: documents.appendingPathComponent("Import fixture.jsonl"))
+                let source = phase == "legacy-import" ? Self.sessionJSONL.replacingOccurrences(of: "\"version\":3", with: "\"version\":1") : Self.sessionJSONL
+                try Data(source.utf8).write(to: documents.appendingPathComponent("Import fixture.jsonl"))
             } catch { state.error = .storageFailure }
         }
         snapshot = state
@@ -96,6 +97,9 @@ actor FixtureConnection: PhoneConnection {
         defer { if action.mutates { publish() } }
         switch action {
         case .snapshot: return .snapshot(snapshot)
+        case .exportJSONL:
+            guard !snapshot.working else { throw RemoteFault.busy }
+            return .exportSession(SessionExport(data: Data(Self.sessionJSONL.utf8), format: .jsonl))
         case .exportSession:
             guard !snapshot.working else { throw RemoteFault.busy }
             return .exportSession(SessionExport(data: Data("<!doctype html><html>Private export fixture</html>".utf8)))

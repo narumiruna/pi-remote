@@ -84,7 +84,7 @@ struct SessionControls: View {
             }
             if state.capabilities.contains("session-export") {
                 Section("Export") {
-                    NavigationLink("Review and export session") { SessionExportView(request: request) }
+                    NavigationLink("Review and export session") { SessionExportView(request: request, jsonlEnabled: state.capabilities.contains("session-jsonl-export")) }
                         .frame(minHeight: 44).disabled(state.working || state.selected == nil)
                 }
             }

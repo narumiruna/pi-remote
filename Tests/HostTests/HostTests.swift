@@ -163,7 +163,7 @@ while IFS= read -r line; do
         set_follow_up_mode) printf x >> "$folder/runtime-writes"; followup=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"mode":"\([^"]*\)".*/\1/p'); reply '{}' ;;
         set_auto_compaction) printf x >> "$folder/runtime-writes"; case "$line" in *'"enabled":true'*) compaction=true ;; *) compaction=false ;; esac; reply '{}' ;;
         get_session_stats) reply '{"userMessages":1,"assistantMessages":1,"toolCalls":0,"toolResults":0,"totalMessages":2,"tokens":{"input":10,"output":20,"cacheRead":0,"cacheWrite":0,"total":30},"cost":0.01,"contextUsage":{"tokens":30,"contextWindow":200000,"percent":0.015},"sessionFile":"private-fixture-path"}' ;;
-        get_entries) reply '{"entries":[],"leafId":null}' ;;
+        get_entries) entries=$(/usr/bin/tail -n +2 "$file" | /usr/bin/awk 'NF { if (seen++) printf ","; printf "%s", $0 }'); if [ -z "$entries" ]; then reply '{"entries":[],"leafId":null}'; else leaf=$(/usr/bin/tail -1 "$file" | /usr/bin/plutil -extract id raw -o - -); reply "{\"entries\":[$entries],\"leafId\":\"$leaf\"}"; fi ;;
         set_thinking_level) thinking=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"level":"\([^"]*\)".*/\1/p'); reply '{}' ;;
         prompt)
             case "$line" in
@@ -455,7 +455,7 @@ func sessionExportIsBoundedPrivateAndSessionScoped(mode: String) async throws {
     await host.shutdown()
 }
 
-@Test(.timeLimit(.minutes(1)), arguments: ["valid", "malformed", "missing-directory", "denied-directory", "busy", "stale"])
+@Test(.timeLimit(.minutes(1)), arguments: ["valid", "no-final-lf", "legacy-v1", "legacy-v2", "malformed", "missing-directory", "denied-directory", "busy", "stale"])
 func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) async throws {
     let root = try temporaryDirectory()
     let project = root.appendingPathComponent("project")
@@ -465,12 +465,15 @@ func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) a
         try? FileManager.default.removeItem(at: root)
     }
     let sourceID = UUID().uuidString
-    let header: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(sourceID), "cwd": .string(mode == "missing-directory" ? project.appendingPathComponent("missing").path : project.path)])
+    let header: JSONValue = .object(["type": .string("session"), "version": .number(mode == "legacy-v1" ? 1 : mode == "legacy-v2" ? 2 : 3), "id": .string(sourceID), "cwd": .string(mode == "missing-directory" ? project.appendingPathComponent("missing").path : project.path)])
     let entry: JSONValue = .object(["type": .string("message"), "id": .string("user-1"), "parentId": .null,
                                     "message": .object(["role": .string("user"), "content": .string("Saved private fixture")])])
     var data = try JSONEncoder().encode(header); data.append(10)
     data.append(try JSONEncoder().encode(entry)); data.append(10)
     if mode == "malformed" { data = Data("broken".utf8) }
+    if mode == "no-final-lf" { data.removeLast() }
+    var normalized = data
+    if normalized.last != 10 { normalized.append(10) }
     let source = root.appendingPathComponent("source.jsonl")
     try data.write(to: source)
     let support = root.appendingPathComponent("support")
@@ -485,7 +488,7 @@ func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) a
         }
         let request = AppRequest(epoch: host.epoch, session: mode == "stale" ? UUID() : before.selected, action: .importSession(data: data))
         let result = await host.handle(request, device: device)
-        if mode == "valid" {
+        if mode == "valid" || mode == "no-final-lf" || mode.hasPrefix("legacy-") {
             #expect(result == .ok)
             #expect(await host.handle(request, device: device) == .ok)
             let state = await host.state(), selected = try #require(state.selected)
@@ -494,12 +497,16 @@ func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) a
             #expect(state.sessions.first(where: { $0.id == selected })?.interrupted == true)
             let folder = support.appendingPathComponent("pi-sessions/" + selected.uuidString)
             let copy = folder.appendingPathComponent("imported.jsonl")
-            #expect(try Data(contentsOf: copy) == data)
+            #expect(try Data(contentsOf: copy) == normalized)
+            guard case .exportSession(let archive) = await host.handle(AppRequest(epoch: host.epoch, session: selected, action: .exportJSONL), device: device) else { throw RemoteFault.invalidRequest }
+            let archiveInfo = try SessionImport(data: archive.data)
+            #expect(archive.format == .jsonl && archiveInfo.piID == sourceID && archiveInfo.entryCount == 1)
+            #expect(String(decoding: archive.data, as: UTF8.self).contains("Saved private fixture"))
             #expect((try FileManager.default.attributesOfItem(atPath: copy.path)[.posixPermissions] as? NSNumber)?.intValue == 0o600)
             #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("accepted").path))
             #expect(await host.handle(AppRequest(epoch: host.epoch, session: selected, action: .closeSession), device: device) == .ok)
             #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .resumeSession(id: selected)), device: device) == .ok)
-            #expect(try Data(contentsOf: copy) == data)
+            #expect(try Data(contentsOf: copy) == normalized)
         } else {
             let fault: RemoteFault = mode == "malformed" ? .invalidRequest : mode == "missing-directory" ? .staleDirectory : mode == "denied-directory" ? .permissionDenied : mode == "busy" ? .busy : .conflict
             #expect(result == .failure(fault))
@@ -508,6 +515,45 @@ func sessionImportCopiesOnlyValidatedHistoryAndNeverSendsAPrompt(mode: String) a
             #expect(try FileManager.default.contentsOfDirectory(atPath: support.appendingPathComponent("pi-sessions").path).count == 1)
         }
         #expect(try Data(contentsOf: source) == data)
+    } catch { await host.shutdown(); throw error }
+    await host.shutdown()
+}
+
+@Test(.timeLimit(.minutes(1)), arguments: ["malformed", "unknown-leaf", "large", "busy", "empty"])
+func jsonlExportRejectsInvalidLiveStateAndBoundsTheResponse(mode: String) async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let executable = try fakePi(at: root, hold: true)
+    if !["busy", "empty"].contains(mode) {
+        let entry: JSONValue = .object(["type": .string("message"), "id": .string("root"), "parentId": .null,
+            "message": .object(["role": .string("user"), "content": .string(mode == "large" ? String(repeating: "x", count: SessionExport.maximumBytes) : "Live fixture")])])
+        let response: JSONValue = mode == "malformed" ? .object(["entries": .array([.object(["id": .string("bad")])]), "leafId": .string("bad")]) :
+            .object(["entries": .array([entry]), "leafId": .string(mode == "unknown-leaf" ? "missing" : "root")])
+        let payload = String(decoding: try JSONEncoder().encode(response), as: UTF8.self)
+        let original = try String(contentsOf: executable, encoding: .utf8)
+        let line = try #require(original.components(separatedBy: "\n").first { $0.hasPrefix("        get_entries)") })
+        try original.replacingOccurrences(of: line, with: "        get_entries) reply '" + payload + "' ;;").write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    }
+    let host = try HostCoordinator(support: root.appendingPathComponent("support"), executable: executable)
+    do {
+        let directory = try await host.directories.register(root), device = UUID()
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: nil, action: .createSession(directory: directory)), device: device) == .ok)
+        let session = try #require(await host.state().selected)
+        if mode == "busy" {
+            #expect(await host.handle(AppRequest(epoch: host.epoch, session: session, action: .prompt(text: "Hold fixture", delivery: .prompt, image: nil)), device: device) == .ok)
+        }
+        let result = await host.handle(AppRequest(epoch: host.epoch, session: session, action: .exportJSONL), device: device)
+        if mode == "empty" {
+            guard case .exportSession(let archive) = result else { throw RemoteFault.invalidRequest }
+            let review = try SessionImport(data: archive.data)
+            #expect(archive.format == .jsonl && review.entryCount == 0)
+        } else {
+            let fault: RemoteFault = mode == "large" ? .tooLarge : mode == "busy" ? .busy : .incompatiblePi
+            #expect(result == .failure(fault))
+        }
+        #expect(await host.state().selected == session)
+        #expect(await host.handle(AppRequest(epoch: host.epoch, session: UUID(), action: .exportJSONL), device: device) == .failure(.conflict))
     } catch { await host.shutdown(); throw error }
     await host.shutdown()
 }
@@ -769,6 +815,10 @@ func selectedInterfaceSupportsAuthenticatedControlAndReconnect(address: String) 
         #expect(importedID != recovered.selected && imported.sessions.count == 2)
         let importFolder = root.appendingPathComponent("support/pi-sessions/" + importedID.uuidString)
         #expect(try Data(contentsOf: importFolder.appendingPathComponent("imported.jsonl")) == importData)
+        guard case .exportSession(let archive) = try await client.request(.exportJSONL) else { throw RemoteFault.invalidRequest }
+        let archiveReview = try SessionImport(data: archive.data)
+        #expect(archive.format == .jsonl && archiveReview.entryCount == 1)
+        #expect(String(decoding: archive.data, as: UTF8.self).contains("Network import fixture"))
         #expect(!FileManager.default.fileExists(atPath: importFolder.appendingPathComponent("accepted").path))
         try await server.revoke(mac.device)
         await #expect(throws: (any Error).self) { try await client.request(.importSession(data: importData)) }

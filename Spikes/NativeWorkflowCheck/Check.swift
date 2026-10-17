@@ -10,7 +10,7 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
 /// Real Pi metadata and supported extension dialogs only: no inference prompt or provider request.
 @main struct NativeWorkflowCheck {
     static func main() async {
-        do { try await run(); print("PASS: native host directory, model, thinking, dialogs, Stop, import, HTML export and restoration checks.") }
+        do { try await run(); print("PASS: native host directory, model, thinking, dialogs, Stop, legacy import, HTML/JSONL export and restoration checks.") }
         catch {
             if let failure = error as? CheckFailure { print("FAIL: \(failure)") }
             else { print("FAIL: native workflow check could not complete.") }
@@ -170,6 +170,17 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             _ = try await send(.resumeSession(id: importedID))
             try require(await host.state().messages.contains { $0.role == "user" && $0.text == "Private export fixture" })
             try require(await host.state().runtime == originalRuntime)
+            let storedImport = root.appendingPathComponent("support/pi-sessions/" + importedID.uuidString + "/imported.jsonl")
+            let savedHistory = try Data(contentsOf: storedImport)
+            let originalRecords = try seeded.split(separator: 10).map { try JSONDecoder().decode(JSONValue.self, from: Data($0)) }
+            let savedRecords = try savedHistory.split(separator: 10).map { try JSONDecoder().decode(JSONValue.self, from: Data($0)) }
+            try require(originalRecords.allSatisfy { savedRecords.contains($0) })
+            guard case .exportSession(let jsonl) = try await send(.exportJSONL) else { throw CheckFailure.assertion(#line) }
+            try jsonl.validate()
+            let branchRecords = try jsonl.data.split(separator: 10).map { try JSONDecoder().decode(JSONValue.self, from: Data($0)) }
+            try require(jsonl.format == .jsonl && branchRecords.first?["id"]?.string == piID)
+            try require(originalRecords.dropFirst().allSatisfy { branchRecords.contains($0) })
+            try require(try Data(contentsOf: file) == seeded)
             guard case .exportSession(let exported) = try await send(.exportSession) else { throw CheckFailure.assertion(#line) }
             try exported.validate()
             let html = String(decoding: exported.data, as: UTF8.self)
@@ -181,6 +192,44 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
             try require(String(decoding: data, as: UTF8.self).contains("Private export fixture"))
             try require(try AppPacket(AppResult.exportSession(exported)).encode().count < 4 * 1_024 * 1_024)
             try require(try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("support").path).allSatisfy { !$0.hasPrefix("export-") })
+            for version in [1, 2] {
+                let timestamp = "2026-10-17T00:00:00.000Z"
+                let legacyHeader: JSONValue = .object(["type": .string("session"), "version": .number(Double(version)),
+                    "id": .string(UUID().uuidString), "cwd": .string(folder.path), "timestamp": .string(timestamp)])
+                var user: [String: JSONValue] = ["type": .string("message"), "timestamp": .string(timestamp),
+                    "message": .object(["role": .string("user"), "content": .string("Legacy import fixture \(version)"), "timestamp": .number(1_792_195_200_000)])]
+                var hook: [String: JSONValue] = ["type": .string("message"), "timestamp": .string(timestamp),
+                    "message": .object(["role": .string("hookMessage"), "customType": .string("legacy-fixture"), "display": .bool(true),
+                        "content": .string("Legacy hook fixture \(version)"), "timestamp": .number(1_792_195_200_000)])]
+                var compact: [String: JSONValue] = ["type": .string("compaction"), "timestamp": .string(timestamp),
+                    "summary": .string("Legacy fixture summary"), "tokensBefore": .number(0)]
+                if version == 1 { compact["firstKeptEntryIndex"] = .number(1) }
+                else {
+                    user["id"] = .string("legacy-user"); user["parentId"] = .null
+                    hook["id"] = .string("legacy-hook"); hook["parentId"] = .string("legacy-user")
+                    compact["id"] = .string("legacy-compact"); compact["parentId"] = .string("legacy-hook")
+                    compact["firstKeptEntryId"] = .string("legacy-user")
+                }
+                let source = try [legacyHeader, .object(user), .object(hook), .object(compact)].reduce(into: Data()) { bytes, value in
+                    bytes.append(try JSONEncoder().encode(value)); bytes.append(10)
+                }
+                let sourceFile = root.appendingPathComponent("legacy-\(version).jsonl")
+                try source.write(to: sourceFile)
+                try require(try SessionImport(data: source).version == version)
+                _ = try await send(.importSession(data: source))
+                let migrated = await host.state()
+                try require(!migrated.working)
+                try require(migrated.messages.contains { $0.role == "user" && $0.text == "Legacy import fixture \(version)" })
+                try require(migrated.messages.contains { $0.role == "custom" && $0.text == "Legacy hook fixture \(version)" })
+                guard case .exportSession(let archive) = try await send(.exportJSONL) else { throw CheckFailure.assertion(#line) }
+                try require(try SessionImport(data: archive.data).version == 3)
+                try require(try Data(contentsOf: sourceFile) == source)
+            }
+            let emptyHeader: JSONValue = .object(["type": .string("session"), "version": .number(3), "id": .string(UUID().uuidString),
+                "cwd": .string(folder.path), "timestamp": .string("2026-10-17T00:00:00.000Z")])
+            _ = try await send(.importSession(data: JSONEncoder().encode(emptyHeader)))
+            let emptyImported = await host.state()
+            try require(emptyImported.messages.isEmpty && !emptyImported.working)
             await host.shutdown()
             try require((try? Data(contentsOf: globalSettings)) == settingsBefore)
         } catch { await host.shutdown(); throw error }

@@ -15,3 +15,18 @@ import Testing
     try maximum.validate()
     #expect(try AppPacket(AppResult.exportSession(maximum)).encode().count < 4 * 1_024 * 1_024)
 }
+
+@Test func jsonlExportsPreserveBytesAndOlderHTMLRepliesStillDecode() throws {
+    let data = Data(#"""
+{"type":"session","version":3,"id":"export-fixture","cwd":"/tmp"}
+{"type":"message","id":"user","parentId":null,"message":{"role":"user","content":"Saved fixture"}}
+"""#.utf8)
+    let value = SessionExport(data: data, format: .jsonl)
+    try value.validate()
+    #expect(try AppPacket<AppResult>.decode(AppPacket(AppResult.exportSession(value)).encode()).payload == .exportSession(value))
+    #expect(throws: RemoteFault.invalidRequest) { try SessionExport(data: Data("not JSONL".utf8), format: .jsonl).validate() }
+    let oldReply = try JSONEncoder().encode(["data": Data("Old HTML fixture".utf8).base64EncodedString()])
+    let old = try JSONDecoder().decode(SessionExport.self, from: oldReply)
+    #expect(old.format == .html && old.data == Data("Old HTML fixture".utf8))
+    #expect(SessionAction.exportJSONL.needsSession && !SessionAction.exportJSONL.mutates)
+}
