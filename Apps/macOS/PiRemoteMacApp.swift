@@ -2,13 +2,6 @@ import AppKit
 import PiRemoteCore
 import SwiftUI
 
-@MainActor final class CompanionDelegate: NSObject, NSApplicationDelegate {
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        Task { await CompanionModel.shared.shutdown(); sender.reply(toApplicationShouldTerminate: true) }
-        return .terminateLater
-    }
-}
-
 @main
 struct PiRemoteMacApp: App {
     @NSApplicationDelegateAdaptor(CompanionDelegate.self) private var delegate

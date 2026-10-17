@@ -91,7 +91,7 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
         throw RemoteFault.unavailable
     }
 
-    private func withWorkingCloseModel(_ body: (CompanionModel, UUID) async throws -> Void) async throws {
+    private func withWorkingCloseModel(_ body: @MainActor (CompanionModel, UUID, UserDefaults) async throws -> Void) async throws {
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let suite = "PiRemote.WorkingClosePresentation." + UUID().uuidString
@@ -103,6 +103,7 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
         let script = #"""
 #!/bin/sh
 if [ "${1:-}" = --version ]; then printf '1.3.0\n'; exit 0; fi
+printf '%s\n' "$$" >> "$PWD/child-pids"
 folder=''; session=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -125,7 +126,7 @@ while IFS= read -r line; do
         get_commands) reply '{"commands":[]}' ;;
         get_messages) reply '{"messages":[]}' ;;
         prompt) streaming=true; reply '{"disposition":"started"}'; printf '{"type":"agent_start"}\n' ;;
-        abort) streaming=false; reply '{}'; printf '{"type":"agent_settled"}\n' ;;
+        abort) if [ -f "$PWD/delay-stop" ]; then /bin/sleep 1; fi; streaming=false; reply '{}'; printf '{"type":"agent_settled"}\n' ;;
         *) reply '{}' ;;
     esac
 done
@@ -144,7 +145,7 @@ done
             _ = try await model.request(.prompt(text: "Hold fixture work", delivery: .prompt, image: nil))
             try await waitForPresentationState { model.state.working && model.state.phase == "working" }
             XCTAssertFalse(model.listening)
-            try await body(model, directory)
+            try await body(model, directory, defaults)
         } catch { await model.shutdown(); throw error }
         await model.shutdown()
     }
@@ -364,6 +365,9 @@ done
         // Native outline rows can track inside mouseDown until mouseUp arrives.
         NSApp.postEvent(up, atStart: true)
         window.sendEvent(down)
+        // SwiftUI buttons do not always start an AppKit mouse-tracking loop.
+        // Deliver mouseUp directly as well when mouseDown returns.
+        window.sendEvent(up)
         try await Task.sleep(for: .milliseconds(180))
     }
 
@@ -439,7 +443,7 @@ done
     }
 
     func testManagementWorkingCloseCancelAndStaleConfirmationKeepVisibility() async throws {
-        try await withWorkingCloseModel { model, directory in
+        try await withWorkingCloseModel { model, directory, _ in
             let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
             model.destination = .session(session.id); model.expandedWorkspaces = [session.directory]
             model.text = "Keep draft after cancellation"
@@ -492,6 +496,177 @@ done
                 XCTAssertEqual(model.state.selected, other)
                 XCTAssertEqual(model.state.phase, "working")
                 XCTAssertTrue(model.closedSessionIDs.isEmpty, "A stale confirmation must hide neither session")
+            }
+        }
+    }
+
+    private func showSessionInspector(in host: NSView) async throws {
+        let picker = try XCTUnwrap(descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
+            (0..<control.segmentCount).contains { control.label(forSegment: $0) == "Session" }
+        })
+        XCTAssertEqual((0..<picker.segmentCount).compactMap { picker.label(forSegment: $0) }, ["Files", "Session", "Activity"])
+        picker.selectedSegment = 1
+        _ = picker.sendAction(picker.action, to: picker.target)
+        try await Task.sleep(for: .milliseconds(180))
+        _ = try element("mac-inspector-close-session", in: host)
+    }
+
+    func testReviewAllIdleCloseRoutesKeepHistoryAndFlushDraftBeforeHiding() async throws {
+        for route in ["row", "header", "inspector"] {
+            try await withWorkingCloseModel { model, _, defaults in
+                _ = try await model.request(.stop)
+                try await self.waitForPresentationState { model.state.phase == "idle" }
+                let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
+                model.destination = .session(session.id); model.expandedWorkspaces = [session.directory]
+                model.inspectorVisible = route == "inspector"
+                let folder = URL(fileURLWithPath: session.directory).appendingPathComponent("support/pi-sessions/" + session.id.uuidString)
+                let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "jsonl" }
+                let history = try Dictionary(uniqueKeysWithValues: files.map { ($0, try Data(contentsOf: $0)) })
+                XCTAssertFalse(history.isEmpty)
+                try await self.capture(CompanionWindow(model: model), name: "review-idle-close-" + route, width: 1300, height: 800, hostingController: true) { host, _ in
+                    if route == "inspector" { try await self.showSessionInspector(in: host) }
+                    model.text = "Flush this latest " + route + " draft"
+                    let draft = model.text
+                    let identifier = route == "inspector" ? "mac-inspector-close-session"
+                        : (route == "header" ? "mac-close-focused-session" : "mac-session-close-" + session.id.uuidString)
+                    try await self.press(identifier, in: host)
+                    try await self.waitForPresentationState { model.closedSessionIDs.contains(session.id) }
+                    XCTAssertNil(model.state.selected)
+                    XCTAssertEqual(model.destination, .workspace(session.directory))
+                    XCTAssertTrue(model.state.sessions.contains { $0.id == session.id })
+                    let saved = try JSONDecoder().decode([UUID: String].self, from: XCTUnwrap(defaults.data(forKey: "sessionDrafts")))
+                    XCTAssertEqual(saved[session.id], draft)
+                    for (file, data) in history { XCTAssertEqual(try Data(contentsOf: file), data) }
+                    XCTAssertFalse(model.hiddenWorkspaces.contains(session.directory))
+                }
+            }
+        }
+    }
+
+    func testReviewInspectorWorkingCancelStaleRunOversizedDraftAndSuccess() async throws {
+        try await withWorkingCloseModel { model, _, defaults in
+            let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
+            model.destination = .session(session.id); model.inspectorVisible = true
+            model.text = "Keep inspector draft"
+            try await self.capture(CompanionWindow(model: model), name: "review-inspector-working-900", width: 900, height: 600, hostingController: true) { host, window in
+                try await self.showSessionInspector(in: host)
+                try await self.press("mac-inspector-close-session", in: host)
+                let dialog = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
+                try await self.press("review-cancel", in: dialog, title: "Cancel")
+                XCTAssertEqual(model.state.phase, "working")
+                XCTAssertEqual(model.text, "Keep inspector draft")
+                XCTAssertTrue(model.closedSessionIDs.isEmpty)
+                XCTAssertNil(model.closingSession)
+
+                try await self.press("mac-inspector-close-session", in: host)
+                _ = try await model.request(.stop)
+                try await self.waitForPresentationState { model.state.phase == "idle" }
+                _ = try await model.request(.prompt(text: "New inspector run", delivery: .prompt, image: nil))
+                try await self.waitForPresentationState { model.state.phase == "working" }
+                let stale = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
+                try await self.press("mac-session-stop-and-close", in: stale, title: "Stop and Close")
+                XCTAssertEqual(model.fault, .conflict)
+                XCTAssertEqual(model.state.phase, "working")
+                XCTAssertTrue(model.closedSessionIDs.isEmpty)
+
+                model.text = String(repeating: "x", count: 256 * 1_024 + 1)
+                try await self.press("mac-inspector-close-session", in: host)
+                let oversized = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
+                try await self.press("mac-session-stop-and-close", in: oversized, title: "Stop and Close")
+                XCTAssertNotNil(model.draftSaveError)
+                XCTAssertEqual(model.state.phase, "working", "Draft rejection must occur before Stop")
+                XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+                XCTAssertEqual(model.destination, .session(session.id))
+                let stillWorking = await model.coordinator?.state()
+                XCTAssertEqual(stillWorking?.phase, "working")
+
+                model.text = "Retain confirmed inspector draft"
+                try await self.press("mac-inspector-close-session", in: host)
+                let confirmed = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
+                try await self.press("mac-session-stop-and-close", in: confirmed, title: "Stop and Close")
+                try await self.waitForPresentationState { model.closedSessionIDs.contains(session.id) }
+                XCTAssertNil(model.state.selected)
+                XCTAssertEqual(model.destination, .workspace(session.directory))
+                XCTAssertTrue(model.state.sessions.contains { $0.id == session.id })
+                try await Task.sleep(for: .milliseconds(150))
+                host.layoutSubtreeIfNeeded()
+                let panes = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSplitView }.first)
+                XCTAssertGreaterThanOrEqual(panes.frame.height, host.bounds.height - 60,
+                                            "Closing the loaded session must not collapse sidebar and inspector height")
+                let tabs = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first)
+                let tabsFrame = host.convert(tabs.bounds, from: tabs)
+                let topInset = host.isFlipped ? tabsFrame.minY : host.bounds.maxY - tabsFrame.maxY
+                XCTAssertLessThan(topInset, 100, "Empty inspector tabs must stay at the top after close")
+                let saved = try JSONDecoder().decode([UUID: String].self, from: XCTUnwrap(defaults.data(forKey: "sessionDrafts")))
+                XCTAssertEqual(saved[session.id], "Retain confirmed inspector draft")
+            }
+        }
+    }
+
+    func testReviewInspectorCloseUsesLiveGuardsAndKeepsFailedEntryVisible() async throws {
+        try await withModel { model in
+            let session = SessionInfo(id: UUID(), title: "Inspector guard fixture", directory: "/tmp/review-inspector")
+            model.state.sessions = [session]; model.state.selected = session.id
+            model.destination = .session(session.id); model.inspectorVisible = true
+            model.text = "Keep failed close draft"
+            try await self.capture(CompanionWindow(model: model), name: "review-inspector-guards", width: 1300, height: 800, hostingController: true) { host, _ in
+                try await self.showSessionInspector(in: host)
+                let staleButton = try self.element("mac-inspector-close-session", in: host)
+                for mode in ["sending", "opening", "unknown", "dialog", "recovering"] {
+                    model.sending = mode == "sending"; model.openingSession = mode == "opening"
+                    model.state.error = mode == "unknown" ? .unknownOutcome : nil
+                    model.state.phase = mode == "recovering" ? "recovering" : "idle"
+                    model.state.dialogs = mode == "dialog" ? [ExtensionDialog(id: "review-question", method: "confirm", title: "Question", message: "Proceed?", options: [], text: "", expires: nil)] : []
+                    try await Task.sleep(for: .milliseconds(150))
+                    XCTAssertNotNil(model.closeSessionDisabledReason(session.id), mode)
+                    XCTAssertFalse(try self.element("mac-inspector-close-session", in: host).isAccessibilityEnabled(), mode)
+                    _ = staleButton.accessibilityPerformPress()
+                    try await Task.sleep(for: .milliseconds(50))
+                    XCTAssertFalse(model.closedSessionIDs.contains(session.id), mode)
+                    XCTAssertEqual(model.text, "Keep failed close draft")
+                }
+                model.state.phase = "idle"; model.state.dialogs = []; model.state.error = nil
+                try await Task.sleep(for: .milliseconds(150))
+                try await self.press("mac-inspector-close-session", in: host)
+                XCTAssertNotNil(model.fault, "The synthetic loaded session must fail its host identity check")
+                XCTAssertFalse(model.closedSessionIDs.contains(session.id))
+                XCTAssertEqual(model.destination, .session(session.id))
+                XCTAssertEqual(model.state.sessions, [session])
+                XCTAssertEqual(model.text, "Keep failed close draft")
+            }
+        }
+    }
+
+    func testReviewOverviewViewsWorkingConversationWithoutRuntimeMutation() async throws {
+        try await withWorkingCloseModel { model, _, _ in
+            let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
+            let other = SessionInfo(id: UUID(), title: "Do not interrupt", directory: session.directory)
+            model.state.sessions.append(other)
+            model.state.messages = [TranscriptMessage(role: "assistant", text: "Keep the streamed transcript")]
+            model.state.pendingMessages = 2
+            model.destination = .overview; model.text = "Keep working draft"
+            let before = model.state
+            let runtime = await model.coordinator?.state()
+            let pidFile = URL(fileURLWithPath: session.directory).appendingPathComponent("child-pids")
+            let pids = try Data(contentsOf: pidFile)
+            for (width, height) in [(900, 600), (1300, 800)] {
+                model.destination = .overview
+                try await self.capture(CompanionWindow(model: model), name: "review-overview-working-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
+                    let otherButton = try self.element("mac-overview-open-" + other.id.uuidString, in: host)
+                    XCTAssertFalse(otherButton.isAccessibilityEnabled())
+                    _ = otherButton.accessibilityPerformPress()
+                    XCTAssertEqual(model.destination, .overview)
+                    XCTAssertTrue(self.hasLabel("View conversation", in: host))
+                    try await self.press("mac-overview-open-" + session.id.uuidString, in: host)
+                    XCTAssertEqual(model.destination, .session(session.id))
+                    XCTAssertEqual(model.state, before)
+                    XCTAssertEqual(model.text, "Keep working draft")
+                    XCTAssertFalse(model.openingSession)
+                    XCTAssertNil(model.fault)
+                    let after = await model.coordinator?.state()
+                    XCTAssertEqual(after, runtime)
+                    XCTAssertEqual(try Data(contentsOf: pidFile), pids, "Viewing must not replace the child")
+                }
             }
         }
     }
@@ -643,6 +818,215 @@ done
         }
     }
 
+    private func focusPaletteSearch(in host: NSView) throws -> NSWindow {
+        let field = try XCTUnwrap(descendants(host).compactMap { $0 as? NSSearchField }.first)
+        let window = try XCTUnwrap(field.window)
+        XCTAssertTrue(window.makeFirstResponder(field))
+        field.selectText(nil)
+        return window
+    }
+
+    func testReviewSessionControlsWithoutMacCloseRouteCannotDispatchDirectRPC() async throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID())
+        state.selected = UUID()
+        for phase in ["idle", "working"] {
+            state.phase = phase
+            try await capture(NavigationStack {
+                SessionControls(state: state, request: { _ in XCTFail("Mac controls must not close through direct RPC"); return .ok }) { _ in }
+            }, name: "review-no-close-route-" + phase, width: 320, height: 600) { host, _ in
+                let button = try self.element("mac-inspector-close-session", in: host)
+                XCTAssertFalse(button.isAccessibilityEnabled())
+                _ = button.accessibilityPerformPress()
+            }
+        }
+    }
+
+    func testReviewSessionInspectorLabelsAndCloseControlAtBothSizes() async throws {
+        try await withModel { model in
+            let session = SessionInfo(id: UUID(), title: "Session inspector routing", directory: "/tmp/review-session-tab")
+            model.state.sessions = [session]; model.state.selected = session.id; model.destination = .session(session.id)
+            for (width, height) in [(900, 600), (1300, 800)] {
+                model.inspectorVisible = true
+                try await self.capture(CompanionWindow(model: model), name: "review-session-labels-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
+                    try await self.showSessionInspector(in: host)
+                    XCTAssertTrue(model.inspectorVisible)
+                    let picker = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first)
+                    XCTAssertEqual((0..<picker.segmentCount).compactMap { picker.label(forSegment: $0) }, ["Files", "Session", "Activity"])
+                    XCTAssertLessThanOrEqual(picker.frame.height, 32, "Inspector tabs must keep native single-row density")
+                    XCTAssertEqual(picker.selectedSegment, 1)
+                    _ = try self.element("mac-inspector-close-session", in: host)
+                }
+            }
+        }
+    }
+
+    func testReviewLoadedRowRenameAvailabilityDoesNotDependOnDisplayedPage() async throws {
+        try await withModel { model in
+            let loaded = SessionInfo(id: UUID(), title: "Loaded row", directory: "/tmp/review-rename-row")
+            let saved = SessionInfo(id: UUID(), title: "Saved row", directory: loaded.directory)
+            model.state.sessions = [loaded, saved]; model.state.selected = loaded.id
+            for destination in [MacDestination.overview, .settings, .devices, .session(saved.id)] {
+                model.destination = destination
+                XCTAssertNil(macRenameSessionDisabledReason(loaded.id, model: model), "The loaded row context menu must retain Rename on other pages")
+                XCTAssertNotNil(macRenameSessionDisabledReason(saved.id, model: model), "Saved metadata must not rename")
+            }
+            model.sending = true
+            XCTAssertNotNil(macRenameSessionDisabledReason(loaded.id, model: model))
+            model.sending = false; model.state.phase = "working"
+            XCTAssertNotNil(macRenameSessionDisabledReason(loaded.id, model: model))
+        }
+    }
+
+    func testReviewPaletteRejectsStaleNavigationDuringActualClose() async throws {
+        try await withWorkingCloseModel { model, _, _ in
+            let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
+            try Data().write(to: URL(fileURLWithPath: session.directory).appendingPathComponent("delay-stop"))
+            model.destination = .session(session.id); model.text = "Keep close-transition draft"; model.panel = "palette"
+            let prepared = await model.prepareSessionClose(session.id)
+            let confirmation = try XCTUnwrap(prepared)
+            try await self.capture(CompanionWindow(model: model), name: "review-palette-close-transition", width: 900, height: 600) { _, window in
+                let content = try XCTUnwrap(window.sheets.first?.contentView)
+                try self.enter("Settings", placeholder: "Search actions", in: content)
+                try await Task.sleep(for: .milliseconds(150))
+                let stale = try self.element("mac-palette-settings", in: content)
+                let close = Task { await model.closeSession(session.id, confirmation: confirmation) }
+                try await self.waitForPresentationState { model.closingSession == session.id }
+                try await Task.sleep(for: .milliseconds(100))
+                let button = try self.element("mac-palette-settings", in: content)
+                XCTAssertFalse(button.isAccessibilityEnabled())
+                XCTAssertTrue((button.value("accessibilityLabel") as? String ?? "").contains("Wait for the session change to finish."))
+                _ = stale.accessibilityPerformPress()
+                let sheet = try self.focusPaletteSearch(in: content)
+                try await self.managementKey("\r", code: 36, in: sheet)
+                XCTAssertEqual(model.panel, "palette")
+                XCTAssertEqual(model.destination, .session(session.id))
+                XCTAssertEqual(model.text, "Keep close-transition draft")
+                let closed = await close.value
+                XCTAssertTrue(closed)
+                XCTAssertEqual(model.destination, .workspace(session.directory), "A stale palette selection must not navigate to Settings after close")
+                model.panel = nil
+            }
+        }
+    }
+
+    func testReviewPaletteCommonActionsSearchReturnAndPointerKeepDrafts() async throws {
+        for pointer in [false, true] {
+            for action in ["Add workspace", "Settings", "Devices", "Rename session"] {
+                try await withModel { model in
+                    let session = SessionInfo(id: UUID(), title: "Palette current session", directory: "/tmp/review-palette")
+                    model.state.sessions = [session]; model.state.selected = session.id
+                    model.destination = .session(session.id); model.text = "Keep added-action draft"
+                    model.panel = "palette"
+                    let state = model.state
+                    try await self.capture(CompanionWindow(model: model), name: "review-palette-" + action.replacingOccurrences(of: " ", with: "-") + (pointer ? "-pointer" : "-return"), width: pointer ? 1300 : 900, height: pointer ? 800 : 600) { _, window in
+                        let content = try XCTUnwrap(window.sheets.first?.contentView)
+                        for title in ["Add workspace", "Settings", "Devices", "Rename session"] {
+                            _ = try self.element("mac-palette-" + title.lowercased().replacingOccurrences(of: " ", with: "-"), in: content)
+                        }
+                        try self.enter(action, placeholder: "Search actions", in: content)
+                        try await Task.sleep(for: .milliseconds(180))
+                        XCTAssertEqual(model.panel, "palette", "Filtering must not activate an action")
+                        XCTAssertEqual(model.text, "Keep added-action draft")
+                        XCTAssertEqual(model.state, state)
+                        XCTAssertNil(model.fault)
+                        let identifier = "mac-palette-" + action.lowercased().replacingOccurrences(of: " ", with: "-")
+                        let button = try self.element(identifier, in: content)
+                        XCTAssertTrue(button.isAccessibilityEnabled())
+                        if pointer {
+                            let frame = try XCTUnwrap(button.frame())
+                            let sheet = try XCTUnwrap(content.window)
+                            sheet.makeKeyAndOrderFront(nil)
+                            try await self.managementClick(sheet.convertPoint(fromScreen: NSPoint(x: frame.minX + 20, y: frame.midY)), in: sheet)
+                        } else {
+                            let sheet = try self.focusPaletteSearch(in: content)
+                            try await self.managementKey("\r", code: 36, in: sheet)
+                        }
+                        switch action {
+                        case "Add workspace": XCTAssertEqual(model.panel, "workspace")
+                        case "Settings": XCTAssertNil(model.panel); XCTAssertEqual(model.destination, .settings)
+                        case "Devices": XCTAssertNil(model.panel); XCTAssertEqual(model.destination, .devices)
+                        default:
+                            XCTAssertEqual(model.panel, "rename")
+                            let rename = try XCTUnwrap(window.sheets.first?.contentView)
+                            let name = try XCTUnwrap(self.descendants(rename).compactMap { $0 as? NSTextField }.first { $0.isEditable })
+                            XCTAssertEqual(name.stringValue, session.title, "Rename must use the displayed loaded session")
+                        }
+                        XCTAssertEqual(model.text, "Keep added-action draft")
+                        XCTAssertEqual(model.state, state, "App navigation must not activate or stop Pi")
+                        model.panel = nil
+                    }
+                }
+            }
+        }
+    }
+
+    func testReviewPaletteRenameRejectsBusyPendingAndStaleDisplayedSelection() async throws {
+        try await withModel { model in
+            let loaded = SessionInfo(id: UUID(), title: "Loaded rename target", directory: "/tmp/review-palette-guards")
+            let saved = SessionInfo(id: UUID(), title: "Unrelated saved metadata", directory: loaded.directory)
+            model.state.sessions = [loaded, saved]; model.state.selected = loaded.id
+            model.destination = .session(loaded.id); model.text = "Retain guarded palette draft"; model.panel = "palette"
+            try await self.capture(CompanionWindow(model: model), name: "review-palette-rename-guards", width: 900, height: 600) { _, window in
+                let content = try XCTUnwrap(window.sheets.first?.contentView)
+                try self.enter("Rename session", placeholder: "Search actions", in: content)
+                try await Task.sleep(for: .milliseconds(150))
+                let sheet = try self.focusPaletteSearch(in: content)
+                let staleButton = try self.element("mac-palette-rename-session", in: content)
+                for mode in ["working", "sending", "opening", "unknown", "dialog", "saved", "overview"] {
+                    model.state.phase = mode == "working" ? "working" : "idle"
+                    model.sending = mode == "sending"; model.openingSession = mode == "opening"
+                    model.state.error = mode == "unknown" ? .unknownOutcome : nil
+                    model.state.dialogs = mode == "dialog" ? [ExtensionDialog(id: "palette-pending", method: "confirm", title: "Pending", message: "Proceed?", options: [], text: "", expires: nil)] : []
+                    model.destination = mode == "saved" ? .session(saved.id) : (mode == "overview" ? .overview : .session(loaded.id))
+                    try await Task.sleep(for: .milliseconds(150))
+                    let button = try self.element("mac-palette-rename-session", in: content)
+                    XCTAssertFalse(button.isAccessibilityEnabled(), mode)
+                    let label = button.value("accessibilityLabel") as? String ?? ""
+                    XCTAssertTrue(label.contains("Wait") || label.contains("Display") || label.contains("Answer"), "Disabled reason: " + label)
+                    _ = staleButton.accessibilityPerformPress()
+                    try await self.managementKey("\r", code: 36, in: sheet)
+                    XCTAssertEqual(model.panel, "palette", mode)
+                    XCTAssertEqual(model.state.selected, loaded.id)
+                    XCTAssertEqual(model.state.sessions, [loaded, saved])
+                    XCTAssertEqual(model.text, "Retain guarded palette draft")
+                    XCTAssertNil(model.fault, "Unavailable activation must not send an RPC")
+                }
+                model.destination = .session(loaded.id); model.state.dialogs = []; model.state.error = nil
+                try await Task.sleep(for: .milliseconds(150))
+                XCTAssertTrue(try self.element("mac-palette-rename-session", in: content).isAccessibilityEnabled())
+                try await self.managementKey("\r", code: 36, in: sheet)
+                XCTAssertEqual(model.panel, "rename")
+                model.panel = nil
+            }
+        }
+    }
+
+    func testReviewPaletteNavigationRejectsPendingDialogAfterSearch() async throws {
+        for action in ["Add workspace", "Settings", "Devices"] {
+            try await withModel { model in
+                model.text = "Keep pending navigation draft"; model.panel = "palette"
+                try await self.capture(CompanionWindow(model: model), name: "review-palette-pending-" + action.replacingOccurrences(of: " ", with: "-"), width: 900, height: 600) { _, window in
+                    let content = try XCTUnwrap(window.sheets.first?.contentView)
+                    try self.enter(action, placeholder: "Search actions", in: content)
+                    try await Task.sleep(for: .milliseconds(150))
+                    let button = try self.element("mac-palette-" + action.lowercased().replacingOccurrences(of: " ", with: "-"), in: content)
+                    model.state.dialogs = [ExtensionDialog(id: "pending-navigation", method: "confirm", title: "Pending", message: "Proceed?", options: [], text: "", expires: nil)]
+                    try await Task.sleep(for: .milliseconds(150))
+                    XCTAssertFalse(try self.element("mac-palette-" + action.lowercased().replacingOccurrences(of: " ", with: "-"), in: content).isAccessibilityEnabled())
+                    _ = button.accessibilityPerformPress()
+                    let sheet = try self.focusPaletteSearch(in: content)
+                    try await self.managementKey("\r", code: 36, in: sheet)
+                    XCTAssertEqual(model.panel, "palette")
+                    XCTAssertEqual(model.destination, .overview)
+                    XCTAssertEqual(model.state.dialogs.count, 1, "Navigation must not approve a dialog")
+                    XCTAssertEqual(model.text, "Keep pending navigation draft")
+                    XCTAssertNil(model.state.selected)
+                    model.panel = nil
+                }
+            }
+        }
+    }
+
     func testManagementNativeShortcutsEscapeFocusAndFocusedCloseAtBothSizes() async throws {
         try await withModel { model in
             for (width, height) in [(900, 600), (1300, 800)] {
@@ -738,7 +1122,7 @@ done
             try await capture(CompanionWindow(model: model), name: "uiux-commands-minimum", width: 900, height: 600, sheet: true) { host, window in
                 try await self.press("mac-composer-commands", in: host, title: "Commands", help: "Open Pi commands")
                 XCTAssertEqual(model.panel, "commands")
-                XCTAssertFalse(model.inspectorVisible, "Commands must not route to the Tools inspector")
+                XCTAssertFalse(model.inspectorVisible, "Commands must not route to the Session inspector")
                 let content = try XCTUnwrap(window.sheets.first?.contentView)
                 XCTAssertTrue(self.accessibilityElements(in: content).contains { ($0.value("accessibilityValue") as? String) == "Commands" },
                               "The sheet must show the dedicated Commands title")
@@ -830,7 +1214,7 @@ done
                 let inspectorPicker = try XCTUnwrap(pickers.first { control in
                     (0..<control.segmentCount).contains { control.label(forSegment: $0) == "Files" }
                 })
-                XCTAssertEqual((0..<inspectorPicker.segmentCount).compactMap { inspectorPicker.label(forSegment: $0) }, ["Files", "Tools", "Activity"])
+                XCTAssertEqual((0..<inspectorPicker.segmentCount).compactMap { inspectorPicker.label(forSegment: $0) }, ["Files", "Session", "Activity"])
                 XCTAssertEqual(inspectorPicker.selectedSegment, 0)
                 self.assertNoConversationTabs(in: host)
             }
@@ -1029,7 +1413,7 @@ done
         }
     }
 
-    func testSessionToolsRemainScrollableInANarrowInspector() async throws {
+    func testSessionControlsRemainScrollableInANarrowInspector() async throws {
         try await withModel { model in
             let id = UUID()
             model.state.sessions = [SessionInfo(id: id, title: "Synthetic session", directory: "/tmp/synthetic-project")]

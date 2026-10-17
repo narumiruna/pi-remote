@@ -58,6 +58,7 @@ targets:
     sources:
       - Tests/MacTests
       - Apps/macOS/CompanionModel.swift
+      - Apps/macOS/CompanionTermination.swift
       - Apps/macOS/CompanionWindow.swift
       - Apps/macOS/CompanionConnectionViews.swift
       - Apps/macOS/PairingQRView.swift
