@@ -97,12 +97,12 @@ public actor HostCoordinator {
     public func state() -> HostSnapshot { snapshot }
     public func inspectPi() async {
         guard rpc == nil, !closing, mutations.isEmpty, utility == nil else { return }
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = [executable.deletingLastPathComponent().path, "/opt/homebrew/bin", "/usr/local/bin", environment["PATH"] ?? "/usr/bin:/bin"].joined(separator: ":")
         do {
-            let output = try await runUtility(executable.path, ["--version"], directory: support, limit: 256, environment: environment)
-            snapshot.piVersion = String(decoding: output.0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch { snapshot.piVersion = "Unavailable"; snapshot.error = .unavailable }
+            let environment = PiLaunchEnvironment.make(executable: executable)
+            try PiLaunchEnvironment.validate(executable: executable, environment: environment)
+            snapshot.piVersion = try await inspectVersion(directory: support, environment: environment)
+            if snapshot.error == .piLaunchFailed || snapshot.error == .nodeUnavailable { snapshot.error = nil }
+        } catch { snapshot.piVersion = "Unavailable"; snapshot.error = error as? RemoteFault ?? .piLaunchFailed }
         publish()
     }
     public func setExecutable(_ url: URL) throws {
@@ -624,6 +624,16 @@ public actor HostCoordinator {
         }
     }
 
+    private func inspectVersion(directory: URL, environment: [String: String]) async throws -> String {
+        do {
+            let output = try await runUtility(executable.path, ["--version"], directory: directory, limit: 256, environment: environment)
+            let version = String(decoding: output.0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !output.1, !version.isEmpty else { throw RemoteFault.piLaunchFailed }
+            return version
+        } catch let fault as RemoteFault where fault == .cancelled || fault == .busy { throw fault }
+        catch { throw RemoteFault.piLaunchFailed }
+    }
+
     private func runUtility(_ path: String, _ arguments: [String], directory: URL, limit: Int = 1_048_576, environment: [String: String]? = nil) async throws -> (Data, Bool) {
         guard !closing else { throw RemoteFault.cancelled }
         guard utility == nil else { throw RemoteFault.busy }
@@ -876,7 +886,8 @@ public actor HostCoordinator {
     private func activate(_ id: UUID) async throws {
         guard let index = sessions.firstIndex(where: { $0.info.id == id }) else { throw RemoteFault.staleDirectory }
         try validateManaged(sessions[index])
-        guard FileManager.default.isExecutableFile(atPath: executable.path) else { throw RemoteFault.unavailable }
+        let environment = PiLaunchEnvironment.make(executable: executable)
+        try PiLaunchEnvironment.validate(executable: executable, environment: environment)
         let previous = rpc, previousSelection = snapshot.selected
         lifecycleNameRefresh?.cancel(); lifecycleNameRefresh = nil; lifecycleNameReadBack = false
         generation = UUID()
@@ -896,10 +907,7 @@ public actor HostCoordinator {
         let item = sessions[index]
         try DirectoryRegistry.validateDirectory(item.directory)
         _ = try sessionArguments(item)
-        var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = [executable.deletingLastPathComponent().path, "/opt/homebrew/bin", "/usr/local/bin", environment["PATH"] ?? "/usr/bin:/bin"].joined(separator: ":")
-        let version = try await runUtility(executable.path, ["--version"], directory: item.directory.url, limit: 256, environment: environment)
-        snapshot.piVersion = String(decoding: version.0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        snapshot.piVersion = try await inspectVersion(directory: item.directory.url, environment: environment)
         guard !closing, generation == activation, !Task.isCancelled else { throw RemoteFault.cancelled }
         // Shutdown and executable inspection suspend this actor. Recheck paths before launch.
         try DirectoryRegistry.validateDirectory(item.directory)

@@ -121,6 +121,7 @@ final class CompanionModel {
     private func request(_ action: SessionAction, expectedSession: UUID?) async throws -> AppResult {
         guard let coordinator else { throw RemoteFault.storageFailure }
         let request = AppRequest(epoch: coordinator.epoch, session: expectedSession, action: action)
+        if action.changesSession { fault = nil }
         if action.mutates { submissions.begin(request.id) }
         let result = await coordinator.handle(request, device: localDevice)
         if case .failure(let error) = result {

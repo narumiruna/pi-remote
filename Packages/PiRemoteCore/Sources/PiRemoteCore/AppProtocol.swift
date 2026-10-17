@@ -4,6 +4,7 @@ public enum RemoteFault: String, Error, Codable, Sendable {
     case unsupportedVersion, invalidRequest, unauthorized, expired, conflict, busy
     case unavailable, permissionDenied, staleDirectory, tooLarge, unknownOutcome
     case incompatiblePi, unsupportedFeature, storageFailure, capacity, cancelled, providerAuthenticationRequired
+    case piLaunchFailed, nodeUnavailable
 }
 
 public enum Delivery: String, Codable, Sendable, CaseIterable {

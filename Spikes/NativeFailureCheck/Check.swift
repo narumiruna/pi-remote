@@ -27,10 +27,9 @@ private func quoted(_ text: String) -> String { "'" + text.replacingOccurrences(
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let wrapper = root.appendingPathComponent("isolated-pi")
-        let path = [pi.deletingLastPathComponent().path, ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"].joined(separator: ":")
         let script = """
         #!/bin/sh
-        exec /usr/bin/env -i HOME=\(quoted(root.path)) PATH=\(quoted(path)) TMPDIR=\(quoted(root.path)) PI_CODING_AGENT_DIR=\(quoted(root.appendingPathComponent("agent").path)) PI_TELEMETRY=0 \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files --no-tools --provider openai --model gpt-4o "$@"
+        exec /usr/bin/env -i HOME=\(quoted(root.path)) PATH="${PATH:-/usr/bin:/bin}" TMPDIR=\(quoted(root.path)) PI_CODING_AGENT_DIR=\(quoted(root.appendingPathComponent("agent").path)) PI_TELEMETRY=0 \(quoted(pi.path)) --offline --no-extensions --no-mcp --no-skills --no-prompt-templates --no-context-files --no-tools --provider openai --model gpt-4o "$@"
         """
         try script.write(to: wrapper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)

@@ -155,6 +155,28 @@ done
         let client = RemoteClient(secrets: store)
         model.observe()
         do {
+            // Local creation must work before any listener or phone connection.
+            let directory = try await host.directories.register(root)
+            try await host.setExecutable(root.appendingPathComponent("missing-pi"))
+            do {
+                _ = try await model.request(.createSession(directory: directory))
+                XCTFail("A missing Pi executable must fail clearly")
+            } catch { XCTAssertEqual(error as? RemoteFault, .piLaunchFailed) }
+            XCTAssertEqual(model.fault, .piLaunchFailed)
+            try await host.setExecutable(executable)
+            _ = try await model.request(.createSession(directory: directory))
+            try await waitUntil { model.state.selected != nil }
+            let first = try XCTUnwrap(model.state.selected)
+            XCTAssertNil(model.fault)
+            XCTAssertFalse(model.listening)
+            model.text = "Local before pairing"
+            model.send(context: model.state.context)
+            try await waitUntil { !model.sending && model.state.working && model.state.messages.last?.text == "Shared state" }
+            model.stopWork()
+            try await waitUntil { !model.state.working }
+            XCTAssertFalse(model.listening)
+            let serverWasRunning = await server.isRunning()
+            XCTAssertFalse(serverWasRunning)
             let port = try await server.start(identity: identity, address: "127.0.0.1", port: 0)
             let grant = try await server.openPairing()
             let code = PairingCode(host: host.hostID, name: "Mac model fixture", url: URL(string: "wss://127.0.0.1:\(port)/")!, certificate: identity.certificate, grant: grant, expires: Date().addingTimeInterval(120))
@@ -168,10 +190,6 @@ done
             let mac = try await client.pair(code: code, device: UUID(), name: "Fixture phone")
             try await approval.value
             try await client.connect(mac)
-            let directory = try await host.directories.register(root)
-            _ = try await model.request(.createSession(directory: directory))
-            try await waitUntil { model.state.selected != nil }
-            let first = try XCTUnwrap(model.state.selected)
             model.text = "Kept draft"
             try model.attachText(FilePreview(name: "fixture.swift", text: "let attached = 42", truncated: false), context: model.state.context)
             XCTAssertTrue(model.text.hasPrefix("Kept draft\n\nFile: fixture.swift"))
@@ -195,7 +213,7 @@ done
             model.delivery = .followUp; model.text = "Local follow-up"; model.send()
             try await waitUntil { !model.sending }
             let accepted = support.appendingPathComponent("pi-sessions/" + first.uuidString + "/accepted")
-            XCTAssertEqual(try Data(contentsOf: accepted).count, 3)
+            XCTAssertEqual(try Data(contentsOf: accepted).count, 4)
             model.stopWork()
             try await waitUntil { !model.state.working }
             guard case .snapshot(let stopped) = try await client.request(.snapshot) else { throw RemoteFault.invalidRequest }
@@ -222,7 +240,7 @@ done
                 _ = try await oldAction(.stop)
                 XCTFail("Stale local action must not target the new session")
             } catch { XCTAssertEqual(error as? RemoteFault, .conflict) }
-            XCTAssertEqual(try Data(contentsOf: accepted).count, 3)
+            XCTAssertEqual(try Data(contentsOf: accepted).count, 4)
         } catch {
             await client.disconnect(); await server.stop(); await model.shutdown(); throw error
         }

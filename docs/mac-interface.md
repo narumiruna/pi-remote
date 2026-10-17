@@ -10,6 +10,16 @@ With no selected session, the window offers **Choose folder and start session** 
 
 Mac sheets have a bounded viewport based on the parent window, with a visible Close action outside the scrolling content. Grouped forms scroll instead of expanding the sheet to the full intrinsic content height. This fixes the session-controls overflow shown in the reported screenshot.
 
+## Local Pi runtime discovery
+
+A GUI-style PATH reproduced the reported launch failure: `/usr/bin/env` could not find Node.js, although Pi worked in the terminal. The terminal used an fnm multishell path that the app did not inherit.
+
+The host now checks the Pi executable directory, existing Homebrew/PATH entries and installed fnm default aliases, including `FNM_DIR` when inherited. It uses stable defaults, not arbitrary installed versions or expiring multishell directories. Existing PATH entries take precedence over the fnm fallback. It does not execute shell startup files, install software or change the user's environment, account or certificates.
+
+Missing Node.js and failed Pi startup have specific errors rather than the connection-unavailable message. An explicit session retry clears the previous local launch fault. Local Pi use does not require the network server.
+
+Focused verification: four runtime-discovery/error regressions pass; the installed-Pi missing-credential probe passes under `/usr/bin/env -i` with a minimal system PATH and no real credentials or provider inference. The local Mac model test also verifies failed-launch recovery, session creation, Send and Stop before a listener starts. Evidence: `/tmp/pi-remote-launch-focused.log`, `/tmp/pi-remote-launch-installed-pi.log` and `/tmp/pi-remote-launch-local-model-3.xcresult`. No broad UI suite or simulator was run. The open Xcode project and `project.yml` hashes stayed unchanged. Confirmation of the rebuilt app's normal GUI flow remains open.
+
 ## Manual Mac folder paths
 
 The directory picker supports typed or pasted paths when the host advertises `directory-path`:
