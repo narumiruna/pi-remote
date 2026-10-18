@@ -117,7 +117,6 @@ extension MacDebugController {
             if interaction.value == "hide" { model.inspectorVisible = false }
             else {
                 guard model.hasInspectorContext,
-                      interaction.value != "Activity" || model.state.selected != nil,
                       let marker = Self.descendants(content).compactMap({ $0 as? MacDebugWindowMarker.Marker }).first,
                       let select = marker.selectInspector else { throw MacDebugServer.OperationError.targetUnavailable }
                 select(interaction.value)

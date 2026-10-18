@@ -325,7 +325,9 @@ private final class InteractionSecrets: SecretStore, @unchecked Sendable {
             marker.selectInspector = { section = $0; model.inspectorVisible = true }
             XCTAssertThrowsError(try apply("inspector", "Files", model, window))
             model.destination = .workspace("/tmp")
-            XCTAssertThrowsError(try apply("inspector", "Activity", model, window))
+            try apply("inspector", "Activity", model, window)
+            XCTAssertEqual(section, "Activity", "An empty Activity tab explains the missing loaded session")
+            XCTAssertEqual(model.destination, .workspace("/tmp"))
             try apply("inspector", "Session", model, window)
             XCTAssertEqual(section, "Session")
             XCTAssertTrue(model.inspectorVisible)

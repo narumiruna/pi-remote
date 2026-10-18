@@ -190,6 +190,15 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
         root.layoutSubtreeIfNeeded()
     }
 
+    private func saveInspectorCapture(_ window: NSWindow, name: String) throws {
+        let pixels = try MacDebugController.snapshot(window: window)
+        let bitmap = NSBitmapImageRep(cgImage: pixels.value)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let directory = URL(fileURLWithPath: "/tmp/pi-mac-inspector-review/captures", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try png.write(to: directory.appendingPathComponent(name + ".png"))
+    }
+
     private func hosted(_ model: CompanionModel, width: CGFloat = 900, height: CGFloat = 600,
                         _ body: @MainActor (NSView, NSWindow) async throws -> Void) async throws {
         try await withMacNativeRootWindow(model, width: width, height: height, exercise: body)
@@ -311,7 +320,7 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
         }
     }
 
-    func testExplicitFilesFromSettingsUsesLoadedConversationWithoutRuntimeMutation() async throws {
+    func testExplicitFilesFromSettingsKeepsDestinationWithoutRuntimeMutation() async throws {
         try await withModel { model in
             let session = SessionInfo(id: UUID(), title: "Files fixture", directory: "/tmp")
             model.state.sessions = [session]; model.state.selected = session.id; model.state.phase = "idle"
@@ -322,7 +331,7 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
                 let runtime = await model.coordinator?.state()
                 XCTAssertTrue(try self.element("mac-files", in: root).press())
                 try await self.settle(root)
-                XCTAssertEqual(model.destination, .session(session.id))
+                XCTAssertEqual(model.destination, .settings)
                 XCTAssertTrue(self.hasInspectorControls(root))
                 XCTAssertEqual(model.state, before)
                 XCTAssertEqual(model.text, "Keep files navigation draft")
@@ -362,11 +371,88 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
                     NSApp.postEvent(up, atStart: true)
                     picker.mouseDown(with: down)
                     try await self.settle(root)
-                    XCTAssertEqual(model.destination, .session(session.id), "Pointer tab=\(index), selected=\(picker.selectedSegment), frame=\(picker.frame)")
+                    XCTAssertEqual(model.destination, .settings, "Pointer tab=\(index), selected=\(picker.selectedSegment), frame=\(picker.frame)")
+                    if index == 2 {
+                        XCTAssertTrue(self.hasText("Loaded session activity", in: root))
+                        XCTAssertTrue(self.hasText("Inspector tabs fixture", in: root))
+                        XCTAssertTrue(self.hasText("No tool activity yet.", in: root))
+                    }
                     XCTAssertTrue(self.hasInspectorControls(root))
                     XCTAssertEqual(model.state, before)
                     XCTAssertEqual(model.text, "Keep inspector tab draft")
                 }
+            }
+        }
+    }
+
+    func testInspectorSavedMetadataAndActivityEmptyStateKeepSelection() async throws {
+        try await withModel { model in
+            let saved = SessionInfo(id: UUID(), title: "Saved inspector fixture", directory: "/tmp")
+            model.interfaceMode = .desktop
+            model.state.sessions = [saved]
+            model.destination = .session(saved.id)
+            model.inspectorVisible = true
+            model.text = "Retain saved draft"
+            for width in [CGFloat(900), 1104] {
+                try await self.hosted(model, width: width, height: 829) { root, window in
+                    let before = model.state
+                    let marker = try XCTUnwrap(self.descendants(root).compactMap { $0 as? MacDebugWindowMarker.Marker }.first)
+                    let select = try XCTUnwrap(marker.selectInspector)
+                    for section in ["Session", "Activity"] {
+                        select(section)
+                        try await self.settle(root)
+                        XCTAssertTrue(self.hasText("Selected saved session", in: root))
+                        XCTAssertTrue(self.hasText(saved.title, in: root))
+                        XCTAssertTrue(self.hasText(saved.directory, in: root))
+                        XCTAssertTrue(self.hasText("Saved · Not loaded", in: root))
+                        if section == "Activity" {
+                            XCTAssertTrue(self.hasText("Open a session to view activity. Saved-session activity is not loaded here.", in: root))
+                        }
+                        XCTAssertEqual(model.destination, .session(saved.id))
+                        XCTAssertEqual(model.state, before)
+                        XCTAssertEqual(model.text, "Retain saved draft")
+                        try self.saveInspectorCapture(window, name: "saved-\(section)-\(Int(width))")
+                    }
+                }
+            }
+        }
+    }
+
+    func testActivityFromDifferentSavedSessionNamesLoadedContextWithoutNavigation() async throws {
+        try await withModel { model in
+            let active = SessionInfo(id: UUID(), title: "Loaded activity fixture", directory: "/tmp/active-inspector")
+            let saved = SessionInfo(id: UUID(), title: "Other saved fixture", directory: "/tmp/other-inspector")
+            let tool = TranscriptMessage(role: "tool", text: "read\\nFile output", tool: .init(name: "read", target: "active.swift", status: .completed))
+            model.interfaceMode = .desktop
+            model.state.sessions = [active, saved]; model.state.selected = active.id
+            model.state.phase = "working"; model.state.messages = [tool]
+            model.destination = .session(saved.id); model.text = "Keep active draft"
+            try await self.hosted(model, width: 1104, height: 829) { root, window in
+                let marker = try XCTUnwrap(self.descendants(root).compactMap { $0 as? MacDebugWindowMarker.Marker }.first)
+                let select = try XCTUnwrap(marker.selectInspector)
+                let before = model.state
+                for destination in [MacDestination.session(saved.id), .workspace(saved.directory), .overview, .settings, .devices] {
+                    model.destination = destination
+                    for section in ["Files", "Session", "Activity"] {
+                        select(section)
+                        try await self.settle(root)
+                        XCTAssertEqual(model.destination, destination)
+                        XCTAssertEqual(model.state, before)
+                        XCTAssertEqual(model.text, "Keep active draft")
+                        XCTAssertTrue(self.hasInspectorControls(root))
+                    }
+                    XCTAssertTrue(self.hasText("Loaded session activity", in: root))
+                    XCTAssertTrue(self.hasText(active.title, in: root))
+                    XCTAssertTrue(self.hasText("Read, active.swift, Completed", in: root))
+                }
+                try self.saveInspectorCapture(window, name: "loaded-Activity-1104")
+                XCTAssertTrue(try self.element("mac-inspector-view-active-session", in: root).press())
+                try await self.settle(root)
+                XCTAssertEqual(model.destination, .session(active.id))
+                XCTAssertEqual(model.state, before)
+                select("Session")
+                try await self.settle(root)
+                try self.saveInspectorCapture(window, name: "loaded-Session-1104")
             }
         }
     }

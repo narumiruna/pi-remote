@@ -37,7 +37,7 @@ The editor stays in one dock subtree. Pi reserves a measured placeholder in hist
 
 Pi's view-owned local wheel adapter forwards only unconsumed vertical events over that visible dock to its history. Editor, completion and oversized-dock scrolling consume first. Desktop, modified/horizontal events, other windows, sheets, modal or disabled/hidden surfaces pass through. Weak references and detach/dismantle/isolated-deinit cleanup bound the adapter's lifetime. It does not read or log input text.
 
-Navigation to the loaded session does not send an activation request. Actions retain existing context checks, idle rules, confirmation and no-replay behavior. Close still targets the focused session; changing focus does not silently close the new target. Rename/Tree/History reject a stale context.
+Navigation to the loaded session does not send an activation request. The later [inspector review corrections](mac-inspector-review.md) also keep Files and Activity tab changes on the current destination and label their context. View active session provides explicit navigation. Actions retain existing context checks, idle rules, confirmation and no-replay behavior. Close still targets the focused session; changing focus does not silently close the new target. Rename/Tree/History reject a stale context.
 
 ## Source-review follow-up
 
