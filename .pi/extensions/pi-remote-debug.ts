@@ -16,7 +16,21 @@ const modes = ["pi", "desktop"];
 const destinations = ["conversation", "overview", "workspace", "session", "settings", "devices", "none"];
 const phases = ["starting", "idle", "working", "queued", "bash", "waiting", "stopping", "retrying", "compacting", "recovering", "unavailable", "interrupted", "unknown"];
 const methods = ["appkit-view"];
-type Operation = "status" | "capture";
+type Operation = "status" | "capture" | "interact";
+const interactionValues = {
+  navigate: ["conversation", "overview", "settings", "devices"],
+  interface_mode: ["pi", "desktop"],
+  sidebar: ["show", "hide"],
+  inspector: ["Files", "Session", "Activity", "hide"],
+  panel: ["commands", "resume", "palette", "hotkeys", "directory", "workspace", "close"],
+  click: ["mac-sidebar-toggle", "mac-inspector-toggle", "mac-files", "mac-commands", "desktop-commands", "desktop-session-controls", "desktop-welcome-files", "desktop-welcome-commands", "desktop-welcome-new-session", "desktop-welcome-resume", "pi-follow-latest", "mac-refresh-addresses"],
+  type_text: [],
+  focus_editor: ["editor"],
+  scroll: ["history_up", "history_down", "history_top", "history_bottom", "dock_up", "dock_down", "page_up", "page_down"],
+} satisfies Record<string, string[]>;
+type InteractionAction = keyof typeof interactionValues;
+type Interaction = { action: InteractionAction; value: string };
+const interactionActions = Object.keys(interactionValues);
 type RecordValue = Record<string, unknown>;
 
 // Only these fixed messages can leave the client. Never include an OS error,
@@ -35,9 +49,20 @@ const errors = {
   capture_failed: "Pi Remote window capture failed.",
   capture_too_large: "Pi Remote window capture exceeds the image limit.",
   capture_busy: "Pi Remote window capture is busy.",
+  interaction_blocked: "Pi Remote debug interaction is blocked while a protected surface is visible.",
+  invalid_interaction: "Pi Remote debug interaction is invalid or exceeds its size limit.",
+  target_unavailable: "Pi Remote debug interaction target is unavailable.",
+  unsupported_operation: "Pi Remote debug operation is unsupported.",
 } as const;
 class DebugError extends Error {
-  constructor(code: keyof typeof errors) { super(errors[code]); }
+  readonly code: keyof typeof errors;
+  readonly serverRejected: boolean;
+  constructor(code: keyof typeof errors, operation?: Operation, serverRejected = false) {
+    const uncertain = operation === "interact" && !serverRejected;
+    super(errors[code] + (uncertain ? " The interaction may already apply. Inspect the app before retrying. No automatic retry was made." : ""));
+    this.code = code;
+    this.serverRejected = serverRejected;
+  }
 }
 function invalid(): never { throw new DebugError("invalid_response"); }
 function object(value: unknown): RecordValue {
@@ -86,6 +111,24 @@ export function validateStatus(value: unknown) {
     sessionCount: integer(r.sessionCount, 0, 10000), messageCount: integer(r.messageCount, 0, 10000),
     dialogCount: integer(r.dialogCount, 0, 10000),
   };
+}
+
+export function validateInteraction(value: unknown): Interaction {
+  try {
+    const r = exact(value, ["action", "value"]);
+    const action = enumeration(r.action, interactionActions) as InteractionAction;
+    if (typeof r.value !== "string") invalid();
+    if (action === "type_text") {
+      if (!r.value.length || r.value.includes("\0") || Buffer.byteLength(r.value, "utf8") > 2048) invalid();
+    } else if (!(interactionValues[action] as string[]).includes(r.value)) invalid();
+    return { action, value: r.value };
+  } catch { throw new DebugError("invalid_interaction"); }
+}
+export function validateInteractionResult(value: unknown, expectedAction?: InteractionAction) {
+  const r = exact(value, ["action", "outcome"]);
+  const action = enumeration(r.action, interactionActions) as InteractionAction;
+  if ((expectedAction !== undefined && action !== expectedAction) || r.outcome !== "applied") invalid();
+  return { action, outcome: "applied" as const };
 }
 
 function crc32(bytes: Buffer): number {
@@ -178,15 +221,22 @@ export function validateCapture(value: unknown) {
 function parseJSON(bytes: Buffer): unknown {
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { invalid(); }
 }
-export function validateResponse(bytes: Buffer, id: string, operation: Operation) {
+export function validateResponse(bytes: Buffer, id: string, operation: Operation, expectedAction?: InteractionAction) {
   const r = object(parseJSON(bytes));
   if (r.version !== 1 || r.id !== id || typeof r.ok !== "boolean") invalid();
   if (!r.ok) {
     exact(r, ["version", "id", "ok", "error"]);
+    if (operation === "interact" && typeof r.error !== "string") invalid();
     const code = typeof r.error === "string" && Object.hasOwn(errors, r.error) ? r.error as keyof typeof errors : "operation_failed";
-    throw new DebugError(code);
+    // Only known pre-dispatch/guard rejections establish that no UI action applied.
+    // A server timeout or generic handler failure can arrive after dispatch.
+    const rejected = ["disabled", "invalid_interaction", "interaction_blocked", "target_unavailable",
+      "window_unavailable", "window_ambiguous", "unsupported_operation", "unauthorized",
+      "invalid_request", "request_too_large", "unsupported_version"].includes(String(r.error));
+    throw new DebugError(code, operation, rejected);
   }
   exact(r, ["version", "id", "ok", "result"]);
+  if (operation === "interact") return validateInteractionResult(r.result, expectedAction);
   return operation === "status" ? validateStatus(r.result) : validateCapture(r.result);
 }
 
@@ -243,10 +293,17 @@ export class DebugClient {
     for (const cancel of [...this.pending]) cancel();
   }
 
-  request(operation: Operation, signal?: AbortSignal): Promise<ReturnType<typeof validateStatus> | ReturnType<typeof validateCapture>> {
-    if (this.disposed || signal?.aborted) return Promise.reject(new DebugError("cancelled"));
+  request(operation: Operation, signal?: AbortSignal, interaction?: Interaction): Promise<ReturnType<typeof validateResponse>> {
+    if (this.disposed || signal?.aborted) return Promise.reject(new DebugError("cancelled", operation));
+    let validatedInteraction: Interaction | undefined;
+    try {
+      if (!["status", "capture", "interact"].includes(operation)) throw new DebugError("unsupported_operation");
+      if (operation === "interact") validatedInteraction = validateInteraction(interaction);
+      else if (interaction !== undefined) throw new DebugError("invalid_interaction");
+    } catch (error) { return Promise.reject(error); }
     return new Promise((resolveResult, reject) => {
       let done = false;
+      let dispatched = false;
       let socket: Socket | undefined;
       const finish = (error?: DebugError, result?: ReturnType<typeof validateResponse>) => {
         if (done) return;
@@ -256,9 +313,12 @@ export class DebugClient {
         this.pending.delete(cancel);
         socket?.removeAllListeners();
         socket?.destroy();
+        // A failed response cannot establish whether a dispatched interaction
+        // applied. Only a validated server rejection establishes a known failure.
+        if (error && dispatched && !error.serverRejected) error = new DebugError(error.code, operation);
         if (error) reject(error); else resolveResult(result!);
       };
-      const cancel = () => finish(new DebugError("cancelled"));
+      const cancel = () => finish(new DebugError("cancelled", operation));
       const timer = setTimeout(() => finish(new DebugError("timeout")), TIMEOUT_MS);
       this.pending.add(cancel);
       signal?.addEventListener("abort", cancel, { once: true });
@@ -267,8 +327,8 @@ export class DebugClient {
           const endpoint = await discover(this.directory);
           if (done) return;
           const id = randomUUID();
-          const request = Buffer.from(JSON.stringify({ version: 1, id, token: endpoint.token, operation }) + "\n");
-          if (request.length > MAX_RECORD) throw new DebugError("unsafe_endpoint");
+          const request = Buffer.from(JSON.stringify({ version: 1, id, token: endpoint.token, operation, ...(validatedInteraction ? { interaction: validatedInteraction } : {}) }) + "\n");
+          if (request.length > MAX_RECORD) throw new DebugError(operation === "interact" ? "invalid_interaction" : "unsafe_endpoint");
           socket = new Socket();
           const chunks: Buffer[] = [];
           let size = 0;
@@ -288,10 +348,15 @@ export class DebugClient {
           // second record cannot bypass validation by arriving in another chunk.
           socket.on("end", () => {
             if (!receivedLine) { finish(new DebugError("invalid_response")); return; }
-            try { finish(undefined, validateResponse(Buffer.concat(chunks, size).subarray(0, -1), id, operation)); }
+            try { finish(undefined, validateResponse(Buffer.concat(chunks, size).subarray(0, -1), id, operation, validatedInteraction?.action)); }
             catch (error) { finish(error instanceof DebugError ? error : new DebugError("invalid_response")); }
           });
-          socket.connect(endpoint.socketPath, () => socket?.write(request));
+          socket.connect(endpoint.socketPath, () => {
+            if (done) return;
+            dispatched = true;
+            try { socket!.write(request); }
+            catch { finish(new DebugError("unavailable")); }
+          });
         } catch (error) { finish(error instanceof DebugError ? error : new DebugError("unavailable")); }
       })();
     });
@@ -325,6 +390,17 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, _params, signal) {
       const capture = await client.request("capture", signal) as ReturnType<typeof validateCapture>;
       return { content: [{ type: "text", text: JSON.stringify(capture.metadata) }, capture.image], details: capture.metadata, structuredContent: capture };
+    },
+  });
+  pi.registerTool({
+    name: "pi_remote_debug_interact", label: "Pi Remote debug interaction",
+    description: "Use app-only semantic controls in the opted-in Pi Remote Mac app, not physical keyboard, pointer or desktop input. Protected surfaces (pairing, extension requests, modal dialogs and ambiguous windows) block interaction. A permitted click target must still be visible, enabled and exposed in-process; otherwise it fails without a coordinate-input fallback. Use semantic navigation/panel actions for unavailable SwiftUI targets. Never submits prompts, executes commands, starts/stops Pi or networking, answers dialogs, changes credentials or controls another app. navigate: conversation|overview|settings|devices; interface_mode: pi|desktop; sidebar: show|hide; inspector: Files|Session|Activity|hide; panel: commands|resume|palette|hotkeys|directory|workspace|close (ordinary panels only); click: mac-sidebar-toggle|mac-inspector-toggle|mac-files|mac-commands|desktop-commands|desktop-session-controls|desktop-welcome-files|desktop-welcome-commands|desktop-welcome-new-session|desktop-welcome-resume|pi-follow-latest|mac-refresh-addresses (native accessibility press, not physical desktop input; fixed IDs only, no arbitrary IDs, coordinates or keys); type_text: append nonempty text, at most 2048 UTF-8 bytes, without replacing the draft; focus_editor: editor; scroll: history_up|history_down|history_top|history_bottom|dock_up|dock_down|page_up|page_down. The full encoded request must fit 4096 bytes. Text enters Pi tool-call history. Results contain only action and outcome, never target IDs or text. No automatic retries. After a dispatched request fails without a valid server rejection, the interaction may already apply; inspect status/capture before retrying.",
+    parameters: schema({ action: { type: "string", enum: interactionActions }, value: { type: "string", minLength: 1, maxLength: 2048 } }),
+    outputSchema: schema({ action: { type: "string", enum: interactionActions }, outcome: { type: "string", const: "applied" } }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    async execute(_id, params, signal) {
+      const result = await client.request("interact", signal, params as Interaction) as ReturnType<typeof validateInteractionResult>;
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result, structuredContent: result };
     },
   });
 }

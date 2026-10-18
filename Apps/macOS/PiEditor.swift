@@ -248,6 +248,7 @@ struct PiEditor: NSViewRepresentable {
                 NotificationCenter.default.addObserver(self, selector: #selector(undoOrRedoDidFinish),
                                                        name: name, object: view.editor.undoManager)
             }
+            view.inputContextID = parent.contextID
             view.editor.string = parent.text
             view.editor.setSelectedRange(input.selection)
             view.editor.delegate = self
@@ -270,6 +271,7 @@ struct PiEditor: NSViewRepresentable {
             let contextChanged = self.parent.contextID != parent.contextID
             self.parent = parent
             guard let editor = view?.editor else { return }
+            view?.inputContextID = parent.contextID
             let becameEnabled = !editor.isEditable && isEnabled
             editor.isEditable = isEnabled
             applyStyle()
@@ -503,6 +505,7 @@ struct PiEditor: NSViewRepresentable {
 }
 
 @MainActor final class PiEditorNativeView: NSView {
+    var inputContextID = ""
     let editor = PiEditorTextView(frame: .zero)
     let bottomRule = NSView()
     private let scroll = NSScrollView()

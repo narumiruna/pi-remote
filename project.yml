@@ -60,6 +60,8 @@ targets:
       - Apps/macOS/CompanionModel.swift
       - Apps/macOS/MacDebugServer.swift
       - Apps/macOS/MacDebugController.swift
+      - Apps/macOS/MacDebugInteraction.swift
+      - Apps/macOS/MacDebugClick.swift
       - Apps/macOS/CompanionTermination.swift
       - Apps/macOS/CompanionWindow.swift
       - Apps/macOS/PiConversationView.swift

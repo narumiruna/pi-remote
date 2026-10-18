@@ -19,7 +19,7 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let suite = "PiRemote.DebugTests." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defaults.set(true, forKey: "debugEnabled") // An old or injected preference cannot enable access.
+        defaults.set(true, forKey: "debugEnabled") // The unused legacy key does not grant saved consent.
         let model = CompanionModel(support: root.appendingPathComponent("support"), secrets: DebugSecrets(), defaults: defaults,
                                    debugDirectory: root.appendingPathComponent("debug"))
         do { try await body(model, root); await model.shutdown() }
@@ -61,6 +61,66 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
             XCTAssertFalse(model.debug.enabled, "A late enable confirmation cannot reopen access during shutdown")
             XCTAssertFalse(FileManager.default.fileExists(atPath: endpoint.path))
         }
+    }
+
+    func testSavedConsentRestoresAfterRestartWithFreshTokenAndDisableStaysOff() async throws {
+        let root = URL(fileURLWithPath: "/private/tmp/prdr-" + UUID().uuidString.prefix(12))
+        let suite = "PiRemote.DebugRestart." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        func makeModel() -> CompanionModel {
+            CompanionModel(support: root.appendingPathComponent("support"), secrets: DebugSecrets(), defaults: defaults,
+                           debugDirectory: root.appendingPathComponent("debug"))
+        }
+        var first: CompanionModel? = makeModel()
+        XCTAssertFalse(first!.debug.enabled)
+        first!.debug.enable(model: first!)
+        XCTAssertTrue(first!.debug.enabled)
+        XCTAssertTrue(first!.debug.restoreOnLaunch)
+        let endpoint = root.appendingPathComponent("debug/endpoint.json")
+        let oldCapability = try Data(contentsOf: endpoint)
+        await first!.shutdown()
+        XCTAssertFalse(first!.debug.enabled)
+        XCTAssertTrue(first!.debug.restoreOnLaunch, "Quit must retain consent without retaining a live endpoint")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: endpoint.path))
+        first = nil
+        var second: CompanionModel? = makeModel()
+        XCTAssertNil(second!.startupError)
+        XCTAssertTrue(second!.debug.enabled, second!.debug.error ?? "Debug did not restore")
+        XCTAssertNotEqual(try Data(contentsOf: endpoint), oldCapability)
+        XCTAssertNil(second!.state.selected)
+        XCTAssertFalse(second!.listening)
+        second!.debug.disable()
+        XCTAssertFalse(second!.debug.restoreOnLaunch)
+        await second!.shutdown()
+        second = nil
+        let third = makeModel()
+        XCTAssertFalse(third.debug.enabled)
+        XCTAssertFalse(third.debug.restoreOnLaunch)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: endpoint.path))
+        await third.shutdown()
+    }
+
+    func testFailedAutomaticStartupCanBeDisabledWithoutRetainingConsent() async throws {
+        let root = URL(fileURLWithPath: "/private/tmp/prdf-" + UUID().uuidString.prefix(12))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let suite = "PiRemote.DebugRestoreFailure." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        defaults.set(true, forKey: "macDebugEnabled")
+        let directory = root.appendingPathComponent("debug")
+        try Data("unsafe endpoint fixture".utf8).write(to: directory)
+        let model = CompanionModel(support: root.appendingPathComponent("support"), secrets: DebugSecrets(), defaults: defaults, debugDirectory: directory)
+        XCTAssertFalse(model.debug.enabled)
+        XCTAssertTrue(model.debug.restoreOnLaunch)
+        XCTAssertNotNil(model.debug.error)
+        model.debug.disable()
+        XCTAssertFalse(defaults.bool(forKey: "macDebugEnabled"))
+        XCTAssertFalse(model.debug.restoreOnLaunch)
+        model.debug.restore(model: model)
+        XCTAssertFalse(model.debug.enabled)
+        XCTAssertNil(model.debug.error)
+        await model.shutdown()
     }
 
     func testStartupFailureDoesNotEnableOrExposeSystemError() async throws {
@@ -380,6 +440,7 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
                 action.performClick(nil)
                 try await Task.sleep(for: .milliseconds(150))
                 XCTAssertEqual(model.debug.enabled, confirm)
+                XCTAssertEqual(model.debug.restoreOnLaunch, confirm)
             }
         }
     }
@@ -403,6 +464,7 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
             XCTAssertTrue(unsafeBitCast(button.method(for: action), to: Press.self)(button, action))
             try await Task.sleep(for: .milliseconds(150))
             XCTAssertFalse(model.debug.enabled)
+            XCTAssertFalse(model.debug.restoreOnLaunch)
             XCTAssertNil(find("mac-debug-banner-disable", in: host.view))
         }
     }

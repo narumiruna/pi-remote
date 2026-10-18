@@ -4,21 +4,30 @@ import Observation
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Read-only, session-scoped development access. No state is saved in preferences.
+/// Explicit debug consent persists; transport access is fresh for each app launch.
 @MainActor @Observable final class MacDebugController {
     nonisolated static let maxImageBytes = 2 * 1024 * 1024
     static let maxEdge = 1920
     static let maxPixels = 2_304_000
-    static let disclosure = "Debug mode gives processes running as your Mac user access to app state and window captures. Captures can contain private conversation text, paths and secrets shown in the window. Pi can save them in session history and send them to its model provider. This is not a security sandbox. Captures are requested individually; they are not recorded automatically. Debug mode turns off when the app exits."
+    static let disclosure = "Debug mode gives processes running as your Mac user access to app state, window captures and app-only UI controls. These controls can click supported ordinary controls, navigate, change appearance, open ordinary panels, scroll and append draft text. They cannot send prompts, run commands, control Pi or networking, or approve devices. UI preferences and draft edits can persist. Debug access is independent of iPhone access. Captures can contain private conversation text, paths and secrets shown in the window. Pi can save them in session history and send them to its model provider. This is not a security sandbox. Captures are requested individually; they are not recorded automatically. Debug mode stays enabled after you reopen the app until you select Disable debug mode. Quitting closes access; reopening creates a new local capability."
 
     private(set) var enabled = false
+    private(set) var restoreOnLaunch: Bool
+    private static let preferenceKey = "macDebugEnabled"
+    @ObservationIgnored private let defaults: UserDefaults
     private(set) var error: String?
     @ObservationIgnored private let server: MacDebugServer
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var captureID: UUID?
 
-    init(directory: URL = MacDebugServer.defaultDirectory) {
+    init(directory: URL = MacDebugServer.defaultDirectory, defaults: UserDefaults = .standard) {
         server = MacDebugServer(directory: directory)
+        self.defaults = defaults
+        restoreOnLaunch = defaults.bool(forKey: Self.preferenceKey)
+    }
+
+    func restore(model: CompanionModel) {
+        if restoreOnLaunch { enable(model: model) }
     }
 
     func enable(model: CompanionModel) {
@@ -27,14 +36,20 @@ import UniformTypeIdentifiers
         let generation = UUID()
         self.generation = generation
         do {
-            try server.start { [weak self, weak model] operation in
+            try server.start(handlingRequest: { [weak self, weak model] operation, interaction in
                 guard let self, let model, !model.shuttingDown, self.enabled, self.generation == generation else {
                     throw MacDebugServer.OperationError.disabled
                 }
                 if operation == "status" { return try self.status(model: model) }
+                if operation == "interact" {
+                    guard let interaction else { throw MacDebugServer.OperationError.invalidInteraction }
+                    return try self.interact(interaction, model: model)
+                }
                 return try await self.capture(model: model, generation: generation)
-            }
+            })
             enabled = true
+            restoreOnLaunch = true
+            defaults.set(true, forKey: Self.preferenceKey)
         } catch {
             // Do not expose system errors, paths, request data or capability tokens.
             let code = (error as? MacDebugServer.Failure)?.rawValue ?? "startup_failed"
@@ -43,6 +58,13 @@ import UniformTypeIdentifiers
     }
 
     func disable() {
+        restoreOnLaunch = false
+        defaults.removeObject(forKey: Self.preferenceKey)
+        stop()
+    }
+
+    /// Close the current capability without withdrawing the user's saved consent.
+    func stop() {
         enabled = false
         generation = UUID()
         captureID = nil
@@ -186,12 +208,16 @@ private struct DebugCapture: Encodable {
 
 /// Identify the product content by an attached view, not SwiftUI-owned window identity.
 @MainActor struct MacDebugWindowMarker: NSViewRepresentable {
+    var selectInspector: ((String) -> Void)? = nil
     func makeNSView(context: Context) -> NSView {
         let marker = Marker()
         marker.setAccessibilityElement(false)
+        marker.selectInspector = selectInspector
         return marker
     }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? Marker)?.selectInspector = selectInspector
+    }
 
     static func isAttached(to window: NSWindow) -> Bool {
         guard window.sheetParent == nil, !(window is NSPanel), let content = window.contentView else { return false }
@@ -203,6 +229,7 @@ private struct DebugCapture: Encodable {
     }
 
     final class Marker: NSView {
+        var selectInspector: ((String) -> Void)?
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
@@ -217,12 +244,17 @@ struct MacDebugSettings: View {
             Text(MacDebugController.disclosure).font(.caption).foregroundStyle(.secondary)
             Text("Captures contain rendered window content only, without native window chrome or sheets. Close sheets, dialogs and pairing before capture.")
                 .font(.caption).foregroundStyle(.secondary)
-            if model.debug.enabled {
+            if model.debug.enabled || model.debug.restoreOnLaunch {
                 Button("Disable debug mode") { model.debug.disable() }.accessibilityIdentifier("mac-debug-disable")
             } else {
                 Button("Enable debug mode…") { confirming = true }.accessibilityIdentifier("mac-debug-enable")
             }
             if let error = model.debug.error { Text(error).foregroundStyle(.red) }
+            if model.debug.restoreOnLaunch && !model.debug.enabled {
+                Text("Debug mode is saved, but access could not start. Disable it to cancel automatic startup, or retry.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Retry debug mode") { model.debug.restore(model: model) }
+            }
         }
         .confirmationDialog("Enable local debug access?", isPresented: $confirming) {
             Button("Enable debug mode") { model.debug.enable(model: model) }

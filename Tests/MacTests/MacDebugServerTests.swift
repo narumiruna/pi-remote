@@ -37,6 +37,32 @@ import XCTest
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("server.lock").path))
     }
 
+    func testInteractionEnvelopeValidationDoesNotForwardInvalidActions() async throws {
+        let fixture = try Fixture()
+        defer { fixture.clean() }
+        var calls = 0
+        try fixture.server.start(handlingRequest: { _, interaction in
+            calls += 1
+            XCTAssertEqual(interaction?.action, "navigate")
+            return Data("{\"action\":\"navigate\",\"outcome\":\"applied\"}".utf8)
+        })
+        var base = try fixture.requestObject(operation: "interact")
+        base["interaction"] = ["action": "navigate", "value": "settings"]
+        let valid = try await fixture.exchange(JSONSerialization.data(withJSONObject: base) + [10])
+        XCTAssertEqual(valid["ok"] as? Bool, true)
+        for fields in [["action": "send", "value": "prompt"], ["action": "navigate", "value": "settings", "extra": "private"],
+                       ["action": "type_text", "value": String(repeating: "a", count: 2049)]] {
+            var invalid = base
+            invalid["interaction"] = fields
+            let response = try await fixture.exchange(JSONSerialization.data(withJSONObject: invalid) + [10])
+            XCTAssertEqual(response["error"] as? String, "invalid_interaction")
+        }
+        base["unexpected"] = "private"
+        let extra = try await fixture.exchange(JSONSerialization.data(withJSONObject: base) + [10])
+        XCTAssertEqual(extra["error"] as? String, "invalid_interaction")
+        XCTAssertEqual(calls, 1)
+    }
+
     func testAuthenticationVersionAndOperationRejections() async throws {
         let fixture = try Fixture()
         defer { fixture.clean() }
@@ -415,12 +441,15 @@ private typealias DebugTestClient = MacDebugTestClient
 
 /// Blocking test IO is used only in detached tasks. The lock makes close idempotent.
 final class MacDebugTestClient: @unchecked Sendable {
-    static func request(directory: URL, operation: String = "status", token: String? = nil) async throws -> Data {
+    static func request(directory: URL, operation: String = "status", token: String? = nil,
+                        interaction: MacDebugInteraction? = nil, onSent: (@Sendable () -> Void)? = nil) async throws -> Data {
         try await Task.detached {
             let endpoint = try JSONDecoder().decode(DebugTestEndpoint.self, from: Data(contentsOf: directory.appendingPathComponent("endpoint.json")))
             let client = try MacDebugTestClient(endpoint.socketPath)
-            let request: [String: Any] = ["version": 1, "id": UUID().uuidString, "token": token ?? endpoint.token, "operation": operation]
+            var request: [String: Any] = ["version": 1, "id": UUID().uuidString, "token": token ?? endpoint.token, "operation": operation]
+            if let interaction { request["interaction"] = ["action": interaction.action, "value": interaction.value] }
             try client.send(JSONSerialization.data(withJSONObject: request) + [10])
+            onSent?()
             return try client.receive()
         }.value
     }
