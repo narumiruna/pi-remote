@@ -31,7 +31,7 @@ Checks use the `PiRemoteMac` scheme from `project.yml`, generated with `xcodegen
 
 Native checks cover unchanged destination, host snapshot and draft across tab changes; explicit navigation; saved-only and loaded-session metadata; typed Activity outcomes; full-width rows and readable folder identity at 260/320 points; menu path copying; hidden-file filtering; visible access faults; Retry and cached pagination; filtered-empty pixels; canonical-path review at both scroll ends; preview/content/Done and repeated ordinary preview; native context-menu labels; and arrow/Return navigation without session creation.
 
-Final captures under `captures/` were reviewed for Files at 260/320 points, the filtered-empty explanation, saved Session/Activity at 900/1104-point window widths and loaded Session/Activity at 1104 points. The filtered-empty check includes an OCR assertion that the first line remains visible. Independent final source review found no actionable defects. `git diff --check` passes and all 98 local documentation paths in the affected documents exist. The unrelated `Package.swift` edit remains unchanged.
+Final captures under `captures/` were reviewed for Files at 260/320 points, the filtered-empty explanation, saved Session/Activity at 900/1104-point window widths and loaded Session/Activity at 1104 points. The filtered-empty check includes an OCR assertion that the first line remains visible. Independent final source review found no actionable defects. `git diff --check` and local documentation path checks pass. The unrelated `Package.swift` edit remains unchanged.
 
 ### Earlier failures and limits
 
@@ -41,7 +41,7 @@ A mixed native test attempt also overlapped two test processes and produced menu
 
 The initial review used the opted-in normal app in Desktop mode at 1104 × 829. It had a saved session but no loaded session. Debug captures verified the original Files and Session states; Activity correctly rejected selection in that older build. These captures are not evidence for the new implementation.
 
-Hosted fixtures use private state and do not connect to a provider or start iPhone access. No captures enter Git. The [active plan](plans/2026-10-19_mac-inspector-review-plan.md) stays open for the remaining live loaded-session acceptance checks.
+Hosted fixtures use private state and do not connect to a provider or start iPhone access. No captures enter Git. The scoped inspector plan is complete after the saved-session and idle-loaded normal-app checks below. The completed plan was removed. These checks do not close the separate full UI, provider or accessibility acceptance gates.
 
 ## Normal-app debug-mode check
 
@@ -65,3 +65,23 @@ Not verified in this normal-app pass:
 - Live window resizing, physical pointer/keyboard traversal, VoiceOver and provider operation.
 
 No new visual defect was found in the available saved-session states. This check does not establish full UI acceptance.
+
+## Loaded-session debug-mode check
+
+The user opened a session before the follow-up check on 2026-10-18, 17:49:22–17:52:10 UTC. The same 1104 × 829 window had an idle loaded session, seven catalog sessions, no messages or dialogs, and iPhone access off. No prompt or runtime-setting action was dispatched.
+
+Verified:
+
+- The visible Session form shows the working directory, installed Pi version, model and thinking level in Desktop and Pi modes. The native allowlisted Desktop Session controls button opens this inspector.
+- Activity names the loaded session and directory, reports idle state and shows No tool activity yet. Extension diagnostics remain visible. An existing MCP setup warning was observed; no configuration was changed and its diagnostic content is not copied into this record.
+- From Overview, Session names the active session and offers View active session. Activity names the loaded context and offers the same explicit navigation action. Switching tabs keeps Overview central.
+- From Settings, Files shows the loaded working directory without navigating away. Session and Activity retain Settings and label the active context correctly. Mutable Session controls stay on the loaded conversation rather than appearing on these global pages.
+- Semantic conversation navigation returns to the same loaded conversation. The app was left in Desktop mode with Files visible. The existing `.conversation` alias is selected instead of the initial `.session` alias; exact destination restoration is not claimed. Session presence, idle phase, listener state, session count and message/dialog counts are unchanged.
+
+Evidence: `/tmp/pi-mac-inspector-review/live-loaded-debug-summary.json` and app-content captures in tool history. No new visual defect was found in the reviewed loaded-idle states. This documentation-only follow-up does not rerun or replace the earlier 48-test/build evidence.
+
+Remaining limits:
+
+- There are no tool messages. Actual running/completed/failed tool rows and streaming behavior retain native-fixture evidence only; this was not a provider-operation check.
+- The lower Session form and mutable controls were not exercised. Current debug scroll identifiers do not target the inspector. View active session is visible, but outside the fixed native-click allowlist; semantic conversation navigation was used instead.
+- Another saved-session selection, More actions/path/preview controls, live resizing, physical keyboard/pointer traversal and VoiceOver remain outside this normal-app pass. The earlier focused tests cover their stated native behavior, not live user acceptance.
