@@ -1,3 +1,4 @@
+import Observation
 import PiRemoteCore
 import SwiftUI
 
@@ -62,104 +63,29 @@ struct SessionControls: View {
     #if os(macOS)
     var closeSession: (() -> Void)? = nil
     var closeSessionDisabledReason: String? = nil
+    @Environment(\.macInterfaceMode) private var interfaceMode
+    @State private var details = false
+    @State private var advanced = false
     #endif
     let preview: (FilePreview) -> Void
     @State private var confirmClose = false
     @State private var name = ""
     @State private var error: String?
+    @State private var command = SessionCommandOperation()
     var body: some View {
         Form {
-            if let error { Text(error).foregroundStyle(.primary) }
-            if let session = state.sessions.first(where: { $0.id == state.selected }) {
-                Section("Working directory") {
-                    Text(session.directory).font(.caption.monospaced()).textSelection(.enabled)
-                }
+            #if os(macOS)
+            if interfaceMode == .desktop {
+                desktopControls
+            } else {
+                standardControls
             }
-            if state.capabilities.contains("pi-release-notes") {
-                Section("Installed Pi") {
-                    NavigationLink("Pi changelog") { ReleaseNotesView(request: request) }.frame(minHeight: sessionControlMinimum)
-                }
-            }
-            Section("Pi") {
-                Text("Version: " + state.piVersion).font(.caption)
-                Picker("Model", selection: Binding(get: { state.model }, set: { value in
-                    if let model = state.models.first(where: { $0.id == value }) { perform(.model(provider: model.provider, id: model.model)) }
-                })) {
-                    ForEach(state.models) { model in Text(model.name).tag(model.id) }
-                }
-                Picker("Thinking level", selection: Binding(get: { state.thinking }, set: { perform(.thinking(level: $0)) })) {
-                    ForEach(state.thinkingLevels, id: \.self) { Text($0).tag($0) }
-                }
-                if state.capabilities.contains("model-cycling") {
-                    Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: sessionControlMinimum)
-                    Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: sessionControlMinimum)
-                }
-            }.disabled(state.working || state.selected == nil)
-            if state.capabilities.contains("retry-controls"), state.phase == "retrying" {
-                Section("Retry recovery") {
-                    Text("Cancelling a retry wait does not undo tool actions or cancel every kind of active work. Use Stop to stop work and clear queued messages.").font(.caption)
-                    Button("Cancel retry wait") { perform(.abortRetry) }.frame(minHeight: sessionControlMinimum)
-                        .disabled(state.selected == nil || state.phase != "retrying")
-                }
-            }
-            if state.capabilities.contains("session-statistics") {
-                Section("Usage") {
-                    NavigationLink("Session tokens and cost") { SessionStatisticsView(request: request) }
-                        .frame(minHeight: sessionControlMinimum).disabled(state.selected == nil)
-                }
-            }
-            if state.capabilities.contains("last-assistant") {
-                Section("Output") {
-                    NavigationLink("Copy last assistant message") { LastAssistantView(request: request) }
-                        .frame(minHeight: sessionControlMinimum).disabled(state.selected == nil)
-                }
-            }
-            if state.capabilities.contains("session-export") {
-                Section("Export") {
-                    NavigationLink("Review and export session") { SessionExportView(request: request, jsonlEnabled: state.capabilities.contains("session-jsonl-export")) }
-                        .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
-                }
-            }
-            if state.capabilities.contains("runtime-settings"), state.runtime != nil {
-                Section("Runtime") {
-                    NavigationLink("Pi runtime settings") { RuntimeSettingsView(request: request) }
-                        .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
-                    if state.capabilities.contains("retry-controls") {
-                        NavigationLink("Automatic retry controls") { RetrySettingsView(request: request) }
-                            .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
-                    }
-                }
-            }
-            Section("Session") {
-                if state.capabilities.contains("session-lifecycle") {
-                    NavigationLink("New in current directory") {
-                        NewManagedSessionView(state: state, request: request, created: closed)
-                    }.frame(minHeight: sessionControlMinimum)
-                }
-                TextField("Session name", text: $name)
-                Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
-                NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: sessionControlMinimum)
-                Button("Clone session") { perform(.clone) }
-                #if !os(macOS)
-                if state.capabilities.contains("close-session") {
-                    Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: sessionControlMinimum)
-                }
-                #endif
-                Button("Working tree diff") {
-                    Task {
-                        do { if case .preview(let value) = try await request(.diff) { preview(value) } }
-                        catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
-                    }
-                }
-            }.disabled(state.working || state.selected == nil)
-            if let pending = state.pendingMessages, pending > 0 {
-                Section("Pending messages") {
-                    Text("Queued messages: \(pending). Use Stop to clear the queue.")
-                }
-            }
-            SessionCommandActions(state: state, request: request)
+            #else
+            standardControls
+            #endif
         }
         .navigationTitle("Session controls")
+        .onChange(of: state.context, initial: true) { _, context in command.align(to: context) }
         #if os(macOS)
         .safeAreaInset(edge: .bottom) {
             if state.capabilities.contains("close-session") {
@@ -185,6 +111,192 @@ struct SessionControls: View {
         } message: { Text("This stops the idle Pi process, not the listener. Saved history remains on the Mac. Reopen it from Sessions; no prompt is resent.") }
         #endif
     }
+    @ViewBuilder private var standardControls: some View {
+        if let error { Text(error).foregroundStyle(.primary) }
+        directorySection
+        if state.capabilities.contains("pi-release-notes") {
+            Section("Installed Pi") {
+                NavigationLink("Pi changelog") { ReleaseNotesView(request: request) }.frame(minHeight: sessionControlMinimum)
+            }
+        }
+        Section("Pi") {
+            Text("Version: " + state.piVersion).font(.caption)
+            modelPicker
+            thinkingPicker
+            if state.capabilities.contains("model-cycling") {
+                Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: sessionControlMinimum)
+                Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: sessionControlMinimum)
+            }
+        }.disabled(state.working || state.selected == nil)
+        retryRecovery
+        usageSection
+        outputSection
+        exportSection
+        runtimeSection
+        sessionSection
+        pendingSection
+        SessionCommandActions(state: state, request: request, operation: command)
+    }
+
+    #if os(macOS)
+    private var desktopControls: some View {
+        Group {
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Model")
+                    modelPicker.labelsHidden()
+                        .accessibilityIdentifier("mac-session-model")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Thinking level")
+                    thinkingPicker.labelsHidden()
+                        .accessibilityIdentifier("mac-session-thinking")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.disabled(state.working || state.selected == nil)
+            if let error { Text(error).foregroundStyle(.primary) }
+            if !advanced {
+                if command.sending {
+                    ProgressView("Command in progress").controlSize(.small)
+                        .accessibilityIdentifier("session-command-pending")
+                }
+                if let error = command.error {
+                    Text(error).foregroundStyle(.primary)
+                        .accessibilityIdentifier("session-command-error")
+                }
+            }
+            retryRecovery
+            directorySection
+            usageSection
+            outputSection
+            pendingSection
+            Section {
+                DisclosureGroup("Details", isExpanded: $details) { EmptyView() }
+                    .accessibilityIdentifier("mac-session-details")
+                if details { MacDesktopSessionResources(state: state) }
+            }
+            Section {
+                DisclosureGroup("Advanced", isExpanded: $advanced) { EmptyView() }
+                    .accessibilityIdentifier("mac-session-advanced")
+            }
+            // Keep sections at Form level so grouped rows and child AX identities
+            // do not inherit the disclosure header's layout or identifier.
+            if advanced {
+                exportSection
+                runtimeSection
+                sessionSection
+                SessionCommandActions(state: state, request: request, operation: command)
+            }
+        }
+    }
+    #endif
+
+    private var modelPicker: some View {
+        Picker("Model", selection: Binding(get: { state.model }, set: { value in
+            if let model = state.models.first(where: { $0.id == value }) { perform(.model(provider: model.provider, id: model.model)) }
+        })) {
+            ForEach(state.models) { model in Text(model.name).tag(model.id) }
+        }
+    }
+
+    private var thinkingPicker: some View {
+        Picker("Thinking level", selection: Binding(get: { state.thinking }, set: { perform(.thinking(level: $0)) })) {
+            ForEach(state.thinkingLevels, id: \.self) { Text($0).tag($0) }
+        }
+    }
+
+    @ViewBuilder private var directorySection: some View {
+        if let session = state.sessions.first(where: { $0.id == state.selected }) {
+            Section("Working directory") {
+                Text(session.directory).font(.caption.monospaced()).textSelection(.enabled)
+            }
+        }
+    }
+
+    @ViewBuilder private var retryRecovery: some View {
+        if state.capabilities.contains("retry-controls"), state.phase == "retrying" {
+            Section("Retry recovery") {
+                Text("Cancelling a retry wait does not undo tool actions or cancel every kind of active work. Use Stop to stop work and clear queued messages.").font(.caption)
+                Button("Cancel retry wait") { perform(.abortRetry) }.frame(minHeight: sessionControlMinimum)
+                    .disabled(state.selected == nil || state.phase != "retrying")
+            }
+        }
+    }
+
+    @ViewBuilder private var usageSection: some View {
+        if state.capabilities.contains("session-statistics") {
+            Section("Usage") {
+                NavigationLink("Session tokens and cost") { SessionStatisticsView(request: request) }
+                    .frame(minHeight: sessionControlMinimum).disabled(state.selected == nil)
+            }
+        }
+    }
+
+    @ViewBuilder private var outputSection: some View {
+        if state.capabilities.contains("last-assistant") {
+            Section("Output") {
+                NavigationLink("Copy last assistant message") { LastAssistantView(request: request) }
+                    .frame(minHeight: sessionControlMinimum).disabled(state.selected == nil)
+            }
+        }
+    }
+
+    @ViewBuilder private var exportSection: some View {
+        if state.capabilities.contains("session-export") {
+            Section("Export") {
+                NavigationLink("Review and export session") { SessionExportView(request: request, jsonlEnabled: state.capabilities.contains("session-jsonl-export")) }
+                    .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
+            }
+        }
+    }
+
+    @ViewBuilder private var runtimeSection: some View {
+        if state.capabilities.contains("runtime-settings"), state.runtime != nil {
+            Section("Runtime") {
+                NavigationLink("Pi runtime settings") { RuntimeSettingsView(request: request) }
+                    .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
+                if state.capabilities.contains("retry-controls") {
+                    NavigationLink("Automatic retry controls") { RetrySettingsView(request: request) }
+                        .frame(minHeight: sessionControlMinimum).disabled(state.working || state.selected == nil)
+                }
+            }
+        }
+    }
+
+    private var sessionSection: some View {
+        Section("Session") {
+            if state.capabilities.contains("session-lifecycle") {
+                NavigationLink("New in current directory") {
+                    NewManagedSessionView(state: state, request: request, created: closed)
+                }.frame(minHeight: sessionControlMinimum)
+            }
+            TextField("Session name", text: $name)
+            Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
+            NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: sessionControlMinimum)
+            Button("Clone session") { perform(.clone) }
+            #if !os(macOS)
+            if state.capabilities.contains("close-session") {
+                Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: sessionControlMinimum)
+            }
+            #endif
+            Button("Working tree diff") {
+                Task {
+                    do { if case .preview(let value) = try await request(.diff) { preview(value) } }
+                    catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                }
+            }
+        }.disabled(state.working || state.selected == nil)
+    }
+
+    @ViewBuilder private var pendingSection: some View {
+        if let pending = state.pendingMessages, pending > 0 {
+            Section("Pending messages") {
+                Text("Queued messages: \(pending). Use Stop to clear the queue.")
+            }
+        }
+    }
+
     private func perform(_ action: SessionAction) {
         Task {
             do { _ = try await request(action) }
@@ -196,13 +308,31 @@ struct SessionControls: View {
 struct SessionCommandsView: View {
     let state: HostSnapshot
     let request: (SessionAction) async throws -> AppResult
+    @State private var command = SessionCommandOperation()
 
     var body: some View {
         Form {
-            SessionCommandActions(state: state, request: request)
+            SessionCommandActions(state: state, request: request, operation: command)
         }
         .accessibilityIdentifier("session-commands-form")
         .navigationTitle("Commands")
+        .onChange(of: state.context, initial: true) { _, context in command.align(to: context) }
+    }
+}
+
+/// The parent owns pending command input and results across disclosure changes.
+@Observable @MainActor private final class SessionCommandOperation {
+    var arguments = ""
+    var sending = false
+    var error: String?
+    private var context: SessionContext?
+    private(set) var generation = UUID()
+
+    func align(to context: SessionContext) {
+        guard self.context != context else { return }
+        self.context = context
+        generation = UUID()
+        arguments = ""; sending = false; error = nil
     }
 }
 
@@ -210,19 +340,17 @@ private struct SessionCommandActions: View {
     let state: HostSnapshot
     // The parent binds this closure to the session context that opened the controls.
     let request: (SessionAction) async throws -> AppResult
-    @State private var arguments = ""
-    @State private var sending = false
-    @State private var error: String?
+    @Bindable var operation: SessionCommandOperation
 
     var body: some View {
         Section("Commands, skills, and prompt templates") {
-            if let error {
+            if let error = operation.error {
                 Text(error).foregroundStyle(.primary)
                     .accessibilityIdentifier("session-command-error")
             }
-            TextField("Command arguments", text: $arguments)
+            TextField("Command arguments", text: $operation.arguments)
                 .accessibilityIdentifier("command-arguments")
-                .disabled(sending || state.selected == nil)
+                .disabled(operation.sending || state.selected == nil)
             if state.commands.isEmpty {
                 Text("No commands are available for this session.")
                     .accessibilityIdentifier("session-commands-empty")
@@ -235,26 +363,29 @@ private struct SessionCommandActions: View {
                     }.frame(minHeight: sessionControlMinimum)
                 }
                 .accessibilityIdentifier("session-command-" + command.id)
-                .disabled(sending || state.selected == nil || (state.working && command.source != "extension"))
+                .disabled(operation.sending || state.selected == nil || (state.working && command.source != "extension"))
             }
             Text("Some commands require Pi's terminal UI and cannot run here.")
                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
         }
-        .onChange(of: state.context) { _, _ in arguments = ""; error = nil }
     }
 
     private func perform(_ command: CommandOption) {
-        guard !sending, state.selected != nil,
+        operation.align(to: state.context)
+        guard !operation.sending, state.selected != nil,
               !state.working || command.source == "extension" else { return }
-        sending = true
-        error = nil
-        let action = SessionAction.command(name: command.name, arguments: arguments)
+        operation.sending = true
+        operation.error = nil
+        let generation = operation.generation
+        let action = SessionAction.command(name: command.name, arguments: operation.arguments)
         Task { @MainActor in
-            defer { sending = false }
+            defer { if operation.generation == generation { operation.sending = false } }
             do {
                 let result = try await request(action)
                 if case .failure(let fault) = result { throw fault }
-            } catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+            } catch {
+                if operation.generation == generation { operation.error = (error as? RemoteFault ?? .unavailable).explanation }
+            }
         }
     }
 }

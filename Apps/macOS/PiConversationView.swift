@@ -22,7 +22,6 @@ struct PiConversationView: View {
     @State private var naturalDockHeight: CGFloat = 1
     @State private var flowDockY: CGFloat = 0
     @State private var scrollTargets = PiConversationScrollTargets()
-    @State private var showResources = false
     @State private var disclosure: ToolDisclosureRequest?
 
     private struct ToolDisclosureRequest {
@@ -47,7 +46,7 @@ struct PiConversationView: View {
             if isDesktop {
                 MacDesktopHeader(title: selectedSession.map { model.displayName(for: $0) } ?? "Pi Remote",
                                  directory: selectedSession?.directory, phase: model.state.phase,
-                                 hasSession: model.state.selected != nil, openSession: { _ = openControls("session") })
+                                 hasSession: model.state.selected != nil)
             }
             surface
         }
@@ -160,12 +159,17 @@ struct PiConversationView: View {
                         Text(error).foregroundStyle(theme.warning).padding(.horizontal, 12)
                             .accessibilityIdentifier("pi-completion-error")
                     }
-                    if !diagnosticNotices.isEmpty { activity.padding(.horizontal, 12).padding(.top, 12) }
-                    ForEach(importantNotices) { notice in
-                        Text((notice.severity == .error ? "Error: " : "Warning: ") + DisplayLimit.text(notice.text, bytes: 512))
-                            .lineLimit(3).textSelection(.enabled)
-                            .foregroundStyle(theme.warning).help(notice.text)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 8)
+                    if isDesktop {
+                        MacDesktopDiagnostics(state: model.state, openControls: openControls)
+                            .padding(.horizontal, 12).padding(.top, 12)
+                    } else {
+                        if !diagnosticNotices.isEmpty { activity.padding(.horizontal, 12).padding(.top, 12) }
+                        ForEach(importantNotices) { notice in
+                            Text((notice.severity == .error ? "Error: " : "Warning: ") + DisplayLimit.text(notice.text, bytes: 512))
+                                .lineLimit(3).textSelection(.enabled)
+                                .foregroundStyle(theme.warning).help(notice.text)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 8)
+                        }
                     }
                     // Measure the placeholder, not the offset dock, to avoid geometry feedback.
                     Color.clear.frame(height: isDesktop ? 0 : layout.dockHeight)
@@ -233,13 +237,8 @@ struct PiConversationView: View {
                 if model.state.messages.isEmpty {
                     MacDesktopWelcome(hasSession: model.state.selected != nil,
                                       canStart: !model.state.working && model.startupError == nil && !model.openingSession,
-                                      newSession: { model.panel = "directory" },
-                                      resume: { model.openNativeWorkflow(.resume) },
-                                      openFiles: { _ = openControls("files") },
-                                      openCommands: { _ = openControls("commands") })
-                        .frame(maxWidth: .infinity, minHeight: max(220, viewportHeight - 230))
+                                      resume: { model.openNativeWorkflow(.resume) })
                 }
-                if model.state.selected != nil { desktopResources }
             } else {
                 PiStartupView(state: model.state, expanded: expandTools,
                               newSession: { if !model.state.working, model.startupError == nil { model.panel = "directory" } },
@@ -257,27 +256,6 @@ struct PiConversationView: View {
                 PiTranscriptRow(message: message, showThinking: showThinking, expandTools: expandTools,
                                 request: model.scopedRequest(for: model.state), onDisclosure: onDisclosure, runtimePhase: model.state.phase)
             }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var desktopResources: some View {
-        DisclosureGroup(isExpanded: $showResources) {
-            VStack(alignment: .leading, spacing: 10) {
-                resourceLine("Context", value: "Loaded context paths are not reported by Pi RPC.")
-                resourceLine("Skills", value: PiStartupResources.names(source: "skill", commands: model.state.commands).joined(separator: ", "))
-                resourceLine("Prompts", value: PiStartupResources.names(source: "prompt", commands: model.state.commands).joined(separator: ", "))
-            }.padding(.vertical, 10)
-        } label: {
-            Label("Session resources", systemImage: "books.vertical").foregroundStyle(theme.muted)
-        }.font(.system(size: 12)).padding(.horizontal, 4)
-            .accessibilityIdentifier("desktop-session-resources")
-    }
-
-    private func resourceLine(_ label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption.weight(.semibold)).foregroundStyle(theme.muted)
-            Text(value.isEmpty ? "No entries reported by Pi." : value)
-                .font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -371,7 +349,7 @@ struct PiConversationView: View {
                          if direction > 0 { perform(.cycleModel) }
                          else { _ = openControls("model") }
                      },
-                     onToggleTools: { expandTools.toggle(); if isDesktop { showResources = expandTools } },
+                     onToggleTools: { expandTools.toggle() },
                      onToggleThinking: { showThinking.toggle() },
                      onCycleThinking: { perform(.cycleThinking) }, separatorColor: NSColor(editorRule), interfaceMode: model.interfaceMode)
                 .disabled(model.state.selected == nil)
@@ -385,9 +363,6 @@ struct PiConversationView: View {
             }
             if isDesktop {
                 HStack(spacing: 12) {
-                    Button { _ = openControls("commands") } label: { Label("Commands", systemImage: "slash.circle") }
-                        .buttonStyle(.plain).foregroundStyle(theme.muted).font(.system(size: 12))
-                        .accessibilityIdentifier("desktop-commands")
                     Spacer(minLength: 4)
                     Text(editorHint)
                         .font(.system(size: 11)).foregroundStyle(theme.muted).lineLimit(1)

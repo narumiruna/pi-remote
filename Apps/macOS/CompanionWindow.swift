@@ -10,6 +10,7 @@ import SwiftUI
     var remoteDetailsVisible = false
     var renamingSession: UUID?
     var closingSession: LocalCloseConfirmation?
+    var closedSessionsExpanded = false
 }
 
 struct CompanionWindow: View {
@@ -247,13 +248,12 @@ struct CompanionWindow: View {
                 .disabled(model.state.working || model.openingSession)
             Divider()
             Button("Settings") { model.destination = .settings }
-            Button("Devices") { model.destination = .devices }
             Button("iPhone access…") { remoteDetails.wrappedValue = true }
                 .accessibilityIdentifier("mac-remote-access")
         }
         .menuStyle(.borderlessButton).fixedSize()
         .accessibilityIdentifier("mac-global-actions")
-        .help("App navigation, command palette, settings, devices and remote access")
+        .help("App navigation, command palette, settings and remote access")
         .popover(isPresented: $presentation.remoteDetailsVisible) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("iPhone access").font(.headline)
@@ -263,26 +263,27 @@ struct CompanionWindow: View {
                 Text("Remote access is optional. It only controls iPhone connections; local Pi sessions work without it.").font(.caption)
                 HStack {
                     Button("iPhone access settings") { presentation.remoteDetailsVisible = false; model.destination = .settings }
-                    Button("Devices") { presentation.remoteDetailsVisible = false; model.destination = .devices }
+                    Button("Manage devices in Settings") { presentation.remoteDetailsVisible = false; model.destination = .settings }
                 }
             }.padding(16).frame(width: 310)
         }
     }
 
     private var sidebarSelection: Binding<MacDestination?> {
-        Binding(get: { model.destination }, set: { destination in
-            // Removing a sidebar List can emit nil. Keep the displayed screen.
+        Binding(get: {
+            if model.destination == .conversation, let id = model.state.selected,
+               model.state.sessions.contains(where: { $0.id == id }) { return .session(id) }
+            return model.destination
+        }, set: { destination in
+            // Removing a List can emit nil. Selection previews; Open resumes explicitly.
             guard let destination else { return }
-            if case .session(let id) = destination { Task { await model.openSession(id) } }
-            else { model.destination = destination }
+            model.destination = destination
         })
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: sidebarSelection) {
-                Label("Pi", systemImage: "text.alignleft").tag(MacDestination.conversation)
-                Label("Overview", systemImage: "house").tag(MacDestination.overview)
                 Section {
                     ForEach(model.workspaces) { workspace in
                         DisclosureGroup(isExpanded: Binding(
@@ -339,12 +340,9 @@ struct CompanionWindow: View {
             .listStyle(.sidebar).scrollContentBackground(.hidden)
             Divider()
             List(selection: sidebarSelection) {
-                Section("Devices & Settings") {
-                    Label("Devices", systemImage: "iphone").tag(MacDestination.devices)
-                    Label("Settings", systemImage: "gearshape").tag(MacDestination.settings)
-                }
+                Label("Settings", systemImage: "gearshape").tag(MacDestination.settings)
             }
-            .listStyle(.sidebar).scrollContentBackground(.hidden).frame(height: 116)
+            .listStyle(.sidebar).scrollContentBackground(.hidden).frame(height: 52)
         }
         .background(theme.background).accessibilityIdentifier("mac-workspace-sidebar")
     }
@@ -357,8 +355,12 @@ struct CompanionWindow: View {
                     .font(.system(size: 6)).foregroundStyle(.secondary).accessibilityHidden(true)
                 Text(model.displayName(for: session)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
-                MacSessionCloseButton(id: session.id, visible: hoveredSession == session.id || model.destination == .session(session.id),
-                                      disabledReason: macCloseSessionDisabledReason(session.id, model: model)) { beginClose(session.id) }
+                if model.interfaceMode == .pi {
+                    MacSessionCloseButton(id: session.id,
+                                          visible: hoveredSession == session.id || model.destination == .session(session.id)
+                                            || (model.showingLoadedSession && model.state.selected == session.id),
+                                          disabledReason: macCloseSessionDisabledReason(session.id, model: model)) { beginClose(session.id) }
+                }
             }
             HStack {
                 Text(sessionStatus(session))
@@ -441,6 +443,7 @@ struct CompanionWindow: View {
             guard let id = model.state.selected, canRename(id) else { return false }
             beginRename(id)
         case "files": showInspector("Files")
+        case "activity": showInspector("Activity")
         case "commands": model.panel = "commands"
         default: model.panel = name
         }
@@ -568,50 +571,93 @@ struct CompanionWindow: View {
                 }
             }
             ForEach(overviewDirectories, id: \.self) { path in
-                Section {
-                    HStack {
+                let sessions = overviewSessions(in: path, closed: false)
+                if !sessions.isEmpty {
+                    Section {
                         Text(path).font(.caption.monospaced()).textSelection(.enabled)
-                        Spacer()
-                        Button("New session") { Task { await model.createSession(in: path) } }
-                            .disabled(model.state.working || model.openingSession || model.startupError != nil)
+                        ForEach(sessions) { session in overviewRow(session) }
+                    } header: { Text(workspaceTitle(path)) }
+                }
+            }
+            if !closedOverviewSessions.isEmpty {
+                DisclosureGroup(isExpanded: $presentation.closedSessionsExpanded) {
+                    ForEach(overviewDirectories, id: \.self) { path in
+                        let sessions = overviewSessions(in: path, closed: true)
+                        if !sessions.isEmpty {
+                            Text(path).font(.caption.monospaced()).textSelection(.enabled)
+                            ForEach(sessions) { session in overviewRow(session) }
+                        }
                     }
-                    ForEach(model.state.sessions.filter { $0.directory == path }.sorted { $0.updated > $1.updated }) { session in
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(model.displayName(for: session)).lineLimit(1).truncationMode(.middle)
-                                    .help(model.fullDisplayName(for: session))
-                                HStack {
-                                    Text(sessionStatus(session))
-                                    Text(session.updated, style: .relative)
-                                }.font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button(macOpenSessionLabel(session.id, model: model)) {
-                                if session.id == model.state.selected { model.destination = .session(session.id) }
-                                else if !model.openingSession, !model.state.working { Task { await model.openSession(session.id) } }
-                            }
-                                .disabled(session.id != model.state.selected && (model.openingSession || model.state.working))
-                                .accessibilityIdentifier("mac-overview-open-" + session.id.uuidString)
-                            Button("Close") { beginClose(session.id) }
-                                .disabled(macCloseSessionDisabledReason(session.id, model: model) != nil)
-                                .help(macCloseSessionDisabledReason(session.id, model: model) ?? "Close Session; keep history and draft")
-                                .accessibilityIdentifier("mac-overview-close-" + session.id.uuidString)
-                        }.padding(.vertical, 2)
-                    }
-                } header: { Text(URL(fileURLWithPath: path).lastPathComponent.isEmpty ? path : URL(fileURLWithPath: path).lastPathComponent) }
+                } label: {
+                    Text("Closed sessions (\(closedOverviewSessions.count))")
+                        .accessibilityIdentifier("mac-overview-closed-sessions")
+                }
+            }
+            if model.state.sessions.allSatisfy({ isClosedOverviewSession($0) }), !model.state.sessions.isEmpty {
+                Text("No open sessions. Expand Closed sessions to reopen saved work.").foregroundStyle(.secondary)
             }
             if model.state.sessions.isEmpty {
                 Text("No saved sessions. Add a workspace, then use New session.").foregroundStyle(.secondary)
             }
             if let error = model.state.error { Label(error.explanation, systemImage: "exclamationmark.triangle") }
-            Section {
-                DisclosureGroup("iPhone access (optional)") { CompanionServerControls(model: model) }
-            }
         }.accessibilityIdentifier("mac-session-overview")
     }
 
+    private func isClosedOverviewSession(_ session: SessionInfo) -> Bool {
+        session.id != model.state.selected && model.closedSessionIDs.contains(session.id)
+    }
+
+    private var closedOverviewSessions: [SessionInfo] {
+        model.state.sessions.filter(isClosedOverviewSession)
+    }
+
+    private func overviewSessions(in path: String, closed: Bool) -> [SessionInfo] {
+        model.state.sessions.filter { $0.directory == path && isClosedOverviewSession($0) == closed }.sorted {
+            if ($0.id == model.state.selected) != ($1.id == model.state.selected) { return $0.id == model.state.selected }
+            return $0.updated > $1.updated
+        }
+    }
+
+    private func overviewRow(_ session: SessionInfo) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(model.displayName(for: session)).lineLimit(1).truncationMode(.middle)
+                    .help(model.fullDisplayName(for: session))
+                    .accessibilityIdentifier("mac-overview-row-" + session.id.uuidString)
+                HStack {
+                    Text(sessionStatus(session))
+                    Text(session.updated, style: .relative)
+                }.font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(macOpenSessionLabel(session.id, model: model)) {
+                if session.id == model.state.selected { model.destination = .session(session.id) }
+                else if !model.openingSession, !model.state.working { Task { await model.openSession(session.id) } }
+            }
+                .disabled(session.id != model.state.selected && (model.openingSession || model.state.working))
+                .accessibilityIdentifier("mac-overview-open-" + session.id.uuidString)
+        }
+        .padding(.vertical, 2)
+        .contextMenu {
+            if !isClosedOverviewSession(session) {
+                Button("Close Session") { beginClose(session.id) }
+                    .disabled(macCloseSessionDisabledReason(session.id, model: model) != nil)
+                    .help(macCloseSessionDisabledReason(session.id, model: model) ?? "Close Session; keep history and draft")
+                    .accessibilityIdentifier("mac-overview-close-" + session.id.uuidString)
+            }
+        }
+    }
+
+    private func workspaceTitle(_ path: String) -> String {
+        URL(fileURLWithPath: path).lastPathComponent.isEmpty ? path : URL(fileURLWithPath: path).lastPathComponent
+    }
+
     private var overviewDirectories: [String] {
-        Set(model.workspaces.map(\.directory) + model.state.sessions.map(\.directory)).sorted()
+        let activeDirectory = loadedInspectorSession?.directory
+        return Set(model.workspaces.map(\.directory) + model.state.sessions.map(\.directory)).sorted {
+            if ($0 == activeDirectory) != ($1 == activeDirectory) { return $0 == activeDirectory }
+            return $0 < $1
+        }
     }
 
     private func workspaceDetail(_ path: String) -> some View {
@@ -776,8 +822,9 @@ struct CompanionWindow: View {
                         }
                         if let error = model.state.error { Text(error.explanation) }
                         Section("Extension diagnostics") {
-                            if model.state.notices.isEmpty { Text("No extension diagnostics").font(.caption).foregroundStyle(.secondary) }
-                            ForEach(Array(model.state.notices.enumerated()), id: \.offset) { _, value in
+                            let diagnostics = model.interfaceMode == .desktop ? MacDesktopDiagnosticCounts(state: model.state).texts : model.state.notices
+                            if diagnostics.isEmpty { Text("No extension diagnostics").font(.caption).foregroundStyle(.secondary) }
+                            ForEach(Array(diagnostics.enumerated()), id: \.offset) { _, value in
                                 Text(value).font(.caption).textSelection(.enabled)
                             }
                         }.accessibilityIdentifier("mac-extension-diagnostics")

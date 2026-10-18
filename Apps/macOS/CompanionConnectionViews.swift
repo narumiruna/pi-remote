@@ -38,6 +38,10 @@ struct CompanionConnectionSettings: View {
             Section("Pi and folder access") {
                 LabeledContent("Pi version", value: model.state.piVersion == "Not running" ? "Not checked" : model.state.piVersion)
                     .background(MacDebugPageScrollMarker())
+                if model.state.capabilities.contains("pi-release-notes") {
+                    Button("Pi changelog") { model.panel = "changelog" }
+                        .accessibilityIdentifier("mac-settings-pi-changelog")
+                }
                 LabeledContent("Pi executable") {
                     Text(model.piPath).font(.caption.monospaced()).textSelection(.enabled)
                 }
@@ -59,6 +63,8 @@ struct CompanionConnectionSettings: View {
             }
             Section("iPhone access (optional)") {
                 Text(model.serverStatus).accessibilityIdentifier("mac-settings-access-status")
+                Button("Devices") { model.destination = .devices }
+                    .accessibilityIdentifier("mac-settings-devices")
                 if model.addresses.isEmpty {
                     Text("No local address is available. Connect to a private network or Tailscale, then refresh addresses.")
                         .accessibilityIdentifier("mac-settings-no-address")

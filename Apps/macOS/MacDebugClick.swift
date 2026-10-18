@@ -6,6 +6,8 @@ enum MacDebugClickTarget: String, CaseIterable, Sendable {
     case inspector = "mac-inspector-toggle"
     case files = "mac-files"
     case commands = "mac-commands"
+    // Retired Desktop controls keep their input names for compatibility. Missing
+    // visible targets remain unavailable; they are never redirected to another action.
     case composerCommands = "desktop-commands"
     case sessionControls = "desktop-session-controls"
     case welcomeFiles = "desktop-welcome-files"
