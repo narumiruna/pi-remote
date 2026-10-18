@@ -90,7 +90,7 @@ The changes do not migrate sessions, credentials, pairing, workspace preferences
 
 ## Publication
 
-The branch and pull request are recorded after publication. This document retains the implementation and verification evidence when the completed task plan is removed.
+Implementation commit: `a3b3f93`, on `narumi/feat/mac-reference-uiux`. Delivered as [pull request #9](https://github.com/narumiruna/pi-remote/pull/9). The tested source/project hash is unchanged through final sequential validation. The completed task plan `docs/plans/2026-10-18_mac-reference-uiux-plan.md` is removed; this document retains its outcome, checks and limits. The broader Pi-like interface plan remains open for attended product acceptance.
 
 ## Limits
 
