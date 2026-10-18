@@ -8,6 +8,7 @@ struct PiToolRow: View {
     let expandTools: Bool
     let onDisclosure: (UUID, CGFloat) -> Void
     var runtimePhase: String? = nil
+    @Environment(\.macInterfaceMode) private var interfaceMode
     @State private var expandedChoice: Bool?
     @State private var headerY: CGFloat = 0
 
@@ -15,6 +16,8 @@ struct PiToolRow: View {
 
     var body: some View {
         let value = PiToolRowValue(message, runtimePhase: runtimePhase)
+        let theme = MacInterfaceTheme(mode: interfaceMode)
+        let desktop = interfaceMode == .desktop
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 0).id("pi-tool-anchor-" + message.id.uuidString)
             PiToolHeading(value: value, expanded: isExpanded, identifier: "pi-tool-toggle-" + message.id.uuidString) {
@@ -34,22 +37,28 @@ struct PiToolRow: View {
                     .accessibilityIdentifier("pi-tool-expanded-" + message.id.uuidString)
             } else if !value.preview.isEmpty {
                 Text(verbatim: value.preview)
-                    .foregroundStyle(value.hasError ? PiPalette.warning : PiPalette.muted)
+                    .foregroundStyle(value.hasError ? theme.warning : theme.muted)
                     .textSelection(.enabled).lineLimit(value.hasError ? 3 : 5)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
                     .accessibilityIdentifier("pi-tool-preview-" + message.id.uuidString)
             }
             if !isExpanded, value.previewHidden {
                 Text("More output hidden · expand to read")
-                    .foregroundStyle(PiPalette.muted).font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.muted).font(.system(size: desktop ? 12 : 11, design: desktop ? .default : .monospaced))
                     .padding(.top, 2)
             }
         }
-        .font(.system(size: 12, design: .monospaced))
-        .foregroundStyle(PiPalette.text)
+        .font(.system(size: desktop ? 13 : 12, design: desktop ? .default : .monospaced))
+        .foregroundStyle(theme.text)
         .padding(.horizontal, 8).padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PiPalette.toolPending.opacity(0.25))
+        .background(desktop ? theme.panel : PiPalette.toolPending.opacity(0.25))
+        .clipShape(RoundedRectangle(cornerRadius: desktop ? 8 : 0))
+        .overlay {
+            RoundedRectangle(cornerRadius: desktop ? 8 : 0)
+                .strokeBorder(desktop ? Color(nsColor: .separatorColor) : .clear, lineWidth: 1)
+                .allowsHitTesting(false)
+        }
         .onChange(of: expandTools) { _, _ in expandedChoice = nil }
     }
 }
@@ -77,21 +86,25 @@ struct PiToolRow: View {
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.action = action
         button.isEnabled = context.environment.isEnabled
-        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let mode = context.environment.macInterfaceMode
+        let theme = MacInterfaceTheme(mode: mode)
+        let font = mode == .desktop ? NSFont.systemFont(ofSize: 13, weight: .medium) : NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let targetFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let statusFont = mode == .desktop ? NSFont.systemFont(ofSize: 12, weight: .regular) : font
         let title = NSMutableAttributedString(string: (expanded ? "▾ " : "▸ ") + value.action,
-                                             attributes: [.font: font, .foregroundColor: NSColor(PiPalette.accent)])
+                                             attributes: [.font: font, .foregroundColor: theme.nativeAccent])
         if let target = value.target {
-            title.append(NSAttributedString(string: "  " + target, attributes: [.font: font, .foregroundColor: NSColor(PiPalette.muted)]))
+            title.append(NSAttributedString(string: "  " + target, attributes: [.font: targetFont, .foregroundColor: theme.nativeMuted]))
         }
         title.append(NSAttributedString(string: "   " + value.statusLabel,
-                                        attributes: [.font: font, .foregroundColor: NSColor(value.requiresAttention ? PiPalette.warning : PiPalette.muted)]))
+                                        attributes: [.font: statusFont, .foregroundColor: value.requiresAttention ? theme.nativeWarning : theme.nativeMuted]))
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byTruncatingMiddle
         title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
         button.attributedTitle = title
         button.image = NSImage(systemSymbolName: value.systemImage, accessibilityDescription: nil)
         button.imagePosition = .imageLeading
-        button.contentTintColor = NSColor(PiPalette.accent)
+        button.contentTintColor = theme.nativeAccent
         button.toolTip = value.target ?? value.name
         button.setAccessibilityIdentifier(identifier)
         button.setAccessibilityLabel(value.accessibilityHeading)

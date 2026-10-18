@@ -162,6 +162,14 @@ final class CompanionModel {
     var destination: MacDestination? = .conversation { didSet { saveWorkspacePreferences() } }
     var inspectorVisible = false { didSet { saveWorkspacePreferences() } }
     var sidebarVisible = false { didSet { defaults.set(sidebarVisible, forKey: "piSidebarVisible") } }
+    private var savedInterfaceMode = MacInterfaceMode.pi
+    var interfaceMode: MacInterfaceMode {
+        get { savedInterfaceMode }
+        set {
+            savedInterfaceMode = newValue
+            defaults.set(newValue.rawValue, forKey: "macInterfaceMode")
+        }
+    }
     var addedWorkspaces: [String] = []
     var hiddenWorkspaces = Set<String>()
     var expandedWorkspaces = Set<String>()
@@ -269,6 +277,7 @@ final class CompanionModel {
     ) {
         self.support = support; self.secrets = secrets; self.defaults = defaults
         sidebarVisible = defaults.bool(forKey: "piSidebarVisible")
+        savedInterfaceMode = defaults.string(forKey: "macInterfaceMode").flatMap(MacInterfaceMode.init(rawValue:)) ?? .pi
         let candidates = [
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".bun/bin/pi").path,
             "/opt/homebrew/bin/pi", "/usr/local/bin/pi"

@@ -631,7 +631,7 @@ done
                 let panes = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSplitView }.first)
                 XCTAssertGreaterThanOrEqual(panes.frame.height, host.bounds.height - 60,
                                             "Closing the loaded session must not collapse sidebar and inspector height")
-                let tabs = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first)
+                let tabs = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.label(forSegment: 0) == "Files" })
                 let tabsFrame = host.convert(tabs.bounds, from: tabs)
                 let topInset = host.isFlipped ? tabsFrame.minY : host.bounds.maxY - tabsFrame.maxY
                 XCTAssertLessThan(topInset, 100, "Empty inspector tabs must stay at the top after close")
@@ -889,7 +889,7 @@ done
                 try await self.capture(CompanionWindow(model: model), name: "review-session-labels-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
                     try await self.showSessionInspector(in: host)
                     XCTAssertTrue(model.inspectorVisible)
-                    let picker = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first)
+                    let picker = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first { $0.label(forSegment: 0) == "Files" })
                     XCTAssertEqual((0..<picker.segmentCount).compactMap { picker.label(forSegment: $0) }, ["Files", "Session", "Activity"])
                     XCTAssertLessThanOrEqual(picker.frame.height, 32, "Inspector tabs must keep native single-row density")
                     XCTAssertEqual(picker.selectedSegment, 1)

@@ -121,6 +121,7 @@ struct PiConfigurationPicker: View {
     let thinking: Bool
     let request: (SessionAction) async throws -> AppResult
     let done: () -> Void
+    @Environment(\.macInterfaceMode) private var interfaceMode
     @State private var query = ""
     @State private var selection = PiConfigurationSelection()
     @FocusState private var searchFocused: Bool
@@ -128,8 +129,10 @@ struct PiConfigurationPicker: View {
     private var choices: PiConfigurationChoices { .init(state: state, thinking: thinking, query: query) }
 
     var body: some View {
+        let theme = MacInterfaceTheme(mode: interfaceMode)
+        let desktop = interfaceMode == .desktop
         VStack(alignment: .leading, spacing: 8) {
-            Text(thinking ? "Thinking level" : "Model").foregroundStyle(PiPalette.accent)
+            Text(thinking ? "Thinking level" : "Model").foregroundStyle(theme.accent)
             TextField("Search", text: $query).textFieldStyle(.plain).focused($searchFocused)
                 .accessibilityIdentifier("pi-configuration-search")
                 .onSubmit { applySelection() }
@@ -141,10 +144,10 @@ struct PiConfigurationPicker: View {
                     selection.selected = choices.moved(from: selection.selected, direction: .down)
                     return .handled
                 }
-            if let error = selection.error { Text(error).foregroundStyle(PiPalette.warning) }
+            if let error = selection.error { Text(error).foregroundStyle(theme.warning) }
             if choices.choices.isEmpty {
                 Text(choices.hasChoices ? "No matching choices." : "No available choices. Open an idle Pi session first.")
-                    .foregroundStyle(PiPalette.muted)
+                    .foregroundStyle(theme.muted)
             }
             ScrollViewReader { proxy in
                 List(selection: $selection.selected) {
@@ -154,32 +157,33 @@ struct PiConfigurationPicker: View {
                                 HStack(spacing: 8) {
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(option.name)
-                                        if let model = option.model { Text(model).font(.system(size: 11, design: .monospaced)).foregroundStyle(PiPalette.muted) }
+                                        if let model = option.model { Text(model).font(.system(size: desktop ? 12 : 11, design: desktop ? .default : .monospaced)).foregroundStyle(theme.muted) }
                                     }
                                     Spacer()
-                                    if option.current { Label("Current", systemImage: "checkmark").foregroundStyle(PiPalette.accent) }
+                                    if option.current { Label("Current", systemImage: "checkmark").foregroundStyle(theme.accent) }
                                 }.tag(option.id).id(option.id)
                                     .onTapGesture(count: 2) { selection.selected = option.id; applySelection() }
                             }
                         } header: {
                             if let provider = group.provider {
-                                Text(provider).font(.system(size: 11, design: .monospaced)).foregroundStyle(PiPalette.muted).textCase(nil)
+                                Text(provider).font(.system(size: desktop ? 12 : 11, design: desktop ? .default : .monospaced)).foregroundStyle(theme.muted).textCase(nil)
                             }
                         }
                     }
                 }.listStyle(.plain)
+                    .scrollContentBackground(desktop ? .hidden : .automatic)
                     .onChange(of: selection.selected) { _, value in if let value { proxy.scrollTo(value) } }
             }
             HStack {
-                Text("↑↓ select · enter apply · esc close").foregroundStyle(PiPalette.muted)
+                Text("↑↓ select · enter apply · esc close").foregroundStyle(theme.muted)
                 Spacer()
                 Button(selection.applying ? "Applying…" : "Apply") { applySelection() }.keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("pi-configuration-apply")
                     .disabled(!selection.canApply(choices, state: state))
             }
-        }.padding(16).font(.system(size: 13, design: .monospaced))
-            .foregroundStyle(PiPalette.text)
-            .background(PiPalette.background)
+        }.padding(16).font(.system(size: 13, design: desktop ? .default : .monospaced))
+            .foregroundStyle(theme.text)
+            .background(theme.background)
             .navigationTitle(thinking ? "Thinking level" : "Model")
             .onAppear { searchFocused = true }
             .onChange(of: choices, initial: true) { _, value in selection.update(value) }
@@ -204,6 +208,8 @@ struct PiConfigurationPicker: View {
 }
 
 struct PiHotkeysView: View {
+    @Environment(\.macInterfaceMode) private var interfaceMode
+
     var body: some View {
         Form {
             Section("Prompt editor") {
@@ -225,6 +231,6 @@ struct PiHotkeysView: View {
             Section("Native differences") {
                 Text("Completion never executes a command. File completion inserts paths only; Files previews and attaches content. Shell execution requires review. Session-tree navigation is read-only; fork is explicit.")
             }
-        }.font(.system(size: 13, design: .monospaced)).navigationTitle("Keyboard shortcuts")
+        }.font(.system(size: 13, design: interfaceMode == .desktop ? .default : .monospaced)).navigationTitle("Keyboard shortcuts")
     }
 }

@@ -134,6 +134,7 @@ enum PiCodeSyntax {
     let code: String
     let language: String?
     private let copy: (String) throws -> Void
+    @Environment(\.macInterfaceMode) private var interfaceMode
     @State private var rendered = AttributedString()
     @State private var height: CGFloat = 40
     @State private var feedback: String?
@@ -160,7 +161,8 @@ enum PiCodeSyntax {
                 }
                 PiCodeCopyButton(action: copyCode)
             }
-            .font(.system(size: 11, design: .monospaced)).padding(.horizontal, 10).padding(.vertical, 6)
+            .font(.system(size: interfaceMode == .desktop ? 12 : 11, design: interfaceMode == .desktop ? .default : .monospaced))
+            .padding(.horizontal, 10).padding(.vertical, 6)
             ScrollView([.horizontal, .vertical]) {
                 Text(rendered).font(.system(size: 12, design: .monospaced))
                     .textSelection(.enabled).fixedSize(horizontal: true, vertical: true)
@@ -171,6 +173,9 @@ enum PiCodeSyntax {
             .frame(height: height)
         }
         .background(PiPalette.panel)
+        .clipShape(RoundedRectangle(cornerRadius: interfaceMode == .desktop ? 8 : 0))
+        // The lexical palette and native header controls share this local dark surface.
+        .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .contain)
         .onChange(of: Input(code: code, language: language), initial: true) { _, _ in
             // Cache styling across unrelated view updates, including copy feedback changes.
@@ -231,7 +236,12 @@ private struct PiCodeCopyButton: NSViewRepresentable {
     func updateNSView(_ button: NSButton, context: Context) {
         context.coordinator.action = action
         button.isEnabled = context.environment.isEnabled
-        button.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        let font = context.environment.macInterfaceMode == .desktop
+            ? NSFont.systemFont(ofSize: 12, weight: .regular)
+            : NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        button.appearance = NSAppearance(named: .darkAqua)
+        button.font = font
+        button.attributedTitle = NSAttributedString(string: "Copy code", attributes: [.font: font, .foregroundColor: NSColor(PiPalette.accent)])
         button.contentTintColor = NSColor(PiPalette.accent)
         button.setAccessibilityLabel("Copy code")
         button.setAccessibilityIdentifier("pi-code-copy")
@@ -253,8 +263,13 @@ private struct PiCodeCopyFeedback: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTextField { NSTextField(labelWithString: message) }
     func updateNSView(_ field: NSTextField, context: Context) {
         field.stringValue = message
-        field.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        field.textColor = NSColor(failed ? PiPalette.warning : PiPalette.muted)
+        field.appearance = NSAppearance(named: .darkAqua)
+        field.font = context.environment.macInterfaceMode == .desktop
+            ? .systemFont(ofSize: 12, weight: .regular)
+            : .monospacedSystemFont(ofSize: 11, weight: .regular)
+        let warning = context.environment.macInterfaceMode == .desktop
+            ? Color(red: 0.96, green: 0.53, blue: 0.54) : PiPalette.warning
+        field.textColor = NSColor(failed ? warning : PiPalette.muted)
         field.setAccessibilityIdentifier("pi-code-copy-feedback")
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {

@@ -5,6 +5,8 @@ import SwiftUI
 struct PiExtensionDialog: View {
     let dialog: ExtensionDialog
     let request: (SessionAction) async throws -> AppResult
+    @Environment(\.macInterfaceMode) private var interfaceMode
+    private var theme: MacInterfaceTheme { MacInterfaceTheme(mode: interfaceMode) }
     @State private var value = ""
     @State private var query = ""
     @State private var selection: String?
@@ -16,10 +18,10 @@ struct PiExtensionDialog: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(dialog.title).foregroundStyle(PiPalette.accent).accessibilityAddTraits(.isHeader)
+            Text(dialog.title).foregroundStyle(theme.accent).accessibilityAddTraits(.isHeader)
             if !dialog.message.isEmpty { Text(dialog.message).textSelection(.enabled) }
-            if let expires = dialog.expires { Text("Expires " + expires.formatted()).foregroundStyle(PiPalette.muted) }
-            if let error { Text(error).foregroundStyle(PiPalette.warning) }
+            if let expires = dialog.expires { Text("Expires " + expires.formatted()).foregroundStyle(theme.muted) }
+            if let error { Text(error).foregroundStyle(theme.warning) }
             switch dialog.method {
             case "select":
                 TextField("Filter choices", text: $query).textFieldStyle(.plain).focused($focused)
@@ -36,8 +38,8 @@ struct PiExtensionDialog: View {
             case "editor":
                 TextEditor(text: $value).font(.system(size: 13, design: .monospaced)).focused($focused)
                     .accessibilityLabel("Dialog text")
-            case "confirm": Text("Choose Yes or No.").foregroundStyle(PiPalette.muted)
-            default: Text("This request cannot be displayed safely. Only cancellation is available.").foregroundStyle(PiPalette.warning)
+            case "confirm": Text("Choose Yes or No.").foregroundStyle(theme.muted)
+            default: Text("This request cannot be displayed safely. Only cancellation is available.").foregroundStyle(theme.warning)
             }
             HStack {
                 Button("Cancel", role: .cancel) { answer(cancelled: true) }.keyboardShortcut(.cancelAction)
@@ -54,8 +56,8 @@ struct PiExtensionDialog: View {
                         .accessibilityIdentifier("extension-dialog-submit")
                 }
             }
-        }.padding(20).font(.system(size: 13, design: .monospaced)).foregroundStyle(PiPalette.text)
-            .background(PiPalette.background).disabled(sending).interactiveDismissDisabled()
+        }.padding(20).font(.system(size: 13, design: interfaceMode == .pi ? .monospaced : .default)).foregroundStyle(theme.text)
+            .background(theme.background).disabled(sending).interactiveDismissDisabled()
             .onAppear { value = dialog.text; selection = options.first; focused = true }
             .onChange(of: query) { _, _ in selection = options.first }
     }

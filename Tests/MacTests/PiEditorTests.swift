@@ -204,14 +204,19 @@ final class PiEditorCompletionTests: XCTestCase {
         var tools = 0
         var thinking = 0
         var thinkingCycles = 0
+        var bindingWrites = 0
+        var completionRequests: [PiEditorInput] = []
+        var dismissals = 0
         init(_ text: String) { self.text = text }
     }
 
     private func fixture(_ draft: Draft) -> (PiEditor, PiEditor.Coordinator, PiEditorNativeView, NSWindow) {
         _ = NSApplication.shared
-        let parent = PiEditor(text: Binding(get: { draft.text }, set: { draft.text = $0 }),
+        let parent = PiEditor(text: Binding(get: { draft.text }, set: { draft.text = $0; draft.bindingWrites += 1 }),
                               onSubmit: { draft.deliveries.append($0) }, onStop: { draft.stops += 1 },
                               onCompletion: { draft.completed.append($0.id) },
+                              onCompletionRequest: { input, _ in draft.completionRequests.append(input) },
+                              onDismissCompletion: { draft.dismissals += 1 },
                               onCycleModel: { draft.models.append($0) },
                               onToggleTools: { draft.tools += 1 }, onToggleThinking: { draft.thinking += 1 },
                               onCycleThinking: { draft.thinkingCycles += 1 })
@@ -238,6 +243,38 @@ final class PiEditorCompletionTests: XCTestCase {
         XCTAssertEqual(draft.text, "keep this\n")
         view.editor.undoManager?.undo()
         XCTAssertEqual(draft.text, "keep this")
+    }
+
+    func testUndoAndRedoAfterRunLoopSynchronizeDraftAndInput() async throws {
+        let draft = Draft("Unsent 文 draft")
+        let (_, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let original = draft.text
+        let undo = try XCTUnwrap(view.editor.undoManager)
+        view.editor.insertText(" added", replacementRange: view.editor.selectedRange())
+        view.editor.breakUndoCoalescing()
+        let edited = draft.text
+        // Let AppKit close the event's undo group, as it does between real keystrokes.
+        try await Task.sleep(for: .milliseconds(20))
+        view.editor.setSelectedRange(NSRange(location: 7, length: 1))
+        let beforeUndo = coordinator.input
+        undo.undo()
+        XCTAssertEqual(view.editor.string, original)
+        XCTAssertEqual(draft.text, original)
+        XCTAssertEqual(coordinator.input.text, original)
+        XCTAssertEqual(coordinator.input.selection, view.editor.selectedRange())
+        XCTAssertGreaterThan(coordinator.input.revision, beforeUndo.revision)
+        let afterUndo = coordinator.input
+        undo.redo()
+        XCTAssertEqual(view.editor.string, edited)
+        XCTAssertEqual(draft.text, edited)
+        XCTAssertEqual(coordinator.input.text, edited)
+        XCTAssertEqual(coordinator.input.selection, view.editor.selectedRange())
+        XCTAssertGreaterThan(coordinator.input.revision, afterUndo.revision)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(draft.completionRequests.last, coordinator.input)
+        XCTAssertTrue(draft.deliveries.isEmpty)
+        XCTAssertEqual(draft.stops, 0)
     }
 
     func testCompletionOnlyReturnTabMouseAndUndo() throws {
@@ -423,6 +460,8 @@ final class PiEditorCompletionTests: XCTestCase {
         let (_, coordinator, view, window) = fixture(draft)
         defer { window.close() }
         XCTAssertEqual(view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .darkAqua)
+        XCTAssertEqual(view.editor.font, .monospacedSystemFont(ofSize: 13, weight: .regular))
+        XCTAssertFalse(view.bottomRule.isHidden)
         for color in [view.editor.textColor, view.editor.insertionPointColor,
                       view.editor.typingAttributes[.foregroundColor] as? NSColor] {
             let rgb = try XCTUnwrap(color?.usingColorSpace(.deviceRGB))
@@ -432,6 +471,210 @@ final class PiEditorCompletionTests: XCTestCase {
             XCTAssertEqual(rgb.alphaComponent, 1)
         }
         withExtendedLifetime(coordinator) {}
+    }
+
+    func testModeChangesPreserveMarkedAttributesSelectionUndoFocusAndScroll() async throws {
+        let draft = Draft(String(repeating: "line 🐈\n", count: 50))
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let native = view
+        let editor = view.editor
+        let undo = try XCTUnwrap(editor.undoManager)
+        editor.breakUndoCoalescing()
+        editor.insertText("undoable", replacementRange: NSRange(location: 2, length: 0))
+        editor.breakUndoCoalescing()
+        let marked = NSAttributedString(string: "かな🐈", attributes: [
+            .underlineStyle: NSUnderlineStyle.double.rawValue,
+            .foregroundColor: NSColor.systemPink,
+            NSAttributedString.Key("fixture-marked-attribute"): "preserve"
+        ])
+        editor.setMarkedText(marked, selectedRange: NSRange(location: 2, length: 2),
+                             replacementRange: NSRange(location: 2, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+        let markedRange = editor.markedRange()
+        let markedSnapshot = try XCTUnwrap(editor.textStorage?.attributedSubstring(from: markedRange))
+        let text = editor.string
+        let selected = editor.selectedRange()
+        XCTAssertEqual(selected, NSRange(location: 4, length: 2))
+        let input = coordinator.input
+        let clip = try XCTUnwrap(editor.enclosingScrollView?.contentView)
+        clip.scroll(to: NSPoint(x: 0, y: 25))
+        let origin = clip.bounds.origin
+        let canUndo = undo.canUndo
+        XCTAssertTrue(canUndo)
+        for _ in 0..<10 { await Task.yield() }
+        let writes = draft.bindingWrites
+        let requests = draft.completionRequests
+        var otherCallbacks = 0
+        parent.onSelectModel = { otherCallbacks += 1 }
+        parent.onRecoverQueue = { _ in otherCallbacks += 1 }
+
+        for mode: MacInterfaceMode in [.desktop, .pi, .desktop, .pi] {
+            parent.interfaceMode = mode
+            coordinator.update(parent)
+            XCTAssertTrue(coordinator.view === native)
+            XCTAssertTrue(view.editor === editor)
+            XCTAssertTrue(editor.delegate === coordinator)
+            XCTAssertTrue(editor.undoManager === undo)
+            XCTAssertEqual(undo.canUndo, canUndo)
+            XCTAssertTrue(editor.hasMarkedText())
+            XCTAssertEqual(editor.markedRange(), markedRange)
+            XCTAssertEqual(editor.textStorage?.attributedSubstring(from: markedRange), markedSnapshot)
+            XCTAssertEqual(editor.string, text)
+            XCTAssertEqual(editor.selectedRange(), selected)
+            XCTAssertEqual(coordinator.input, input)
+            XCTAssertEqual(clip.bounds.origin, origin)
+            XCTAssertTrue(window.firstResponder === editor)
+        }
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(draft.bindingWrites, writes)
+        XCTAssertEqual(draft.completionRequests, requests)
+        XCTAssertTrue(draft.deliveries.isEmpty)
+        XCTAssertEqual(draft.stops, 0)
+        XCTAssertTrue(draft.completed.isEmpty)
+        XCTAssertEqual(draft.dismissals, 0)
+        XCTAssertTrue(draft.models.isEmpty)
+        XCTAssertEqual(draft.tools + draft.thinking + draft.thinkingCycles + otherCallbacks, 0)
+        editor.unmarkText()
+        editor.breakUndoCoalescing()
+        undo.undo()
+        XCTAssertNotEqual(editor.string, text)
+        undo.redo()
+        XCTAssertEqual(editor.string, text)
+    }
+
+    func testModeChangesPreserveNativeUndoAndUTF16Selection() throws {
+        let draft = Draft("draft 🐈 日本語")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let original = draft.text
+        view.editor.insertText("edit", replacementRange: NSRange(location: 0, length: 0))
+        view.editor.breakUndoCoalescing()
+        let edited = draft.text
+        let selected = NSRange(location: 10, length: 2) // The cat's UTF-16 surrogate pair.
+        view.editor.setSelectedRange(selected)
+        let input = coordinator.input
+        let undo = try XCTUnwrap(view.editor.undoManager)
+        for mode: MacInterfaceMode in [.desktop, .pi, .desktop] {
+            parent.interfaceMode = mode
+            coordinator.update(parent)
+            XCTAssertEqual(view.editor.string, edited)
+            XCTAssertEqual(view.editor.selectedRange(), selected)
+            XCTAssertEqual(coordinator.input, input)
+            XCTAssertTrue(view.editor.undoManager === undo)
+        }
+        undo.undo()
+        XCTAssertEqual(view.editor.string, original)
+        XCTAssertEqual(draft.text, original)
+        undo.redo()
+        XCTAssertEqual(view.editor.string, edited)
+    }
+
+    func testDesktopInheritsAppearanceAndUsesDynamicNativeTextAndSelectionColors() throws {
+        let draft = Draft("first\nsecond\nthird")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let piHeight = view.fittingSize(for: 300).height
+        parent.interfaceMode = .desktop
+        parent.separatorColor = .systemPurple
+        coordinator.update(parent)
+        XCTAssertNil(view.appearance)
+        XCTAssertEqual(view.editor.font, .systemFont(ofSize: 14))
+        XCTAssertTrue(view.bottomRule.isHidden)
+        XCTAssertNotEqual(view.fittingSize(for: 300).height, piHeight)
+        var labels: [NSColor] = []
+        var selections: [NSColor] = []
+        for name: NSAppearance.Name in [.aqua, .darkAqua] {
+            window.appearance = try XCTUnwrap(NSAppearance(named: name))
+            coordinator.update(parent)
+            XCTAssertNil(view.appearance)
+            XCTAssertEqual(view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), name)
+            XCTAssertEqual(view.editor.textColor, .labelColor)
+            XCTAssertEqual(view.editor.insertionPointColor, .labelColor)
+            XCTAssertEqual(view.editor.typingAttributes[.foregroundColor] as? NSColor, .labelColor)
+            XCTAssertEqual(view.editor.selectedTextAttributes[.foregroundColor] as? NSColor, .selectedTextColor)
+            XCTAssertEqual(view.editor.selectedTextAttributes[.backgroundColor] as? NSColor, .selectedTextBackgroundColor)
+            var label: NSColor?
+            var selection: NSColor?
+            view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                label = view.editor.textColor?.usingColorSpace(.deviceRGB)
+                selection = (view.editor.selectedTextAttributes[.backgroundColor] as? NSColor)?.usingColorSpace(.deviceRGB)
+            }
+            labels.append(try XCTUnwrap(label))
+            selections.append(try XCTUnwrap(selection))
+        }
+        XCTAssertNotEqual(labels[0], labels[1])
+        XCTAssertNotEqual(selections[0], selections[1])
+        parent.interfaceMode = .pi
+        coordinator.update(parent)
+        XCTAssertEqual(view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .darkAqua)
+        XCTAssertEqual(view.editor.font, .monospacedSystemFont(ofSize: 13, weight: .regular))
+        XCTAssertEqual(view.fittingSize(for: 300).height, piHeight)
+        XCTAssertFalse(view.bottomRule.isHidden)
+        XCTAssertEqual(view.bottomRule.layer?.backgroundColor, NSColor.systemPurple.cgColor)
+    }
+
+    func testModeChangesKeepExactCompletionSnapshotSelectionAndDismissal() throws {
+        let draft = Draft("/m")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        parent.completions = PiEditorCompletions(input: coordinator.input, replacementRange: NSRange(location: 0, length: 2),
+            options: [.init(id: "model", label: "/model", replacement: "/model "),
+                      .init(id: "menu", label: "/menu", replacement: "/menu ")])
+        coordinator.update(parent)
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.down)))
+        let input = coordinator.input
+        for mode: MacInterfaceMode in [.desktop, .pi, .desktop] {
+            parent.interfaceMode = mode
+            coordinator.update(parent)
+            XCTAssertEqual(coordinator.input, input)
+            XCTAssertEqual(view.editor.string, "/m")
+        }
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.tab)))
+        XCTAssertEqual(draft.text, "/menu ")
+        XCTAssertEqual(draft.completed, ["menu"])
+        try XCTUnwrap(view.editor.undoManager).undo()
+        XCTAssertEqual(view.editor.string, "/m")
+        XCTAssertEqual(draft.text, "/m")
+        XCTAssertEqual(view.editor.selectedRange(), NSRange(location: 0, length: 2))
+        XCTAssertEqual(coordinator.input.selection, view.editor.selectedRange())
+        XCTAssertFalse(try XCTUnwrap(parent.completions).matches(coordinator.input))
+        // Native undo selects the restored text. Completion requires a caret and a fresh batch.
+        view.editor.setSelectedRange(NSRange(location: 2, length: 0))
+        parent.completions = PiEditorCompletions(input: coordinator.input, replacementRange: NSRange(location: 0, length: 2),
+                                                options: try XCTUnwrap(parent.completions).options)
+        XCTAssertTrue(try XCTUnwrap(parent.completions).matches(coordinator.input))
+        coordinator.update(parent)
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.escape)))
+        XCTAssertEqual(draft.stops, 0)
+        parent.interfaceMode = .pi
+        coordinator.update(parent)
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.escape)))
+        XCTAssertEqual(draft.stops, 1)
+        XCTAssertTrue(draft.deliveries.isEmpty)
+        XCTAssertEqual(draft.completed, ["menu"])
+        XCTAssertEqual(draft.text, "/m")
+    }
+
+    func testModeChangesKeepHistoryBrowsingAndExactDraftRecovery() {
+        let draft = Draft("draft\n🐈 日本語")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        parent.history = ["old", "new"]
+        coordinator.update(parent)
+        view.editor.setSelectedRange(NSRange(location: 0, length: 0))
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.up)))
+        parent.interfaceMode = .desktop
+        coordinator.update(parent)
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.up)))
+        XCTAssertEqual(draft.text, "old")
+        parent.interfaceMode = .pi
+        coordinator.update(parent)
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.down)))
+        XCTAssertEqual(draft.text, "new")
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.down)))
+        XCTAssertEqual(draft.text, "draft\n🐈 日本語")
+        XCTAssertEqual(view.editor.selectedRange(), NSRange(location: 0, length: 0))
     }
 
     func testCompletionsAreBelowBottomRuleAndAddOnlyTheirOwnHeight() throws {

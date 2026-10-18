@@ -204,6 +204,7 @@ struct PiEditor: NSViewRepresentable {
     var onToggleThinking: () -> Void = {}
     var onCycleThinking: () -> Void = {}
     var separatorColor: NSColor? = nil
+    var interfaceMode: MacInterfaceMode = .pi
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> PiEditorNativeView {
@@ -219,9 +220,7 @@ struct PiEditor: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: PiEditorNativeView, coordinator: Coordinator) {
-        view.editor.delegate = nil
-        view.editor.routeKey = nil
-        coordinator.view = nil
+        coordinator.detach()
     }
 
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
@@ -239,23 +238,38 @@ struct PiEditor: NSViewRepresentable {
             input = PiEditorInput(text: parent.text, selection: NSRange(location: parent.text.utf16.count, length: 0), contextID: parent.contextID)
         }
 
+        deinit { NotificationCenter.default.removeObserver(self) }
+
         func attach(_ view: PiEditorNativeView) {
+            NotificationCenter.default.removeObserver(self)
             self.view = view
+            for name in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+                NotificationCenter.default.addObserver(self, selector: #selector(undoOrRedoDidFinish),
+                                                       name: name, object: view.editor.undoManager)
+            }
             view.editor.string = parent.text
             view.editor.setSelectedRange(input.selection)
             view.editor.delegate = self
             view.editor.routeKey = { [weak self] event in self?.handle(PiEditorKey(event: event)) ?? false }
-            view.separatorColor = parent.separatorColor
+            applyStyle()
             view.invalidateTextSize()
             refreshCompletions()
             requestCompletion()
+        }
+
+        func detach() {
+            requestTask?.cancel()
+            NotificationCenter.default.removeObserver(self)
+            view?.editor.delegate = nil
+            view?.editor.routeKey = nil
+            view = nil
         }
 
         func update(_ parent: PiEditor) {
             let contextChanged = self.parent.contextID != parent.contextID
             self.parent = parent
             guard let editor = view?.editor else { return }
-            view?.separatorColor = parent.separatorColor
+            applyStyle()
             let desiredText = parent.text
             if contextChanged {
                 changingText = true
@@ -274,6 +288,12 @@ struct PiEditor: NSViewRepresentable {
                 requestCompletion()
             }
             refreshCompletions()
+        }
+
+        private func applyStyle() {
+            changingText = true
+            view?.applyStyle(interfaceMode: parent.interfaceMode, separatorColor: parent.separatorColor)
+            changingText = false
         }
 
         private var activeCompletions: PiEditorCompletions? {
@@ -403,6 +423,16 @@ struct PiEditor: NSViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
+            synchronizeNativeInput()
+        }
+
+        @objc private func undoOrRedoDidFinish(_ notification: Notification) {
+            // A closed native undo group can restore storage without text or selection callbacks.
+            // Read the final native state after undo/redo, but do not recapture an unchanged input.
+            synchronizeNativeInput()
+        }
+
+        private func synchronizeNativeInput() {
             guard !changingText, let editor = view?.editor,
                   input.selection != editor.selectedRange() || input.text != editor.string else { return }
             // AppKit can report an undo through selection before its text-change notification.
@@ -462,8 +492,10 @@ struct PiEditor: NSViewRepresentable {
     private var options: [PiEditorCompletions.Option] = []
     private var selectedID: String?
     private var hasInitialFocus = false
+    private var interfaceMode: MacInterfaceMode = .pi
     var separatorColor: NSColor? {
         didSet {
+            guard separatorColor != oldValue else { return }
             bottomRule.layer?.backgroundColor = (separatorColor ?? NSColor(
                 calibratedRed: 0.42, green: 0.46, blue: 0.48, alpha: 1)).cgColor
         }
@@ -485,7 +517,7 @@ struct PiEditor: NSViewRepresentable {
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
-        let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         let foreground = NSColor(calibratedRed: 0.87, green: 0.88, blue: 0.88, alpha: 1)
         editor.font = font
         editor.textColor = foreground
@@ -528,6 +560,41 @@ struct PiEditor: NSViewRepresentable {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
     deinit { NotificationCenter.default.removeObserver(self) }
+
+    /// Update presentation without replacing text, native input state or the undo manager.
+    func applyStyle(interfaceMode: MacInterfaceMode, separatorColor: NSColor?) {
+        self.separatorColor = separatorColor
+        guard self.interfaceMode != interfaceMode else { return }
+        self.interfaceMode = interfaceMode
+        let isPi = interfaceMode == .pi
+        let font = isPi ? NSFont.monospacedSystemFont(ofSize: 13, weight: .regular) : .systemFont(ofSize: 14)
+        let foreground = isPi ? NSColor(calibratedRed: 0.87, green: 0.88, blue: 0.88, alpha: 1) : .labelColor
+        let fontChanged = editor.font != font
+        let markedRange = editor.markedRange()
+        let marked = editor.hasMarkedText() ? editor.textStorage?.attributedSubstring(from: markedRange) : nil
+
+        appearance = isPi ? NSAppearance(named: .darkAqua) : nil
+        // The native setters update existing text attributes. Restore marked runs by attributes
+        // only, so AppKit retains the input context and its UTF-16 marked/selected ranges.
+        editor.font = font
+        editor.textColor = foreground
+        editor.insertionPointColor = foreground
+        var typing = editor.typingAttributes
+        typing[.font] = font
+        typing[.foregroundColor] = foreground
+        editor.typingAttributes = typing
+        editor.selectedTextAttributes = [
+            .foregroundColor: isPi ? foreground : NSColor.selectedTextColor,
+            .backgroundColor: isPi ? NSColor(calibratedRed: 0.29, green: 0.31, blue: 0.43, alpha: 1) : NSColor.selectedTextBackgroundColor
+        ]
+        if let marked {
+            marked.enumerateAttributes(in: NSRange(location: 0, length: marked.length)) { attributes, range, _ in
+                editor.textStorage?.setAttributes(attributes, range: NSRange(location: markedRange.location + range.location, length: range.length))
+            }
+        }
+        bottomRule.isHidden = !isPi
+        if fontChanged { invalidateTextSize() }
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
