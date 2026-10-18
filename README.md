@@ -93,6 +93,8 @@ Use Up/Down to select a suggestion, Return or Tab to complete, and Escape to dis
 
 `project.yml` defines the SwiftUI app targets and iOS app tests. The root `Package.swift` defines the host, client and integration tests; `Packages/PiRemoteCore` holds the shared protocol. Platform-specific process and network code stays outside that package. There is no TypeScript backend.
 
+**Local debug tooling:** the Mac app has session-only, opt-in debug access for a repository Pi extension. It provides bounded app state and rendered window-content PNGs over a private Unix socket, without session mutations or iPhone access. Captures can contain private content and enter Pi history/model requests. Focused checks pass; normal-launch end-to-end acceptance remains blocked. See [operation, privacy limits and evidence](docs/mac-debug-mode.md).
+
 Verified unsigned build and test commands are in [native app verification](docs/native-apps.md#automated-checks). Compact-interface checks are recorded in [interface verification](docs/interface-verification.md). Personal signing and installation remain unverified; they are not current plan-completion requirements. The build settings use iOS 18 and macOS 15 as provisional floors, not tested supported versions. Pi 1.3.0 passes the recorded development checks; no broader supported-version range or complete terminal-parity claim is established.
 
 Start with personal builds for iPhone 16 Pro and the current Mac. TestFlight comes later. A future phase can add accounts and a public connection service; its authentication, encryption and routing still require design.

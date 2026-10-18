@@ -26,8 +26,8 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
     }
 
     private func withTerminationModel(_ body: (CompanionModel, HostCoordinator, URL) async throws -> Void) async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pi-quit-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let root = URL(fileURLWithPath: "/private/tmp/pi-quit-" + UUID().uuidString.prefix(12))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: root) }
         let executable = root.appendingPathComponent("fake-pi")
         let script = #"""
@@ -69,7 +69,8 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(executable.path, forKey: "piExecutable")
-        let model = CompanionModel(support: root.appendingPathComponent("support"), secrets: MemorySecrets(), defaults: defaults)
+        let model = CompanionModel(support: root.appendingPathComponent("support"), secrets: MemorySecrets(), defaults: defaults,
+                                   debugDirectory: root.appendingPathComponent("debug"))
         let host = try XCTUnwrap(model.coordinator)
         model.observe()
         do {
@@ -81,6 +82,29 @@ private final class MemorySecrets: SecretStore, @unchecked Sendable {
             try await body(model, host, root)
             await model.shutdown()
         } catch { await model.shutdown(); throw error }
+    }
+
+    func testDebugAccessSurvivesCancelledQuitAndClosesOnConfirmedQuit() async throws {
+        try await withTerminationModel { model, host, root in
+            let attrs = try FileManager.default.attributesOfItem(atPath: root.path)
+            XCTAssertEqual(attrs[.posixPermissions] as? Int, 0o700)
+            model.debug.enable(model: model)
+            XCTAssertTrue(model.debug.enabled, model.debug.error ?? "No debug error; shutting down: \(model.shuttingDown)")
+            let before = await host.state()
+            var cancelled: Bool?
+            XCTAssertEqual(model.requestTermination(confirm: { _ in false }, reply: { cancelled = $0 }), .terminateLater)
+            try await waitUntil { cancelled != nil }
+            XCTAssertEqual(cancelled, false)
+            XCTAssertTrue(model.debug.enabled)
+            let after = await host.state()
+            XCTAssertEqual(after, before)
+            var allowed: Bool?
+            XCTAssertEqual(model.requestTermination(confirm: { _ in true }, reply: { allowed = $0 }), .terminateLater)
+            try await waitUntil { allowed != nil }
+            XCTAssertEqual(allowed, true)
+            XCTAssertFalse(model.debug.enabled)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("debug/endpoint.json").path))
+        }
     }
 
     func testQuitCancelsBlockedVersionStartupBeforeWaitingForItsDeadline() async throws {

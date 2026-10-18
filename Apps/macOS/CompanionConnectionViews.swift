@@ -56,6 +56,7 @@ struct CompanionConnectionSettings: View {
                 Text("Pi runs with your Mac permissions. Workspaces organize sessions; they are not a sandbox for Pi tools.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            MacDebugSettings(model: model)
             Section {
                 DisclosureGroup("Advanced", isExpanded: $advanced) {
                     Text("Replacing the connection identity revokes every paired device. All phones must pair again. Pi and saved sessions remain on this Mac.")

@@ -1,0 +1,52 @@
+name: MacDebugInterfaceCheck
+options:
+  deploymentTarget:
+    macOS: "15.0"
+packages:
+  PiRemoteSpikes:
+    path: ../..
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGNING_ALLOWED: YES
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+targets:
+  PiRemoteMacDebugCheck:
+    type: application
+    platform: macOS
+    sources:
+      - ../../Apps/macOS
+      - ../../Apps/Shared
+    dependencies:
+      - package: PiRemoteSpikes
+        product: PiRemoteHost
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.MacDebugCheck
+        PRODUCT_NAME: PiRemoteMacDebugCheck
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        INFOPLIST_KEY_LSUIElement: YES
+  MacDebugInterfaceTests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - ../../Tests/MacDebugInterfaceTests
+    dependencies:
+      - target: PiRemoteMacDebugCheck
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.narumi.PiRemote.MacDebugInterfaceTests
+        TEST_TARGET_NAME: PiRemoteMacDebugCheck
+        ENABLE_APP_SANDBOX: NO
+schemes:
+  MacDebugInterfaceCheck:
+    build:
+      targets:
+        PiRemoteMacDebugCheck: all
+        MacDebugInterfaceTests: [test]
+    test:
+      targets:
+        - MacDebugInterfaceTests
