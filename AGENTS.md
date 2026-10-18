@@ -4,7 +4,7 @@ These instructions apply to all files in this repository.
 
 ## Communication
 
-- Use clear technical English in all documentation and communication, including comments, commit messages, pull request text, progress reports, and final responses.
+- Use clear technical language in all documentation and communication, including comments, commit messages, pull request text, progress reports, and final responses.
   - Use short sentences, familiar words, and active voice.
   - Use consistent terms and direct instructions.
   - State the main point first and remove unnecessary text.
