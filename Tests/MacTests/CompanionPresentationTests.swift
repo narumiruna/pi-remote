@@ -1685,6 +1685,15 @@ done
         }
     }
 
+    private func copyFolderPathFromMenu(in host: NSView) async throws {
+        let node = try element("mac-folder-more-actions", in: host).object
+        let button = try XCTUnwrap(node as? NSPopUpButton ?? (node as? NSPopUpButtonCell)?.controlView as? NSPopUpButton
+            ?? descendants(host).compactMap { $0 as? NSPopUpButton }.first {
+                $0.accessibilityIdentifier() == "mac-folder-more-actions" || $0.accessibilityLabel() == "More actions"
+            })
+        try await MacNativeMenuTracking.select("Copy full path", from: button)
+    }
+
     func testFolderParentAndCopyUseResolvedPaths() async throws {
         let parentID = UUID()
         let initial = DirectoryPage(id: UUID(), path: "/fixture/nested/project", parent: parentID, items: [], next: nil)
@@ -1702,11 +1711,11 @@ done
         }, pathEntry: true) { _, _ in XCTFail("Browsing must not select a session") }
             .environment(\.clipboardWriter, { try LocalClipboard.copy($0, to: board) })
         try await capture(view, name: "uiux-folder-navigation-copy", width: 320, height: 480) { host, _ in
-            try await self.press("mac-folder-copy-path", in: host, title: "Copy full path")
+            try await self.copyFolderPathFromMenu(in: host)
             XCTAssertEqual(board.string(forType: .string), initial.path)
             try await self.press("mac-folder-parent", in: host)
             XCTAssertEqual(actions.last, .directories(id: parentID, cursor: nil))
-            try await self.press("mac-folder-copy-path", in: host, title: "Copy full path")
+            try await self.copyFolderPathFromMenu(in: host)
             XCTAssertEqual(board.string(forType: .string), parent.path)
         }
     }
@@ -1720,7 +1729,7 @@ done
             try await capture(view, name: "uiux-folder-inspector-\(width)", width: CGFloat(width), height: 480) { host, _ in
                 _ = try self.element("mac-folder-breadcrumb", in: host)
                 _ = try self.element("mac-folder-parent", in: host)
-                _ = try self.element("mac-folder-copy-path", in: host)
+                _ = try self.element("mac-folder-more-actions", in: host)
                 try await self.press("mac-folder-edit-path", in: host, title: "Edit path")
                 XCTAssertEqual(self.descendants(host).compactMap { $0 as? NSTextField }.filter(\.isEditable).count, 1,
                                "Edit path must expose one native path field")

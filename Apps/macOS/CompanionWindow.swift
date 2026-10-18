@@ -450,8 +450,8 @@ struct CompanionWindow: View {
     private var inspectorHasContent: Bool {
         switch presentation.inspectorSection {
         case "Session": return model.hasInspectorContext
-        case "Activity": return model.showingLoadedSession
-        default: return model.selectedWorkspace != nil
+        case "Activity": return model.hasInspectorContext
+        default: return inspectorDirectory != nil
         }
     }
 
@@ -464,15 +464,17 @@ struct CompanionWindow: View {
         }
     }
 
+    private var loadedInspectorSession: SessionInfo? {
+        model.state.sessions.first { $0.id == model.state.selected }
+    }
+
+    private var inspectorDirectory: String? {
+        model.selectedWorkspace ?? loadedInspectorSession?.directory
+    }
+
     private func showInspector(_ tab: String) {
         guard model.hasInspectorContext else { return }
-        if tab == "Activity" {
-            guard let active = model.state.selected else { return }
-            if !model.showingLoadedSession { model.destination = .session(active) }
-        } else if tab == "Files", model.selectedWorkspace == nil, let active = model.state.selected {
-            // Explicit context actions can return to the loaded conversation; navigation alone cannot.
-            model.destination = .session(active)
-        }
+        // Inspector selection never changes the conversation or starts Pi.
         presentation.inspectorSection = tab
         model.inspectorVisible = true
     }
@@ -714,7 +716,7 @@ struct CompanionWindow: View {
         VStack(spacing: 0) {
             Picker("Inspector", selection: Binding(get: { presentation.inspectorSection }, set: { section in showInspector(section) })) {
                 Text("Files").tag("Files"); Text("Session").tag("Session")
-                Text("Activity").tag("Activity").disabled(model.state.selected == nil)
+                Text("Activity").tag("Activity")
             }.pickerStyle(.segmented).labelsHidden().padding(12)
                 .accessibilityLabel("Inspector").accessibilityIdentifier("mac-inspector-sections")
             Divider()
@@ -728,25 +730,34 @@ struct CompanionWindow: View {
                         }
                             .formStyle(.grouped)
                     }.id(model.state.context)
-                } else if let session = model.state.sessions.first(where: { $0.id == model.state.selected }) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Active session", systemImage: "bubble.left.and.text.bubble.right").font(.headline)
-                        Text(model.displayName(for: session)).textSelection(.enabled)
-                            .accessibilityIdentifier("mac-inspector-active-session")
-                        Text(session.directory).font(.caption).textSelection(.enabled)
-                        Text(model.piStatus).font(.caption)
-                        Text("View the active session to use its Pi controls. The current destination stays separate from the loaded session.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button("View active session") { model.destination = .session(session.id) }
-                            .accessibilityIdentifier("mac-inspector-view-active-session")
-                    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    ContentUnavailableView("No loaded session", systemImage: "slider.horizontal.3", description: Text("Open a session to use its Pi controls."))
+                    List {
+                        VStack(alignment: .leading, spacing: 16) {
+                            if let saved = model.state.sessions.first(where: { $0.id == focusedSession }) {
+                                inspectorSessionSummary(saved, title: "Selected saved session", status: "Saved · Not loaded")
+                                Text("Open this session from the conversation to use its Pi controls.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }
+                            if let session = loadedInspectorSession {
+                                activeInspectorSummary(session)
+                            } else if focusedSession == nil {
+                                Label("No loaded session", systemImage: "slider.horizontal.3").font(.headline)
+                                Text("Open a session to use its Pi controls.").font(.callout).foregroundStyle(.secondary)
+                            }
+                        }.padding(.vertical, 8).frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityElement(children: .contain)
+                    }.listStyle(.inset)
                 }
             case "Activity":
                 List {
-                    Text(model.piStatus).font(.headline)
-                    if model.showingLoadedSession {
+                    if let session = loadedInspectorSession {
+                        Section {
+                            inspectorSessionSummary(session, title: "Loaded session activity", status: model.piStatus)
+                            if !model.showingLoadedSession { viewActiveSessionButton(session) }
+                        }
+                        if !model.state.messages.contains(where: { $0.role == "tool" }), model.state.error == nil {
+                            Text("No tool activity yet.").font(.callout).foregroundStyle(.secondary)
+                        }
                         ForEach(model.state.messages.filter { $0.role == "tool" }) { message in
                             let value = PiToolRowValue(message, runtimePhase: model.state.phase)
                             DisclosureGroup {
@@ -770,14 +781,45 @@ struct CompanionWindow: View {
                                 Text(value).font(.caption).textSelection(.enabled)
                             }
                         }.accessibilityIdentifier("mac-extension-diagnostics")
-                    } else { Text("Activity is available for the loaded session.").foregroundStyle(.secondary) }
+                    } else {
+                        if let saved = model.state.sessions.first(where: { $0.id == focusedSession }) {
+                            inspectorSessionSummary(saved, title: "Selected saved session", status: "Saved · Not loaded")
+                        }
+                        Label("No loaded session", systemImage: "clock").font(.headline)
+                        Text("Open a session to view activity. Saved-session activity is not loaded here.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
                 }
             default:
-                if let path = model.selectedWorkspace { files(path: path) }
+                if let path = inspectorDirectory { files(path: path) }
                 else { ContentUnavailableView("Choose a workspace", systemImage: "folder") }
             }
         }.frame(maxHeight: .infinity, alignment: .top).background(theme.background)
             .accessibilityIdentifier("mac-context-inspector")
+    }
+
+    private func inspectorSessionSummary(_ session: SessionInfo, title: String, status: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            Text(model.displayName(for: session)).textSelection(.enabled)
+                .accessibilityIdentifier(session.id == model.state.selected ? "mac-inspector-active-session" : "mac-inspector-saved-session")
+            Text(session.directory).font(.caption.monospaced()).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(status).font(.caption).foregroundStyle(.secondary)
+        }.accessibilityElement(children: .contain)
+    }
+
+    private func activeInspectorSummary(_ session: SessionInfo) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            inspectorSessionSummary(session, title: "Active session", status: model.piStatus)
+            Text("View the active session to use its Pi controls.").font(.callout).foregroundStyle(.secondary)
+            viewActiveSessionButton(session)
+        }
+    }
+
+    private func viewActiveSessionButton(_ session: SessionInfo) -> some View {
+        Button("View active session") { model.destination = .session(session.id) }
+            .accessibilityIdentifier("mac-inspector-view-active-session")
     }
 
     private func files(path: String) -> some View {

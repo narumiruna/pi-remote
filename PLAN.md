@@ -326,6 +326,8 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### Mac interface structure review
 
+- [ ] Finish normal-launch acceptance for the six [Mac inspector review corrections](docs/plans/2026-10-19_mac-inspector-review-plan.md). Neutral Files rows, compact path actions, optional hidden files, saved Session metadata, explanatory Activity empty states and navigation-free tab changes are implemented. All 48 focused Mac tests pass across three serialized batches; unsigned Mac/iOS simulator builds and independent final source review pass. See [behavior, evidence and fixture limits](docs/mac-inspector-review.md). The user's running build is not replaced; revised-app debug-mode acceptance needs approved relaunch or explicit acceptance of that limit.
+
 - [x] Resolve all six [structure findings](docs/mac-interface-structure.md): expose scoped Session actions, identify active work truthfully in the inspector, reuse typed Activity outcomes, unify live conversation aliases, group secondary toolbar controls, and keep Desktop input visible below independent history.
 - [x] Verify native menu/keyboard routes, editor/IME/undo/completion retention, loading input guards, dock/history wheel ownership, oversized extension access and narrow/wide captures. All 231 configured Mac tests pass in three isolated batches, and the unsigned build passes. Independent source review found the loading-input defect; its correction passes focused checks and follow-up review. The combined legacy capture/menu host remains order-dependent; this is not a single-process full-suite pass. Keep live normal-launch/provider, VoiceOver, real trackpad-monitor delivery and user acceptance separate.
 
