@@ -186,6 +186,11 @@ struct PiScrollFollowing {
         self.atBottom = atBottom
     }
 
+    mutating func pause() {
+        userScrolling = false
+        isFollowing = false
+    }
+
     mutating func resume() {
         userScrolling = false
         isFollowing = true

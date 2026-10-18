@@ -81,6 +81,19 @@ final class PiScrollFollowingTests: XCTestCase {
         XCTAssertTrue(following.isFollowing, "An old gesture must not undo explicit Latest")
     }
 
+    func testDisclosurePauseCannotBeUndoneByAnOldGestureOrLayoutChange() {
+        var following = PiScrollFollowing()
+        following.phaseChanged(.tracking)
+        following.geometryChanged(atBottom: true)
+        following.pause()
+        following.phaseChanged(.idle)
+        XCTAssertFalse(following.isFollowing)
+        following.geometryChanged(atBottom: true)
+        XCTAssertFalse(following.isFollowing)
+        following.resume()
+        XCTAssertTrue(following.isFollowing)
+    }
+
     func testResetRestoresInitialStateAndClearsPendingUserGesture() {
         var following = PiScrollFollowing()
         following.phaseChanged(.interacting)

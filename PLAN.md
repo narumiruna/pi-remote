@@ -111,6 +111,8 @@ Retain the implemented session, attachment, file, diff, import/export and sharin
 
 The user requested a native Swift recreation of the terminal Pi interface, not only equivalent controls in a workspace-first app. Follow the [Pi-like Mac interface plan](docs/plans/2026-10-18_pi-like-mac-interface-plan.md) for reference review, implementation and acceptance. The native transcript/editor/footer, keyboard editor, generic dialogs and reviewed shell controls are implemented. Focused fixture evidence is recorded in [Mac redesign verification](docs/pi-like-mac-verification.md); live terminal capture comparison and user acceptance remain open. This Mac direction replaces the earlier light workspace-first presentation. Existing RPC, security, session and iPhone requirements remain; protocol gaps need an approved alternative or explicit exclusion, not an implicit adapter requirement.
 
+The reference-driven Mac refinements add compact tool outcomes, scroll-anchored disclosure, native code-copy controls with bounded lexical colors, and provider-grouped model selection. See [implementation, reference choices and check evidence](docs/mac-reference-uiux.md). These changes retain the Pi-like layout and do not close the separate normal-launch, full accessibility or user visual-acceptance checks.
+
 ### Design principles
 
 - Use a native interface with the conversation as the primary work area; do not embed a terminal or web dashboard.
@@ -134,6 +136,9 @@ The user requested a native Swift recreation of the terminal Pi interface, not o
 - Keep the Mac conversation visible without Conversation/History tabs. `/resume`, `/tree` and `/history` open bounded native workflows; discovered commands use the existing scoped `.command` action and uncertain-outcome guards. Preserve ordinary text and absolute paths. Do not forward terminal-only navigation commands as Pi prompts.
 - Keep the iPhone composer and Send action available while idle, with an explicit steering/follow-up choice while working. On Mac, keep keyboard delivery and visible Stop available. Escape can recover queued input before stopping; Option-Up recovers without abort. Offer recovered text only to the requesting editor and never resend it.
 - Show concise tool activity in the transcript with expandable output; keep errors and pending extension dialogs visible without requiring users to expand a tool result.
+  - On Mac, show the reported action, bounded target and known outcome. Preserve the heading position during disclosure and keep the reader in reading mode while output arrives. Distinguish interrupted/unconfirmed work from completed results; final upstream outcome flags replace provisional errors.
+  - Keep Mac code blocks selectable and leading-aligned. Copy only the displayed code after an explicit action, with visible success/failure feedback. Use bounded lexical coloring with a plain-text fallback; do not execute code or imply full syntax/artifact support.
+  - Group Mac model choices by the reported provider and identify the current choice. Search and arrow navigation must not apply a change; only explicit Apply/Return dispatches a context-bound request.
 - Keep the reader's scroll position when new output arrives; follow live output only when already at the bottom and offer a return-to-latest action otherwise.
 
 ### Directory and session selection
