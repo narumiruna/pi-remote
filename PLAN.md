@@ -311,7 +311,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 ### Local Mac debug tooling
 
-- [ ] Complete the [Mac debug mode and project extension plan](docs/plans/2026-10-18_mac-debug-mode-plan.md). The session-only Swift Unix service, consent/Disable controls, bounded AppKit content captures and project Pi tools are implemented with focused native and extension checks. This is repository development tooling, not a product extension dependency or a change to iPhone access. Normal-launch end-to-end acceptance is blocked before UI test entry; fixture and runtime checks do not close that gate. See [operation, limits and evidence](docs/mac-debug-mode.md).
+- [ ] Complete the [Mac debug mode and project extension plan](docs/plans/2026-10-18_mac-debug-mode-plan.md). The session-only Swift Unix service, consent/Disable controls, bounded AppKit content captures and project Pi tools are implemented with focused native and extension checks. This is repository development tooling, not a product extension dependency or a change to iPhone access. Normal-launch acceptance remains open. Automated UI runner setup is blocked; a manual probe exposed a window-identity defect. Its correction passes focused tests and a separate SwiftUI WindowGroup fixture, but the running product needs a rebuild/retest. These checks do not close the full acceptance gate. See [operation, limits and evidence](docs/mac-debug-mode.md).
 
 ### Mac interface structure review
 

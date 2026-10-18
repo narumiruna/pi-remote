@@ -30,7 +30,7 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
 
     private func window(size: CGSize = CGSize(width: 900, height: 600)) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
-        window.identifier = MacDebugController.windowIdentifier
+        window.contentView?.addSubview(MacDebugWindowMarker.Marker(frame: NSRect(x: 0, y: 0, width: 1, height: 1)))
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
         return window
@@ -122,7 +122,9 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
             XCTAssertTrue(first.isMiniaturized)
             XCTAssertThrowsError(try select([first]))
             first.deminiaturize(nil)
-            let unrelated = window(); unrelated.identifier = nil
+            let unrelated = window()
+            unrelated.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+            unrelated.identifier = NSUserInterfaceItemIdentifier("pi-remote-session-window")
             defer { unrelated.close() }
             XCTAssertThrowsError(try select([unrelated]), "Never select an arbitrary app window")
         }
@@ -197,6 +199,7 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
         try await withModel { model, root in
             let main = window()
             main.contentView = DebugColorView(frame: main.contentView!.bounds)
+            main.contentView!.addSubview(MacDebugWindowMarker.Marker(frame: NSRect(x: 0, y: 0, width: 1, height: 1)))
             defer { main.close() }
             model.debug.enable(model: model)
             XCTAssertTrue(model.debug.enabled)
@@ -288,6 +291,68 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
         }
     }
 
+    func testProductWindowSelectionSurvivesSwiftUISceneIdentifierChanges() async throws {
+        try await withModel { model, root in
+            let main = window()
+            let initialIdentifier = NSUserInterfaceItemIdentifier("SwiftUI-window-scene-initial")
+            main.identifier = initialIdentifier
+            let host = NSHostingController(rootView: CompanionWindow(model: model).frame(width: 900, height: 650))
+            host.sizingOptions = []
+            main.contentViewController = host
+            main.setContentSize(NSSize(width: 900, height: 650))
+            defer { main.contentViewController = nil; main.close() }
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertEqual(main.identifier, initialIdentifier, "Mounting the marker must preserve SwiftUI window identity")
+            // SwiftUI owns this property and can replace it after the marker attaches.
+            let sceneIdentifier = NSUserInterfaceItemIdentifier("SwiftUI-window-scene-session")
+            main.identifier = sceneIdentifier
+            let status = try XCTUnwrap(JSONSerialization.jsonObject(with: model.debug.status(model: model, windows: [main])) as? [String: Any])
+            XCTAssertEqual(status["windowWidth"] as? Int, 900)
+            XCTAssertEqual(status["windowHeight"] as? Int, 650)
+            XCTAssertTrue(try MacDebugController.captureWindow(model: model, windows: [main], appHidden: false, modalWindow: nil) === main)
+            model.debug.enable(model: model)
+            let response = try await MacDebugTestClient.request(directory: root.appendingPathComponent("debug"), operation: "capture")
+            let value = try XCTUnwrap(JSONSerialization.jsonObject(with: response) as? [String: Any])
+            XCTAssertEqual(value["ok"] as? Bool, true)
+            XCTAssertEqual(main.identifier, sceneIdentifier, "Debug capture must not change SwiftUI window identity")
+        }
+    }
+
+    func testMarkerRemovalReparentingAndContentReplacementDoNotLeaveStaleWindows() async throws {
+        try await withModel { model, _ in
+            let first = window(), second = window()
+            first.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+            second.contentView = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+            let marker = MacDebugWindowMarker.Marker(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
+            defer { first.close(); second.close() }
+            first.contentView!.addSubview(marker)
+            XCTAssertTrue(MacDebugWindowMarker.isAttached(to: first))
+            XCTAssertFalse(MacDebugWindowMarker.isAttached(to: second))
+            XCTAssertNil(marker.hitTest(.zero))
+            marker.removeFromSuperview()
+            XCTAssertFalse(MacDebugWindowMarker.isAttached(to: first))
+            XCTAssertThrowsError(try MacDebugController.captureWindow(model: model, windows: [first, second], appHidden: false, modalWindow: nil))
+            second.contentView!.addSubview(marker)
+            XCTAssertFalse(MacDebugWindowMarker.isAttached(to: first))
+            XCTAssertTrue(MacDebugWindowMarker.isAttached(to: second))
+            second.contentView = NSView()
+            XCTAssertFalse(MacDebugWindowMarker.isAttached(to: second))
+            let panel = NSPanel(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+            panel.isReleasedWhenClosed = false
+            defer { panel.close() }
+            panel.contentView!.addSubview(marker)
+            XCTAssertFalse(MacDebugWindowMarker.isAttached(to: panel), "A panel must never become a capture candidate")
+            let sheet = window()
+            sheet.orderOut(nil)
+            defer { sheet.close() }
+            first.beginSheet(sheet)
+            XCTAssertNotNil(sheet.sheetParent)
+            XCTAssertFalse(MacDebugWindowMarker.isAttached(to: sheet), "A marked regular window used as a sheet must be excluded")
+            first.endSheet(sheet)
+            sheet.orderOut(nil)
+        }
+    }
+
     func testSettingsRequiresConfirmationAndCancelKeepsAccessOff() async throws {
         try await withModel { model, _ in
             let main = window()
@@ -328,7 +393,7 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
             main.setContentSize(NSSize(width: 900, height: 650))
             defer { main.contentViewController = nil; main.close() }
             try await Task.sleep(for: .milliseconds(200))
-            XCTAssertEqual(main.identifier, MacDebugController.windowIdentifier)
+            XCTAssertTrue(MacDebugWindowMarker.isAttached(to: main))
             XCTAssertNil(find("mac-debug-banner-disable", in: host.view))
             model.debug.enable(model: model)
             try await Task.sleep(for: .milliseconds(150))

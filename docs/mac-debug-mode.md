@@ -2,7 +2,7 @@
 
 ## Status
 
-The read-only debug service, Mac controls and repository Pi extension are implemented. Focused native and extension checks pass. **Normal-launch end-to-end acceptance is still blocked before UI test entry.** The [implementation plan](plans/2026-10-18_mac-debug-mode-plan.md) remains open.
+The read-only debug service, Mac controls and repository Pi extension are implemented. Focused native and extension checks pass. **Normal-launch acceptance remains incomplete: automated UI runner setup is blocked, and the corrected product needs a rebuild/retest after a live capture failure.** The [implementation plan](plans/2026-10-18_mac-debug-mode-plan.md) remains open.
 
 This is repository development tooling. Normal Mac use, upstream Pi RPC and iPhone access do not depend on this extension.
 
@@ -77,7 +77,7 @@ xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
 git diff --check
 ```
 
-Evidence on 2026-10-18:
+Initial checkpoint on 2026-10-18:
 
 - The unsigned product build passes. The final native batch passes 28 tests and skips one root-only ownership test, with no failures. Native tests cover authentication, unsafe paths, deadlines, partial IO, disconnects, bounds, collisions, stale cleanup, token rotation and in-flight revocation; status privacy; protected/unavailable/ambiguous windows; PNG decoding/limits; consent/Cancel; native Disable; cancelled and confirmed Quit; session/draft preservation.
 - Product SwiftUI content captures differ between Pi, Desktop light and Desktop dark in hosted windows. Desktop light has greater sampled luminance than dark. Synthetic 900 × 600 and downscaled 1,920 × 1,200 captures decode correctly. These are not normal-launch or full UI responsiveness results.
@@ -105,8 +105,20 @@ xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
 
 Local logs are `/tmp/pi-remote-debug-focused-tests.log`, `/tmp/pi-remote-debug-regression-tests.log`, `/tmp/pi-remote-debug-extension-tests.log` and `/tmp/pi-remote-debug-build.log`. These are temporary evidence, not committed artifacts.
 
+## Window detection correction
+
+A later probe reached the normally launched Mac app and returned Desktop/Settings/idle status, but dimensions were `0 × 0` and capture returned `window_unavailable`. The app and its Pi child were running. Window detection depended on `NSWindow.identifier`, which SwiftUI owns and can replace after attachment.
+
+Detection now finds the typed marker in the window's current content hierarchy. It neither reads nor changes the window identifier. The transparent 1 × 1 marker ignores pointer input and accessibility. Panels and sheets remain excluded. There is no key-window, title or desktop fallback.
+
+The new identifier-change regression failed on the old code with zero dimensions and an unavailable window. It passes with the fix. Tests also verify identity preservation on attachment, removal/reparenting, replaced content, spoofed identifiers and marked sheets/panels.
+
+The correction passes 34 native checks, with one root-only ownership skip, and all 21 extension checks. The native batch used the focused command above with `-only-testing:PiRemoteMacTests/MacInterfaceModeTests` added. The unsigned product build passes. Logs: `/tmp/pi-remote-debug-window-tests.log`, `/tmp/pi-remote-debug-window-extension-tests.log` and `/tmp/pi-remote-debug-window-build.log`.
+
+A separate temporary, locally built SwiftUI `WindowGroup` fixture used the product views and debug service in a private home. The actual registered-tool probe returned 900 × 682 status and a valid 70,086-byte PNG, with scene identity unchanged. No image file was saved. This is additional window-lifecycle evidence, not a user-consent or full product acceptance check. The first temporary-home attempt failed to start the endpoint; a second run with a private home under the user's home directory passed. The running user app was not stopped or replaced and must be rebuilt/relaunched before retesting.
+
 ## Remaining acceptance
 
-The [focused separate-process check](../Tests/MacDebugInterfaceTests/README.md) uses unchanged app sources, a separate bundle identity and a private home. Its locally ad-hoc signed app and runner build and pass signature verification. **Neither UI attempt reached test entry or launched the check app.** The first unsigned runner awaited Gatekeeper execution consent; the corrected-signing attempt also timed out, with its exact setup blocker unresolved. No permission was granted. The existing user app and its Pi process were not stopped.
+The [focused separate-process check](../Tests/MacDebugInterfaceTests/README.md) uses unchanged app sources, a separate bundle identity and a private home. Its locally ad-hoc signed app and runner build and pass signature verification. **Neither dedicated UI runner attempt reached test entry or launched the check app.** The first unsigned runner awaited Gatekeeper execution consent; the corrected-signing attempt also timed out, with its exact setup blocker unresolved. No permission was granted. The existing user app and its Pi process were not stopped.
 
-An attended Mac run must resolve runner setup and confirm off → consent → status/capture in Pi and Desktop light/dark → disable → restart off. Actual window coverage, live editor/Stop responsiveness and the real project-extension-to-product flow remain open. Do not treat build results, fixture images or runtime mode tests as this acceptance. The plan and pull request remain incomplete until these checks pass.
+An attended Mac run must resolve runner setup and confirm off → consent → status/capture in Pi and Desktop light/dark → disable → restart off. Actual window coverage, live editor/Stop responsiveness and the real project-extension-to-product flow remain open. Do not treat build results, fixture images or runtime mode tests as this acceptance. The feature plan remains incomplete until these checks pass.
