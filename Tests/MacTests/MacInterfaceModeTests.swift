@@ -121,7 +121,7 @@ private final class InterfaceModeSecrets: SecretStore, @unchecked Sendable {
                         XCTAssertTrue(control.isEnabled)
                         XCTAssertFalse(control.isHiddenOrHasHiddenAncestor)
                         XCTAssertTrue(host.visibleRect.contains(control.convert(control.bounds, to: host)))
-                        for id in ["mac-files", "mac-commands", "mac-session-switcher-toggle", "mac-command-palette-toggle", "mac-close-focused-session", "mac-inspector-toggle", "mac-remote-access"] {
+                        for id in ["mac-files", "mac-commands", "mac-session-menu", "mac-global-actions", "mac-inspector-toggle", "mac-sidebar-toggle", "mac-new-session", "mac-stop"] {
                             let element = try self.accessibilityElement(id, in: host)
                             let frame = try self.accessibilityFrame(element)
                             XCTAssertTrue(window.convertToScreen(host.visibleRect).contains(frame), "Hidden toolbar control at width \(width): \(id) \(frame)")
@@ -238,6 +238,16 @@ private final class InterfaceModeSecrets: SecretStore, @unchecked Sendable {
         func find(_ object: NSObject) -> NSObject? {
             guard visited.insert(ObjectIdentifier(object)).inserted else { return nil }
             if object.responds(to: id), object.perform(id)?.takeUnretainedValue() as? String == identifier { return object }
+            // Native SwiftUI menus expose their title/role rather than the wrapper identifier.
+            if let title = ["mac-session-menu": "Session", "mac-global-actions": "Actions"][identifier] {
+                if let cell = object as? NSPopUpButtonCell, cell.title == title { return cell }
+                if let button = object as? NSPopUpButton, button.title == title { return button }
+                let role = NSSelectorFromString("accessibilityRole")
+                let label = NSSelectorFromString("accessibilityLabel")
+                if object.responds(to: role), object.responds(to: label),
+                   ["AXMenuButton", "AXPopUpButton"].contains(object.perform(role)?.takeUnretainedValue() as? String ?? ""),
+                   object.perform(label)?.takeUnretainedValue() as? String == title { return object }
+            }
             if object.responds(to: children) {
                 for child in object.perform(children)?.takeUnretainedValue() as? [NSObject] ?? [] {
                     if let found = find(child) { return found }

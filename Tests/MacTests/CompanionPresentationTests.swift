@@ -92,7 +92,34 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
         throw RemoteFault.unavailable
     }
 
+    // Do not restore a prohibited policy between native windows in the same fixture.
+    private func withRegularApplication(_ body: @MainActor () async throws -> Void) async throws {
+        let app = NSApplication.shared
+        let previous = NSWorkspace.shared.frontmostApplication
+        let policy = app.activationPolicy()
+        app.setActivationPolicy(.regular)
+        app.unhide(nil)
+        app.activate()
+        defer {
+            app.setActivationPolicy(policy)
+            previous?.activate()
+        }
+        try await body()
+    }
+
     private func withWorkingCloseModel(_ body: @MainActor (CompanionModel, UUID, UserDefaults) async throws -> Void) async throws {
+        try await Self.withWorkingCloseFixture(body)
+    }
+
+    static func withWorkingCloseFixture(_ body: @MainActor (CompanionModel, UUID, UserDefaults) async throws -> Void) async throws {
+        func waitForPresentationState(_ condition: () -> Bool) async throws {
+            for _ in 0..<200 {
+                if condition() { return }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTFail("Timed out waiting for private fixture state")
+            throw RemoteFault.unavailable
+        }
         let root = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let suite = "PiRemote.WorkingClosePresentation." + UUID().uuidString
@@ -288,9 +315,12 @@ done
             case "mac-folder-breadcrumb": return label == "project"
             case "mac-composer-files": return label == "Files"
             case "mac-composer-commands": return label == "Commands"
+            case "mac-session-menu", "mac-global-actions":
+                let title = identifier == "mac-session-menu" ? "Session" : "Actions"
+                return (node.object is NSPopUpButtonCell || node.object is NSPopUpButton)
+                    && (label == title || node.accessibilityIdentifier() == title
+                        || (node.object as? NSPopUpButtonCell)?.title == title || (node.object as? NSPopUpButton)?.title == title)
             case "slash-run": return label == "Run"
-            case "mac-session-actions":
-                return label == "Session actions" || (node.object is NSPopUpButtonCell && node.accessibilityIdentifier() == "ellipsis")
             case "slash-option-resume", "slash-option-tree", "slash-option-history":
                 return label == "/" + identifier.replacingOccurrences(of: "slash-option-", with: "")
             default: return false
@@ -339,6 +369,16 @@ done
 
     private func chooseSecondaryAction(_ title: String, in host: NSView) async throws {
         try await press(title == "Files" ? "mac-files" : "mac-commands", in: host)
+    }
+
+    private func chooseMenuItem(_ title: String, menu identifier: String, in host: NSView) async throws {
+        let node = try element(identifier, in: host).object
+        let menuTitle = identifier == "mac-session-menu" ? "Session" : "Actions"
+        let button = node as? NSPopUpButton ?? (node as? NSPopUpButtonCell)?.controlView as? NSPopUpButton
+            ?? descendants(host).compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityIdentifier() == identifier || $0.title == menuTitle }
+        try await MacNativeMenuTracking.select(title, from: XCTUnwrap(button, "Missing native menu button: " + identifier))
+        try await Task.sleep(for: .milliseconds(180))
+        host.layoutSubtreeIfNeeded()
     }
 
     private func enter(_ text: String, placeholder: String, in root: NSView) throws {
@@ -542,35 +582,47 @@ done
         _ = try element("mac-inspector-close-session", in: host)
     }
 
-    func testReviewAllIdleCloseRoutesKeepHistoryAndFlushDraftBeforeHiding() async throws {
-        for route in ["row", "toolbar", "inspector"] {
-            try await withWorkingCloseModel { model, _, defaults in
-                _ = try await model.request(.stop)
-                try await self.waitForPresentationState { model.state.phase == "idle" }
-                let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
-                model.destination = .session(session.id); model.expandedWorkspaces = [session.directory]
-                model.inspectorVisible = route == "inspector"
-                let folder = URL(fileURLWithPath: session.directory).appendingPathComponent("support/pi-sessions/" + session.id.uuidString)
-                let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "jsonl" }
-                let history = try Dictionary(uniqueKeysWithValues: files.map { ($0, try Data(contentsOf: $0)) })
-                XCTAssertFalse(history.isEmpty)
-                try await self.capture(CompanionWindow(model: model), name: "review-idle-close-" + route, width: 1300, height: 800, hostingController: true) { host, _ in
-                    if route == "row" { try await self.showSidebar(model, in: host) }
-                    if route == "inspector" { try await self.showSessionInspector(in: host) }
-                    model.text = "Flush this latest " + route + " draft"
-                    let draft = model.text
-                    let identifier = route == "inspector" ? "mac-inspector-close-session"
-                        : (route == "toolbar" ? "mac-close-focused-session" : "mac-session-close-" + session.id.uuidString)
-                    try await self.press(identifier, in: host)
-                    try await self.waitForPresentationState { model.closedSessionIDs.contains(session.id) }
-                    XCTAssertNil(model.state.selected)
-                    XCTAssertEqual(model.destination, .workspace(session.directory))
-                    XCTAssertTrue(model.state.sessions.contains { $0.id == session.id })
-                    let saved = try JSONDecoder().decode([UUID: String].self, from: XCTUnwrap(defaults.data(forKey: "sessionDrafts")))
-                    XCTAssertEqual(saved[session.id], draft)
-                    for (file, data) in history { XCTAssertEqual(try Data(contentsOf: file), data) }
-                    XCTAssertFalse(model.hiddenWorkspaces.contains(session.directory))
-                }
+    func testReviewIdleRowCloseKeepsHistoryAndFlushesDraftBeforeHiding() async throws {
+        try await withRegularApplication { try await self.checkIdleCloseRoute("row") }
+    }
+
+    func testReviewIdleMenuCloseKeepsHistoryAndFlushesDraftBeforeHiding() async throws {
+        try await withRegularApplication { try await self.checkIdleCloseRoute("toolbar") }
+    }
+
+    func testReviewIdleInspectorCloseKeepsHistoryAndFlushesDraftBeforeHiding() async throws {
+        try await withRegularApplication { try await self.checkIdleCloseRoute("inspector") }
+    }
+
+    private func checkIdleCloseRoute(_ route: String) async throws {
+        try await withWorkingCloseModel { model, _, defaults in
+            _ = try await model.request(.stop)
+            try await self.waitForPresentationState { model.state.phase == "idle" }
+            let session = try XCTUnwrap(model.state.sessions.first { $0.id == model.state.selected })
+            model.destination = .session(session.id); model.expandedWorkspaces = [session.directory]
+            model.inspectorVisible = route == "inspector"
+            let folder = URL(fileURLWithPath: session.directory).appendingPathComponent("support/pi-sessions/" + session.id.uuidString)
+            let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).filter { $0.pathExtension == "jsonl" }
+            let history = try Dictionary(uniqueKeysWithValues: files.map { ($0, try Data(contentsOf: $0)) })
+            XCTAssertFalse(history.isEmpty)
+            try await withMacNativeRootWindow(model, width: 1300, height: 800, restoreApplication: false) { host, _ in
+                if route == "row" { try await self.showSidebar(model, in: host) }
+                if route == "inspector" { try await self.showSessionInspector(in: host) }
+                model.text = "Flush this latest " + route + " draft"
+                let draft = model.text
+                let identifier = route == "inspector" ? "mac-inspector-close-session"
+                    : (route == "toolbar" ? "mac-close-focused-session" : "mac-session-close-" + session.id.uuidString)
+                if route == "toolbar" {
+                    try await self.chooseMenuItem("Close Session", menu: "mac-session-menu", in: host)
+                } else { try await self.press(identifier, in: host) }
+                try await self.waitForPresentationState { model.closedSessionIDs.contains(session.id) }
+                XCTAssertNil(model.state.selected)
+                XCTAssertEqual(model.destination, .workspace(session.directory))
+                XCTAssertTrue(model.state.sessions.contains { $0.id == session.id })
+                let saved = try JSONDecoder().decode([UUID: String].self, from: XCTUnwrap(defaults.data(forKey: "sessionDrafts")))
+                XCTAssertEqual(saved[session.id], draft)
+                for (file, data) in history { XCTAssertEqual(try Data(contentsOf: file), data) }
+                XCTAssertFalse(model.hiddenWorkspaces.contains(session.directory))
             }
         }
     }
@@ -1331,24 +1383,48 @@ done
     }
 
     func testRemoteAccessDetailsOpenFromRenderedSummaryAtBothWindowSizes() async throws {
-        try await withModel { model in
-            let id = UUID()
-            model.state.selected = id
-            model.state.sessions = [SessionInfo(id: id, title: "Remote fixture", directory: "/tmp/fixture")]
-            model.destination = .session(id); model.inspectorVisible = true
-            for (width, height) in [(900, 600), (1300, 800)] {
+        try await withRegularApplication { try await self.checkRemoteAccessDetailsAtBothWindowSizes() }
+    }
+
+    private func checkRemoteAccessDetailsAtBothWindowSizes() async throws {
+        for (width, height) in [(900, 600), (1300, 800)] {
+            try await withWorkingCloseModel { model, _, _ in
+                _ = try await model.request(.stop)
+                try await self.waitForPresentationState { model.state.phase == "idle" }
+                let id = try XCTUnwrap(model.state.selected)
+                model.destination = .session(id); model.inspectorVisible = true
                 model.listening = width == 1300
                 model.connectedDevices = model.listening ? [UUID()] : []
-                try await capture(CompanionWindow(model: model), name: "uiux-remote-inspector-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, window in
+                try await withMacNativeRootWindow(model, width: CGFloat(width), height: CGFloat(height), restoreApplication: false) { host, window in
                     XCTAssertTrue(model.showingLoadedSession)
                     try self.assertPiFooter(model, in: host)
                     XCTAssertFalse(self.accessibilityElements(in: host).contains { $0.accessibilityIdentifier() == "mac-session-heading" },
                                    "The loaded session uses the Pi footer, not the old session header")
-                    try await self.press("mac-remote-access", in: host, help: "Show listener and authenticated device status")
-                    let roots = [host] + (window.childWindows ?? []).compactMap(\.contentView)
-                        + NSApp.windows.filter { $0 !== window }.compactMap(\.contentView)
-                    XCTAssertTrue(roots.contains { root in self.accessibilityElements(in: root).contains { $0.accessibilityIdentifier() == "mac-remote-server-status" } })
-                    XCTAssertTrue(roots.contains { root in self.accessibilityElements(in: root).contains { $0.accessibilityIdentifier() == "mac-remote-device-status" } })
+                    let existing = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+                    try await self.chooseMenuItem("iPhone access…", menu: "mac-global-actions", in: host)
+                    @MainActor func statusWindow() -> NSWindow? {
+                        let owned = (window.childWindows ?? []) + NSApp.windows.filter { !existing.contains(ObjectIdentifier($0)) }
+                        return owned.first { candidate in
+                            candidate.isVisible && candidate.contentView.map { content in
+                                self.hasLabel(model.serverStatus, in: content) && self.hasLabel(model.connectionStatus, in: content)
+                            } == true
+                        }
+                    }
+                    for _ in 0..<50 {
+                        if statusWindow() != nil { break }
+                        try await Task.sleep(for: .milliseconds(20))
+                    }
+                    let popover = try XCTUnwrap(statusWindow(), "Remote access must show native server and device status at width \(width)")
+                    let content = try XCTUnwrap(popover.contentView)
+                    XCTAssertTrue(self.hasLabel(model.serverStatus, in: content))
+                    XCTAssertTrue(self.hasLabel(model.connectionStatus, in: content))
+                    try await self.press("remote-status-settings", in: content, title: "Network settings")
+                    for _ in 0..<100 {
+                        if !popover.isVisible { break }
+                        try await Task.sleep(for: .milliseconds(20))
+                    }
+                    XCTAssertFalse(popover.isVisible, "Dismiss the owned popover before the next hosted window")
+                    model.destination = .session(id)
                     window.makeFirstResponder(nil)
                 }
             }
@@ -1361,6 +1437,7 @@ done
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.title = "Pi Remote workspace verification"
+        window.appearance = NSAppearance(named: .aqua)
         let previousApplication = NSWorkspace.shared.frontmostApplication
         let previousPolicy = NSApp.activationPolicy()
         NSApp.setActivationPolicy(.regular)

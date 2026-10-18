@@ -2,7 +2,7 @@
 
 ## Result and scope
 
-Pi Remote for Mac keeps the native Pi-like startup, transcript, editor and footer in one scroll flow. The refinement adds compact tool headings, clearer execution states, native code-block controls, stable disclosure and grouped model selection. It does not add a dashboard, web renderer, runtime or extension adapter.
+Pi mode in Pi Remote for Mac keeps the native Pi-like startup, transcript, editor and footer in continuous placement. Desktop later adds an independent history viewport and persistent composer; see [structure corrections](mac-interface-structure.md). This earlier refinement adds compact tool headings, clearer execution states, native code-block controls, stable disclosure and grouped model selection. It does not add a dashboard, web renderer, runtime or extension adapter.
 
 The base is `main` at `ec446d0`. The user requested improvements from the six local desktop/web references after a read-only source and image comparison. The references inform interaction details, not a replacement for the terminal Pi layout.
 
