@@ -14,6 +14,23 @@ import XCTest
         return object.perform(legacy, with: attribute)?.takeUnretainedValue()
     }
 
+    func semanticText() -> Set<String> {
+        var visited = Set<ObjectIdentifier>()
+        func collect(_ object: NSObject) -> Set<String> {
+            guard visited.insert(ObjectIdentifier(object)).inserted else { return [] }
+            let element = DesktopChromeAccessibility(object: object)
+            var text = Set([element.value("accessibilityValue"), element.value("accessibilityLabel")].compactMap { $0 as? String })
+            for child in element.value("accessibilityChildren") as? [NSObject] ?? [] {
+                text.formUnion(collect(child))
+            }
+            if let view = object as? NSView {
+                for child in view.subviews { text.formUnion(collect(child)) }
+            }
+            return text
+        }
+        return collect(object)
+    }
+
     func boolean(_ name: String) -> Bool {
         let selector = NSSelectorFromString(name)
         guard object.responds(to: selector) else { return false }
@@ -56,9 +73,13 @@ import XCTest
     func testHeaderWithoutSessionDisablesControlsAndOmitsMissingDirectory() async throws {
         for directory: String? in [nil, ""] {
             var calls = 0
-            let header = MacDesktopHeader(title: "Pi Remote", directory: directory, phase: "No session", hasSession: false, openSession: { calls += 1 })
+            let header = MacDesktopHeader(title: "Pi Remote", directory: directory, phase: "idle", hasSession: false, openSession: { calls += 1 })
             try await hosted(header) { host, _ in
                 XCTAssertNil(self.find("desktop-session-directory", in: host))
+                let phase = try self.element("desktop-session-phase", in: host)
+                // SwiftUI can put the identifier on a wrapper and the status on its text child.
+                XCTAssertFalse(phase.semanticText().isDisjoint(with: ["Session phase: No session loaded", "No session loaded"]),
+                               "The session phase must report that no session is loaded.")
                 let button = try self.element("desktop-session-controls", in: host)
                 XCTAssertFalse(button.boolean("isAccessibilityEnabled"))
                 _ = button.press()

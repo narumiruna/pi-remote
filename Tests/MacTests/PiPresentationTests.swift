@@ -76,7 +76,7 @@ private final class PiFixtureSecrets: SecretStore, @unchecked Sendable {
         let value = PiFooterValue(state: state, statistics: nil)
         XCTAssertEqual(value.model, "Model unavailable")
         XCTAssertEqual(value.usage, "Usage unavailable")
-        XCTAssertEqual(value.phase, "No session")
+        XCTAssertEqual(value.phase, "No session loaded")
         let id = UUID()
         state.sessions = [SessionInfo(id: id, title: "Fixture", directory: "/tmp/project")]
         state.selected = id; state.phase = "retrying"; state.model = "fixture/model"

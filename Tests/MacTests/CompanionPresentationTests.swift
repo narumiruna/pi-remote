@@ -1162,18 +1162,18 @@ done
 
     func testServerAndSessionStatusAreIndependent() async throws {
         try await withModel { model in
-            XCTAssertEqual(model.serverStatus, "Server: Stopped")
+            XCTAssertEqual(model.serverStatus, "iPhone access: Off")
             XCTAssertEqual(model.sessionStatus, "Session: None")
             XCTAssertEqual(model.serverEndpoint, "wss://127.0.0.1:7443")
             model.starting = true
-            XCTAssertEqual(model.serverStatus, "Server: Updating")
+            XCTAssertEqual(model.serverStatus, "iPhone access: Updating")
             model.starting = false; model.listening = true
-            XCTAssertEqual(model.serverStatus, "Server: Listening")
+            XCTAssertEqual(model.serverStatus, "iPhone access: On")
             XCTAssertEqual(model.sessionStatus, "Session: None")
             model.state.selected = UUID(); model.state.phase = "working"
             XCTAssertEqual(model.sessionStatus, "Session: working")
             model.listening = false
-            XCTAssertEqual(model.serverStatus, "Server: Stopped")
+            XCTAssertEqual(model.serverStatus, "iPhone access: Off")
             XCTAssertEqual(model.sessionStatus, "Session: working")
         }
     }
@@ -1183,11 +1183,11 @@ done
             for phase in ["idle", "working", "unavailable"] {
                 model.state.phase = phase
                 model.listening = false; model.starting = false; model.connectedDevices = []
-                XCTAssertEqual(model.remoteAccessSummary, "Remote access off")
+                XCTAssertEqual(model.remoteAccessSummary, "iPhone access off")
                 model.starting = true
-                XCTAssertEqual(model.remoteAccessSummary, "Remote access updating")
+                XCTAssertEqual(model.remoteAccessSummary, "iPhone access updating")
                 model.starting = false; model.listening = true
-                XCTAssertEqual(model.remoteAccessSummary, "Remote access on · no devices")
+                XCTAssertEqual(model.remoteAccessSummary, "iPhone access on · no devices")
                 model.connectedDevices = [UUID()]
                 XCTAssertEqual(model.remoteAccessSummary, "1 device connected")
                 model.connectedDevices.insert(UUID())
@@ -1418,7 +1418,7 @@ done
                     let content = try XCTUnwrap(popover.contentView)
                     XCTAssertTrue(self.hasLabel(model.serverStatus, in: content))
                     XCTAssertTrue(self.hasLabel(model.connectionStatus, in: content))
-                    try await self.press("remote-status-settings", in: content, title: "Network settings")
+                    try await self.press("remote-status-settings", in: content, title: "iPhone access settings")
                     for _ in 0..<100 {
                         if !popover.isVisible { break }
                         try await Task.sleep(for: .milliseconds(20))

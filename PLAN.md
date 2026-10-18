@@ -295,6 +295,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 - [ ] Finish acceptance for the five Mac UI/UX corrections. Direct Commands access, one Files destination, native Mac control density, consolidated header status and compact folder navigation are implemented. All 22 Mac tests, nine phone directory-model tests, four focused phone UI checks and unsigned Mac/iOS builds pass. [Evidence and limits](docs/mac-interface.md#uiux-correction-verification) distinguish automated/layout checks from normal launch. The [tracked plan](docs/plans/2026-10-17_mac-uiux-plan.md) remains open for normal local Mac operation, manual breadcrumb-menu selection and full Mac keyboard/accessibility review.
 
+### UI/UX review corrections
+
+- [x] Resolve the nine Mac/iPhone review findings: unavailable pre-session input, offline dialog escape/reconnect, cached reading, long Mac requests, address refresh, notice severity and Forget confirmation, inspector context, empty-session status and local-first setup. Verification passes 86 distinct focused Mac tests across three batches, 16 phone model/authentication tests, four primary-phone UI checks and unsigned Mac/iPhone simulator builds. Independent source review passes. These are focused native/hosted/simulator checks, not a new normal-launch/provider or full VoiceOver acceptance. See [behavior, commands and limits](docs/uiux-review-fixes.md).
+
 ### Mac review follow-up: Quit and session actions
 
 - [ ] Complete the [review follow-up plan](docs/plans/2026-10-17_mac-review-follow-up-plan.md): guard ordinary Quit with authoritative consent, unify Mac Close Session, keep Overview access to active work, rename the inspector tab to Session and add common palette actions. Implementation passes 81 Mac tests, 168 root tests, 19 focused host tests with Thread Sanitizer, three primary-phone product checks and unsigned Mac/iOS simulator builds. The required normal-launch/provider, live keyboard/VoiceOver and actual Session controls menu checks remain open because an attended desktop review is unavailable. The plan is not complete; see [evidence and limits](docs/mac-interface.md#mac-review-follow-up).

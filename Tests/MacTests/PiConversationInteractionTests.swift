@@ -11,6 +11,90 @@ private final class PiInteractionSecrets: SecretStore, @unchecked Sendable {
 }
 
 @MainActor final class PiConversationInteractionTests: XCTestCase {
+    func testEmptyConversationBlocksNativeEditingAndEnablesItAfterSessionSelection() async throws {
+        for mode in MacInterfaceMode.allCases {
+            try await withModel { model in
+                model.interfaceMode = mode
+                let session = try XCTUnwrap(model.state.selected)
+                model.state.selected = nil
+                let snapshot = model.state
+                var opened = 0
+                try await hosted(PiConversationView(model: model, openControls: { _ in opened += 1; return true }), width: 900, height: 600) { host, window in
+                    let editor = try XCTUnwrap(self.descendants(host).compactMap { $0 as? PiEditorTextView }.first)
+                    XCTAssertFalse(editor.isEditable)
+                    let paste = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "")
+                    XCTAssertFalse(editor.validateUserInterfaceItem(paste))
+                    editor.insertText("Must not become a lost draft", replacementRange: NSRange(location: 0, length: 0))
+                    for (text, code, flags) in [("a", UInt16(0), NSEvent.ModifierFlags()), ("\r", UInt16(36), []), ("\r", UInt16(36), .option)] {
+                        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                            characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
+                        editor.keyDown(with: event)
+                    }
+                    try await Task.sleep(for: .milliseconds(100))
+                    XCTAssertEqual(editor.string, "")
+                    XCTAssertEqual(model.text, "")
+                    XCTAssertEqual(model.state, snapshot, "Typing or Return without a session must not send a prompt.")
+                    XCTAssertEqual(opened, 0)
+                    XCTAssertNil(model.fault)
+                    _ = try self.accessibilityElement("pi-editor-hint", in: host, text: "Choose or resume a session")
+                    if mode == .desktop {
+                        _ = try self.accessibilityElement("desktop-session-phase", in: host, text: "No session loaded")
+                    }
+                    model.state.selected = session
+                    try await Task.sleep(for: .milliseconds(150))
+                    XCTAssertTrue(self.descendants(host).contains { $0 === editor })
+                    XCTAssertTrue(editor.isEditable)
+                    XCTAssertTrue(window.makeFirstResponder(editor))
+                    editor.insertText("Loaded draft", replacementRange: NSRange(location: 0, length: 0))
+                    XCTAssertEqual(model.text, "Loaded draft")
+                    XCTAssertNil(model.fault)
+                }
+            }
+        }
+    }
+
+    func testLoadedUnavailableConversationRetainsNativeUndoSelectionAndIMEWithoutSubmission() async throws {
+        for mode in MacInterfaceMode.allCases {
+            try await withModel { model in
+                model.interfaceMode = mode
+                model.text = "Keep 文 draft"
+                try await hosted(PiConversationView(model: model, openControls: { _ in false })) { host, window in
+                    let editor = try XCTUnwrap(self.descendants(host).compactMap { $0 as? PiEditorTextView }.first)
+                    XCTAssertTrue(window.makeFirstResponder(editor))
+                    let undo = try XCTUnwrap(editor.undoManager)
+                    let original = editor.string
+                    editor.insertText(" added", replacementRange: NSRange(location: original.utf16.count, length: 0))
+                    editor.breakUndoCoalescing()
+                    try await Task.sleep(for: .milliseconds(50))
+                    editor.setSelectedRange(NSRange(location: 5, length: 1))
+                    model.state.phase = "unavailable"
+                    try await Task.sleep(for: .milliseconds(150))
+                    XCTAssertTrue(editor.isEditable, "A loaded session must retain its native draft during temporary unavailability.")
+                    XCTAssertTrue(editor.undoManager === undo)
+                    XCTAssertEqual(editor.selectedRange(), NSRange(location: 5, length: 1))
+                    undo.undo()
+                    try await Task.sleep(for: .milliseconds(50))
+                    XCTAssertEqual(model.text, original)
+                    editor.setSelectedRange(NSRange(location: original.utf16.count, length: 0))
+                    try await self.returnKey(in: host, window: window)
+                    XCTAssertEqual(model.text, original)
+                    XCTAssertNil(model.fault, "Unavailable Return must not dispatch a prompt.")
+                    editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0), replacementRange: editor.selectedRange())
+                    let marked = editor.markedRange()
+                    let selection = editor.selectedRange()
+                    model.state.phase = "idle"
+                    try await Task.sleep(for: .milliseconds(150))
+                    XCTAssertTrue(editor.hasMarkedText())
+                    XCTAssertEqual(editor.markedRange(), marked)
+                    XCTAssertEqual(editor.selectedRange(), selection)
+                    XCTAssertTrue(editor.undoManager === undo)
+                    XCTAssertNil(model.fault)
+                }
+            }
+        }
+    }
+
     func testAcceptedNativeCommandsClearOnlyConsumedDraft() async throws {
         try await withModel { model in
             var opened: [String] = []

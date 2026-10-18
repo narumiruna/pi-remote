@@ -8,6 +8,8 @@ struct MacDesktopHeader: View {
     let hasSession: Bool
     let openSession: () -> Void
 
+    private var displayedPhase: String { hasSession ? phase : "No session loaded" }
+
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
@@ -29,14 +31,14 @@ struct MacDesktopHeader: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .trailing, spacing: 8) {
-                Text(phase)
+                Text(displayedPhase)
                     .font(.caption.weight(.medium))
                     .lineLimit(1)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .background(.quaternary, in: Capsule())
-                    .help(phase)
-                    .accessibilityLabel("Session phase: \(phase)")
+                    .help(displayedPhase)
+                    .accessibilityLabel("Session phase: \(displayedPhase)")
                     .accessibilityIdentifier("desktop-session-phase")
                     .frame(maxWidth: 140, alignment: .trailing)
                 Button("Session controls", action: openSession)

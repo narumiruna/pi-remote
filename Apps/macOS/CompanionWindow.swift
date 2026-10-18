@@ -42,7 +42,7 @@ struct CompanionWindow: View {
                         detail
                     }.frame(minWidth: 400, maxWidth: .infinity,
                             minHeight: max(0, geometry.size.height - toolbarHeight - 1), maxHeight: .infinity).layoutPriority(1)
-                    if model.inspectorVisible {
+                    if model.inspectorVisible && inspectorHasContent {
                         inspector.frame(minWidth: 260, idealWidth: min(inspectorWidth, 320), maxWidth: 320)
                             .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { value in
                                 if value >= 260, value <= 320, abs(inspectorWidth - value) > 1 { inspectorWidth = value }
@@ -143,14 +143,18 @@ struct CompanionWindow: View {
             Button { showInspector("Files") } label: {
                 if compact { Image(systemName: "folder") } else { Label("Files", systemImage: "folder") }
             }
-            .buttonStyle(.plain).accessibilityLabel("Files").help("Files").accessibilityIdentifier("mac-files")
+            .buttonStyle(.plain).accessibilityLabel("Files")
+                .disabled(!model.hasInspectorContext)
+                .help(model.hasInspectorContext ? "Files" : "Choose a workspace or session to browse files.")
+                .accessibilityIdentifier("mac-files")
             Button { model.panel = "commands" } label: {
                 if compact { Image(systemName: "slash.circle") } else { Label("Pi commands", systemImage: "slash.circle") }
             }
             .buttonStyle(.plain).accessibilityLabel("Pi commands").help("Pi commands").accessibilityIdentifier("mac-commands")
             sessionMenu
             globalActions
-            Button("Inspector", systemImage: "sidebar.right") { model.inspectorVisible.toggle() }
+            Button("Inspector", systemImage: "sidebar.right", action: toggleInspector)
+                .disabled(!model.hasInspectorContext)
                 .accessibilityIdentifier("mac-inspector-toggle")
                 .labelStyle(.iconOnly).keyboardShortcut("i", modifiers: [.command, .option])
                 .help("Show or hide Files, Session and Activity")
@@ -208,7 +212,7 @@ struct CompanionWindow: View {
             Button("Session controls") {
                 inspectorSelection.wrappedValue = "Session"
                 model.inspectorVisible = true
-            }
+            }.disabled(!model.hasInspectorContext)
             if let session = model.state.sessions.first(where: { $0.id == focusedSession }), session.id == model.state.selected {
                 Divider()
                 contextualSessionActions(session, inspectorSelection: inspectorSelection, renameSelection: renameSelection)
@@ -254,7 +258,7 @@ struct CompanionWindow: View {
                 Text(model.connectionStatus).accessibilityIdentifier("mac-remote-device-status")
                 Text("Remote access is optional. It only controls iPhone connections; local Pi sessions work without it.").font(.caption)
                 HStack {
-                    Button("Network settings") { presentation.remoteDetailsVisible = false; model.destination = .settings }
+                    Button("iPhone access settings") { presentation.remoteDetailsVisible = false; model.destination = .settings }
                     Button("Devices") { presentation.remoteDetailsVisible = false; model.destination = .devices }
                 }
             }.padding(16).frame(width: 310)
@@ -437,7 +441,32 @@ struct CompanionWindow: View {
         return true
     }
 
+    private var inspectorHasContent: Bool {
+        switch presentation.inspectorSection {
+        case "Session": return model.hasInspectorContext
+        case "Activity": return model.showingLoadedSession
+        default: return model.selectedWorkspace != nil
+        }
+    }
+
+    private func toggleInspector() {
+        guard model.hasInspectorContext else { return }
+        if model.inspectorVisible && inspectorHasContent { model.inspectorVisible = false }
+        else {
+            if model.selectedWorkspace == nil { presentation.inspectorSection = "Session" }
+            model.inspectorVisible = true
+        }
+    }
+
     private func showInspector(_ tab: String) {
+        guard model.hasInspectorContext else { return }
+        if tab == "Activity" {
+            guard let active = model.state.selected else { return }
+            if !model.showingLoadedSession { model.destination = .session(active) }
+        } else if tab == "Files", model.selectedWorkspace == nil, let active = model.state.selected {
+            // Explicit context actions can return to the loaded conversation; navigation alone cannot.
+            model.destination = .session(active)
+        }
         presentation.inspectorSection = tab
         model.inspectorVisible = true
     }
@@ -671,8 +700,9 @@ struct CompanionWindow: View {
 
     @ViewBuilder private var inspector: some View {
         VStack(spacing: 0) {
-            Picker("Inspector", selection: $presentation.inspectorSection) {
-                Text("Files").tag("Files"); Text("Session").tag("Session"); Text("Activity").tag("Activity")
+            Picker("Inspector", selection: Binding(get: { presentation.inspectorSection }, set: { section in showInspector(section) })) {
+                Text("Files").tag("Files"); Text("Session").tag("Session")
+                Text("Activity").tag("Activity").disabled(model.state.selected == nil)
             }.pickerStyle(.segmented).labelsHidden().padding(12)
                 .accessibilityLabel("Inspector").accessibilityIdentifier("mac-inspector-sections")
             Divider()
@@ -735,6 +765,7 @@ struct CompanionWindow: View {
                 else { ContentUnavailableView("Choose a workspace", systemImage: "folder") }
             }
         }.frame(maxHeight: .infinity, alignment: .top).background(theme.background)
+            .accessibilityIdentifier("mac-context-inspector")
     }
 
     private func files(path: String) -> some View {
@@ -785,7 +816,7 @@ struct CompanionWindow: View {
                     }
                 }
             case "resume": MacResumeSessionView(model: model)
-            case "palette": MacCommandPaletteView(model: model, renameSession: beginRename)
+            case "palette": MacCommandPaletteView(model: model, renameSession: beginRename, toggleInspector: toggleInspector)
             case "tree": SessionTreeView(request: model.scopedRequest(for: state)) {
                 if model.panel == "tree" { model.panel = nil }
             }
@@ -1095,6 +1126,7 @@ struct MacResumeSessionView: View {
 private struct MacCommandPaletteView: View {
     @Bindable var model: CompanionModel
     let renameSession: (UUID) -> Void
+    let toggleInspector: () -> Void
     @State private var query = ""
     @State private var selection: String?
     @State private var renameContext: SessionContext?
@@ -1113,6 +1145,7 @@ private struct MacCommandPaletteView: View {
     private func disabledReason(_ action: String) -> String? {
         if let unavailableReason { return unavailableReason }
         if action == "New session" { return newSessionDisabledReason }
+        if action == "Toggle Inspector", !model.hasInspectorContext { return "Choose a workspace or session to use the inspector." }
         if action == "Rename session" {
             guard renameContext == model.state.context else { return "Reopen the palette for the current session." }
             guard let id = renameContext?.session, model.showingLoadedSession else { return "Display the loaded session to rename it." }
@@ -1193,7 +1226,7 @@ private struct MacCommandPaletteView: View {
         case "Devices": model.panel = nil; model.destination = .devices
         case "Rename session":
             if let id = renameContext?.session { renameSession(id) }
-        case "Toggle Inspector": model.panel = nil; model.inspectorVisible.toggle()
+        case "Toggle Inspector": model.panel = nil; toggleInspector()
         default:
             guard let option = MacSlashCommands.options(in: model.state).first(where: { "/" + $0.name == id }),
                   let command = option.native, option.isEnabled(in: model.state) else { return }

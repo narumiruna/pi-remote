@@ -32,6 +32,25 @@ final class PhoneModel {
     var pairingText = ""
     var pairingInfo: String?
     var panel: String?
+    var macToForget: SavedMac?
+    private(set) var dialogSending = false
+    private(set) var dialogFault: RemoteFault?
+    private struct DialogScope: Equatable {
+        var context: SessionContext
+        var generation: UUID
+        var id: String
+    }
+    private var dismissedDialog: DialogScope?
+    private var acknowledgedDialog: DialogScope?
+    private var dialogAnswerToken: UUID?
+    var pendingDialog: ExtensionDialog? {
+        guard let scope = pendingDialogScope, acknowledgedDialog != scope else { return nil }
+        return state?.dialogs.first
+    }
+    private var pendingDialogScope: DialogScope? {
+        guard let state, let dialog = state.dialogs.first else { return nil }
+        return DialogScope(context: state.context, generation: generation, id: dialog.id)
+    }
     var preview: FilePreview?
     var confirmResend = false
     var editorOffer: EditorOffer?
@@ -113,6 +132,7 @@ final class PhoneModel {
         context?.invalidate(); context = nil; secrets.invalidate()
         state = nil; connected = false; connecting = false; unlocking = false; pairing = false
         image = nil; pairingText = ""; pairingInfo = nil; panel = nil; preview = nil; editorOffer = nil
+        macToForget = nil; resetDialogPresentation()
         confirmResend = false; resendContext = nil; approvedResend = false
         Task { await client.disconnect(fault: .unavailable) }
     }
@@ -144,14 +164,50 @@ final class PhoneModel {
             saveDraft(); draftKey = key; text = drafts[key] ?? ""; image = nil; editorOffer = nil
             saveDraft()
         }
+        let previousDialog = pendingDialogScope
         self.state = state; connected = true
+        if previousDialog != pendingDialogScope { resetDialogPresentation() }
         if let draft = state.draftID, draft != lastDraft {
             lastDraft = draft
             if text.isEmpty { text = state.draft ?? ""; saveDraft() }
             else { editorOffer = EditorOffer(id: draft, session: state.selected, text: state.draft ?? "") }
         }
-        if state.dialogs.first != nil { panel = "dialog" }
-        else if panel == "dialog" { panel = nil }
+        if let scope = pendingDialogScope, dismissedDialog != scope, acknowledgedDialog != scope { panel = "dialog" }
+        else if pendingDialog == nil, panel == "dialog" { panel = nil }
+    }
+    private func resetDialogPresentation() {
+        dismissedDialog = nil; acknowledgedDialog = nil; dialogFault = nil; dialogSending = false; dialogAnswerToken = nil
+    }
+    func closePanel() {
+        if panel == "dialog" { dismissedDialog = pendingDialogScope }
+        panel = nil
+    }
+    func reopenDialog() {
+        guard !locked, !covered, pendingDialog != nil else { return }
+        panel = "dialog"
+    }
+    func answerDialog(_ dialog: ExtensionDialog, in displayed: HostSnapshot, scope content: ContentScope, value: String?, confirmed: Bool?, cancelled: Bool) {
+        let scope = DialogScope(context: displayed.context, generation: content.epoch, id: dialog.id)
+        guard !locked, !covered, contentScope == content, pendingDialogScope == scope,
+              acknowledgedDialog != scope, !dialogSending else { return }
+        guard connected else { dialogFault = .unavailable; return }
+        let token = UUID(), request = scopedRequest(for: displayed)
+        dialogAnswerToken = token; dialogSending = true; dialogFault = nil
+        Task {
+            defer {
+                if dialogAnswerToken == token { dialogSending = false; dialogAnswerToken = nil }
+            }
+            do {
+                _ = try await request(.answer(dialog: dialog.id, value: value, confirmed: confirmed, cancelled: cancelled))
+                guard pendingDialogScope == scope, dialogAnswerToken == token else { return }
+                // A snapshot can still contain the answered request. Do not present or answer it again.
+                acknowledgedDialog = scope
+                if panel == "dialog" { panel = nil }
+            } catch {
+                guard pendingDialogScope == scope, dialogAnswerToken == token else { return }
+                dialogFault = error as? RemoteFault ?? .unavailable
+            }
+        }
     }
     func attachText(_ preview: FilePreview, context: SessionContext) throws {
         guard !locked, !covered else { throw RemoteFault.unauthorized }
@@ -176,6 +232,7 @@ final class PhoneModel {
         confirmResend = false; resendContext = nil; approvedResend = false
         connectTask?.cancel(); pairTask?.cancel(); pairing = false; pairingInfo = nil
         connecting = false; connected = false; state = nil; selectedMac = id
+        macToForget = nil; resetDialogPresentation()
         defaults.set(id.uuidString, forKey: "selectedMac")
         connect()
     }
@@ -210,7 +267,16 @@ final class PhoneModel {
             } catch { if generation == token { fault = error as? RemoteFault ?? .unavailable } }
         }
     }
-    func forget(_ mac: SavedMac) {
+    func requestForget(_ mac: SavedMac) {
+        guard !locked, !covered, saved.contains(where: { $0.id == mac.id }) else { return }
+        macToForget = mac
+    }
+    func confirmForget() {
+        guard !locked, !covered, let mac = macToForget else { return }
+        macToForget = nil
+        forget(mac)
+    }
+    private func forget(_ mac: SavedMac) {
         Task {
             do {
                 try await client.forget(mac)
@@ -219,6 +285,7 @@ final class PhoneModel {
                     if let next = saved.first { chooseMac(next.id) }
                     else {
                         saveDraft(); generation = UUID(); selectedMac = nil; state = nil; connected = false; editorOffer = nil
+                        connectTask?.cancel(); connecting = false; panel = nil; resetDialogPresentation()
                         defaults.removeObject(forKey: "selectedMac")
                     }
                 }
@@ -263,7 +330,7 @@ final class PhoneModel {
         } catch {
             let fault = error as? RemoteFault ?? .unavailable
             if action.mutates { submissions.finish(submission, fault: fault); defaults.set(submissions.needsReview, forKey: "uncertainAction") }
-            if generation == token || fault == .unknownOutcome { self.fault = fault }
+            if (generation == token && state?.context == context) || fault == .unknownOutcome { self.fault = fault }
             throw fault
         }
     }

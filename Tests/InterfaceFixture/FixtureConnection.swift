@@ -18,6 +18,7 @@ actor FixtureConnection: PhoneConnection {
     private var snapshot: HostSnapshot
     private let unavailable: Bool
     private let streaming: Bool
+    private var failRecoveryAnswer: Bool
     private let inspection = ProcessInfo.processInfo.arguments.contains("inspection")
     private let inspectionNext = UUID(), inspectionTextPreview = UUID(), inspectionImagePreview = UUID()
     private var inspectionOrigin: UUID?
@@ -27,6 +28,7 @@ actor FixtureConnection: PhoneConnection {
     init(phase: String) {
         unavailable = phase == "disconnected"
         streaming = phase == "streaming"
+        failRecoveryAnswer = phase == "dialog-recovery"
         var state = HostSnapshot(host: Self.host, epoch: UUID())
         let session = UUID()
         state.selected = session
@@ -45,6 +47,25 @@ actor FixtureConnection: PhoneConnection {
             TranscriptMessage(role: "tool", text: phase == "error" ? "Read file\nPermission denied for the fixture file." : "Read file\nFixture output", isError: phase == "error")
         ]
         if phase == "error" { state.error = .permissionDenied }
+        if phase == "dialog-recovery" {
+            let cached = (0..<12).map { TranscriptMessage(role: "assistant", text: "Cached record \($0). " + String(repeating: "Read this saved text offline. ", count: 16)) }
+            state.messages = cached + state.messages
+            state.phase = "waiting"
+            state.dialogs = [ExtensionDialog(id: "recovery", method: "confirm", title: "Recovery request", message: "The fixture disconnects when the first answer is sent.", options: [], text: "", expires: nil)]
+        }
+        if phase == "extension-notices" || phase == "extension-notices-empty" {
+            let notices: [ExtensionNotice] = phase == "extension-notices-empty" ? [] : [
+                ExtensionNotice(id: "info", text: "Fixture information"),
+                ExtensionNotice(id: "warning", text: "Fixture warning", severity: .warning),
+                ExtensionNotice(id: "error", text: "Fixture error", severity: .error)
+            ]
+            state.notices = ["Fixture recovery diagnostic", "Fixture status", "Fixture above widget", "Fixture below widget"] + notices.map(\.text)
+            state.extensionDisplay = ExtensionDisplayState(
+                statuses: [ExtensionStatus(id: "status", text: "Fixture status")],
+                widgets: [ExtensionWidget(id: "above", text: "Fixture above widget", placement: .aboveEditor),
+                          ExtensionWidget(id: "below", text: "Fixture below widget", placement: .belowEditor)],
+                notices: notices)
+        }
         if phase == "images" {
             state.messages = [TranscriptMessage(role: "tool", text: "Read image\n[Image]", images: [OutputImageReference(id: Self.imageID), OutputImageReference(id: UUID(), fault: .tooLarge)])]
         }
@@ -141,6 +162,11 @@ actor FixtureConnection: PhoneConnection {
 
     func request(_ action: SessionAction, context: SessionContext) throws -> AppResult {
         guard context == snapshot.context else { throw RemoteFault.conflict }
+        if case .answer = action, failRecoveryAnswer {
+            failRecoveryAnswer = false
+            disconnect(fault: .unavailable)
+            throw RemoteFault.unavailable
+        }
         if action.mutates { snapshot.error = nil }
         defer { if action.mutates { publish() } }
         switch action {

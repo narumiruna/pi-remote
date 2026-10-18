@@ -140,7 +140,7 @@ struct PiFooterValue: Equatable {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         directory = path.map { $0 == home ? "~" : ($0.hasPrefix(home + "/") ? "~" + String($0.dropFirst(home.count)) : $0) } ?? "No working directory"
         model = state.model.isEmpty ? "Model unavailable" : state.model
-        phase = state.selected == nil ? "No session" : state.phase
+        phase = state.selected == nil ? "No session loaded" : state.phase
         if let statistics {
             var parts: [String] = []
             for (prefix, count) in [("↑", statistics.tokens.input), ("↓", statistics.tokens.output),
