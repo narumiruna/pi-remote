@@ -303,6 +303,12 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 - [x] Refine the existing Mac interface: read-only Pi-name/instruction display labels with stable collision handling, one global New session action, pinned management navigation, a compact session header, readable bounded-width messages, a 76–180-point multiline composer and Activity diagnostics. Existing names/IDs, catalog/JSONL formats, RPC actions, lifecycle, authentication and iPhone layouts remain unchanged. Verification: 35 Mac tests, 16 focused host tests, three primary-phone UI smoke checks and unsigned Mac/iOS builds pass. Real JSONL fixtures verify asynchronous display labels without activating Pi or changing session files. See [behavior, checks and limits](docs/mac-interface.md#mac-usability-refinement-verification). Hosted captures do not complete the separate normal-launch or live accessibility gates.
 
+### Switchable Mac interface modes
+
+- [x] Add a saved Pi/Desktop toolbar choice. Pi remains the default dark coding surface; Desktop uses native light/dark colors, system text, a centered column, message cards, a session header/welcome and rounded composer. Both modes retain the same session and native editor. Private-preference, native input, pointer/keyboard switch and component tests pass; see [mode behavior and checks](docs/mac-interface-modes.md).
+- [x] Verify the final Mac implementation: 207 configured Mac tests and the unsigned Mac build pass. Review 12 paired 900/1300-point hosted captures for Pi dark and Desktop light/dark. Native tests preserve editor state and dialog input across mode changes. See [evidence and limits](docs/mac-interface-modes.md).
+- [ ] Complete live normal-launch/provider, VoiceOver, streaming scroll and user visual acceptance. These remain separate from hosted fixtures; no host/shared/iPhone or protocol change is included.
+
 ### Herdr-inspired Mac session management
 
 - [ ] Complete the [session-management implementation plan](docs/plans/2026-10-17_mac-session-management-plan.md). Non-destructive Close Session, grouped Overview, searchable saved-session switching and a native action palette are implemented on the feature branch; verification and limits are recorded in [Mac interface checks](docs/mac-interface.md#session-management-verification). The full plan is not complete.

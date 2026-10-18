@@ -5,6 +5,7 @@ import SwiftUI
 
 struct CompanionWindow: View {
     @Bindable var model: CompanionModel
+    @Environment(\.colorScheme) private var systemColorScheme
     @SceneStorage("macWorkspaceSidebarWidth") private var sidebarWidth = 240.0
     @SceneStorage("macWorkspaceInspectorWidth") private var inspectorWidth = 320.0
     @State private var inspectorSection = "Files"
@@ -15,6 +16,7 @@ struct CompanionWindow: View {
     @State private var closingSession: LocalCloseConfirmation?
     @State private var hoveredSession: UUID?
     @State private var sheetFocusTarget: NSView?
+    private var theme: MacInterfaceTheme { MacInterfaceTheme(mode: model.interfaceMode) }
 
     var body: some View {
         GeometryReader { geometry in
@@ -42,7 +44,8 @@ struct CompanionWindow: View {
                     }
                 }
             }
-            .background(PiPalette.background)
+            .background(theme.background)
+            .foregroundStyle(theme.text)
             .sheet(isPresented: Binding(get: { model.panel != nil }, set: { if !$0 { model.panel = nil } }), onDismiss: {
                 if let target = sheetFocusTarget, let window = target.window { window.makeFirstResponder(target) }
                 sheetFocusTarget = nil
@@ -52,8 +55,9 @@ struct CompanionWindow: View {
                            height: min(640, max(360, geometry.size.height - 40)))
             }
         }
-        .preferredColorScheme(.dark)
-        .modifier(InterfaceAppearance())
+        .environment(\.colorScheme, model.interfaceMode == .pi ? .dark : systemColorScheme)
+        .environment(\.macInterfaceMode, model.interfaceMode)
+        .tint(theme.accent)
         .modifier(EditorOfferPrompt(offer: $model.editorOffer, replace: model.acceptEditorOffer))
         .confirmationDialog("Send this prompt again?", isPresented: $model.confirmResend) {
             Button("Send again") { model.resend() }
@@ -90,10 +94,13 @@ struct CompanionWindow: View {
     }
 
     private func toolbar(compact: Bool) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: compact ? 8 : 12) {
                 Button("Sidebar", systemImage: "sidebar.left") { model.sidebarVisible.toggle() }
                     .labelStyle(.iconOnly).keyboardShortcut("s", modifiers: [.command, .option])
-                if !compact { Button("Pi") { model.destination = .conversation }.buttonStyle(.plain).font(.system(.body, design: .monospaced)).foregroundStyle(PiPalette.accent) }
+                if !compact { Button("Pi") { model.destination = .conversation }.buttonStyle(.plain).font(.system(.body, design: .monospaced)).foregroundStyle(theme.accent) }
+                MacInterfaceModePicker(selection: $model.interfaceMode)
+                    .frame(width: 136, height: 24)
+                    .help("Interface appearance: Pi or Desktop")
                 Menu("Actions") {
                     Button("Files") { showInspector("Files") }
                     Button("Session controls") { showInspector("Session") }
@@ -106,14 +113,20 @@ struct CompanionWindow: View {
                     Button("Settings") { model.destination = .settings }
                     Button("Devices") { model.destination = .devices }
                 }.menuStyle(.borderlessButton).fixedSize()
-                Button("Files") { showInspector("Files") }.buttonStyle(.plain)
+                Button { showInspector("Files") } label: {
+                    if compact { Image(systemName: "folder") } else { Text("Files") }
+                }.buttonStyle(.plain).accessibilityLabel("Files").help("Files")
                     .accessibilityIdentifier("mac-files")
-                Button("Commands") { model.panel = "commands" }.buttonStyle(.plain)
+                Button { model.panel = "commands" } label: {
+                    if compact { Image(systemName: "slash.circle") } else { Text("Commands") }
+                }.buttonStyle(.plain).accessibilityLabel("Commands").help("Commands")
                     .accessibilityIdentifier("mac-commands")
                 Spacer(minLength: 8)
                 status
                 if let active = model.state.selected, !model.showingLoadedSession {
-                    Button("Active session") { model.destination = .session(active) }
+                    Button { model.destination = .session(active) } label: {
+                        if compact { Image(systemName: "bubble.left.and.text.bubble.right") } else { Text("Active session") }
+                    }.accessibilityLabel("Active session").help("View active session")
                 }
                 if model.state.working { Button("Stop", role: .destructive) { model.stopWork() }.help("Stop active Pi work and clear queued messages. File changes are not undone.") }
                 Button("New session", systemImage: "plus") {
@@ -146,7 +159,7 @@ struct CompanionWindow: View {
                     .labelStyle(.iconOnly).keyboardShortcut("i", modifiers: [.command, .option])
                     .help("Show or hide Files, Session and Activity")
         }
-        .padding(.horizontal, 16).padding(.vertical, 10)
+        .padding(.horizontal, compact ? 12 : 16).padding(.vertical, 10)
     }
 
     private var status: some View {
@@ -251,7 +264,7 @@ struct CompanionWindow: View {
             }
             .listStyle(.sidebar).scrollContentBackground(.hidden).frame(height: 116)
         }
-        .background(PiPalette.background).accessibilityIdentifier("mac-workspace-sidebar")
+        .background(theme.background).accessibilityIdentifier("mac-workspace-sidebar")
     }
 
     private func sessionRow(_ session: SessionInfo) -> some View {
@@ -619,7 +632,7 @@ struct CompanionWindow: View {
                 if let path = model.selectedWorkspace { files(path: path) }
                 else { ContentUnavailableView("Choose a workspace", systemImage: "folder") }
             }
-        }.frame(maxHeight: .infinity, alignment: .top).background(PiPalette.background)
+        }.frame(maxHeight: .infinity, alignment: .top).background(theme.background)
     }
 
     private func files(path: String) -> some View {
@@ -743,6 +756,53 @@ struct CompanionWindow: View {
     }
     let saved = model.closedSessionIDs.contains(session.id) ? "Saved · Closed" : "Saved · Not loaded"
     return session.interrupted ? saved + " · Interrupted" : saved
+}
+
+private struct MacInterfaceModePicker: NSViewRepresentable {
+    @Binding var selection: MacInterfaceMode
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let control = MacInterfaceSegmentedControl(labels: MacInterfaceMode.allCases.map(\.label), trackingMode: .selectOne,
+                                                   target: context.coordinator, action: #selector(Coordinator.selectMode(_:)))
+        control.segmentStyle = .rounded
+        control.segmentDistribution = .fill
+        control.setAccessibilityIdentifier("mac-interface-mode")
+        control.setAccessibilityLabel("Interface appearance")
+        control.toolTip = "Pi keeps the compact dark interface. Desktop follows the Mac appearance."
+        control.selectedSegment = MacInterfaceMode.allCases.firstIndex(of: selection) ?? 0
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.parent = self
+        control.isEnabled = context.environment.isEnabled
+        control.selectedSegment = MacInterfaceMode.allCases.firstIndex(of: selection) ?? 0
+    }
+
+    @MainActor final class Coordinator: NSObject {
+        var parent: MacInterfaceModePicker
+        init(_ parent: MacInterfaceModePicker) { self.parent = parent }
+
+        @objc func selectMode(_ control: NSSegmentedControl) {
+            guard control.isEnabled, MacInterfaceMode.allCases.indices.contains(control.selectedSegment) else { return }
+            parent.selection = MacInterfaceMode.allCases[control.selectedSegment]
+        }
+    }
+}
+
+private final class MacInterfaceSegmentedControl: NSSegmentedControl {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        guard isEnabled, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              event.keyCode == 123 || event.keyCode == 124 else { super.keyDown(with: event); return }
+        let next = min(max(selectedSegment + (event.keyCode == 124 ? 1 : -1), 0), segmentCount - 1)
+        guard next != selectedSegment else { return }
+        selectedSegment = next
+        sendAction(action, to: target)
+    }
 }
 
 private struct MacSessionCloseButton: View {
