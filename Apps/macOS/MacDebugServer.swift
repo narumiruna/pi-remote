@@ -23,6 +23,9 @@ import Security
         case captureTooLarge = "capture_too_large"
         case captureBusy = "capture_busy"
         case disabled
+        case invalidInteraction = "invalid_interaction"
+        case interactionBlocked = "interaction_blocked"
+        case targetUnavailable = "target_unavailable"
     }
 
     private let directory: URL
@@ -44,6 +47,14 @@ import Security
     /// The handler returns an encoded JSON object, not a complete protocol response.
     func start(handler: @escaping @MainActor @Sendable (String) async throws -> Data) throws {
         guard !isRunning else { throw Failure.alreadyRunning }
+        try start(handlingRequest: { operation, interaction in
+            guard interaction == nil else { throw OperationError.invalidInteraction }
+            return try await handler(operation)
+        })
+    }
+
+    func start(handlingRequest handler: @escaping @MainActor @Sendable (String, MacDebugInteraction?) async throws -> Data) throws {
+        guard !isRunning else { throw Failure.alreadyRunning }
         let next = DebugTransport(directory: directory, deadline: deadline, handler: handler)
         try next.start()
         transport = next
@@ -62,7 +73,7 @@ import Security
 // All mutable transport and client state is confined to queue. A new transport is
 // created on each enablement, so a cancelled handler cannot reply to a new client.
 private final class DebugTransport: @unchecked Sendable {
-    typealias Handler = @MainActor @Sendable (String) async throws -> Data
+    typealias Handler = @MainActor @Sendable (String, MacDebugInteraction?) async throws -> Data
     private let queue = DispatchQueue(label: "PiRemote.debug-transport")
     private let directory: URL
     private let deadline: TimeInterval
@@ -102,6 +113,7 @@ private final class DebugTransport: @unchecked Sendable {
         let id: String
         let token: String?
         let operation: String
+        let interaction: MacDebugInteraction?
     }
 
     init(directory: URL, deadline: TimeInterval, handler: @escaping Handler) {
@@ -334,8 +346,20 @@ private final class DebugTransport: @unchecked Sendable {
             reply(client, error: "unauthorized"); return
         }
         guard request.version == 1 else { reply(client, error: "unsupported_version"); return }
-        guard request.operation == "status" || request.operation == "capture" else {
+        guard ["status", "capture", "interact"].contains(request.operation) else {
             reply(client, error: "unsupported_operation"); return
+        }
+        if request.operation == "interact" {
+            guard let interaction = request.interaction,
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  Set(object.keys) == Set(["version", "id", "token", "operation", "interaction"]),
+                  let fields = object["interaction"] as? [String: Any], Set(fields.keys) == Set(["action", "value"]) else {
+                reply(client, error: "invalid_interaction"); return
+            }
+            do { try interaction.validate() }
+            catch { reply(client, error: "invalid_interaction"); return }
+        } else if request.interaction != nil {
+            reply(client, error: "invalid_interaction"); return
         }
         // Retain read readiness while the handler runs to detect disconnection.
         client.reader?.setEventHandler { [weak self, weak client] in
@@ -350,7 +374,7 @@ private final class DebugTransport: @unchecked Sendable {
         client.task = Task { @MainActor [weak self, weak client] in
             guard !Task.isCancelled else { return }
             let result: Data
-            do { result = try await handler(request.operation) }
+            do { result = try await handler(request.operation, request.interaction) }
             catch {
                 let code = (error as? MacDebugServer.OperationError)?.rawValue ?? "operation_failed"
                 self?.queue.async { [weak self, weak client] in

@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import { deflateSync, inflateSync } from "node:zlib";
-import extension, { DebugClient, validateCapture, validateResponse, validateStatus } from "../extensions/pi-remote-debug.ts";
+import extension, { DebugClient, validateCapture, validateInteraction, validateInteractionResult, validateResponse, validateStatus } from "../extensions/pi-remote-debug.ts";
 
 const status = { interfaceMode: "pi", destination: "conversation", windowWidth: 1200, windowHeight: 800, sessionPresent: true, phase: "idle", listenerOn: false, sessionCount: 1, messageCount: 2, dialogCount: 0 };
 const token = "ab".repeat(32);
@@ -47,7 +47,9 @@ async function fixture(handler: (request: any, socket: Socket) => void = (r, s) 
   const sockets = new Set<Socket>();
   const requests: any[] = [];
   const socketRequests = new Map<Socket, any>();
+  let connectionCount = 0;
   const server = createServer(socket => {
+    connectionCount++;
     sockets.add(socket); socket.on("close", () => sockets.delete(socket)); socket.on("error", () => {});
     let input = "";
     socket.on("data", bytes => {
@@ -64,8 +66,128 @@ async function fixture(handler: (request: any, socket: Socket) => void = (r, s) 
   await writeFile(endpoint, JSON.stringify({ version: 1, socketPath, token }), { mode: 0o600 });
   const client = new DebugClient(directory);
   cleanup.push(async () => { client.close(); for (const socket of sockets) socket.destroy(); await new Promise<void>(r => server.close(() => r())); await rm(home, { recursive: true, force: true }); });
-  return { home, directory, socketPath, endpoint, client, requests, sockets, socketRequests };
+  return { home, directory, socketPath, endpoint, client, requests, sockets, socketRequests, get connectionCount() { return connectionCount; } };
 }
+
+const allowedInteractions = {
+  navigate: ["conversation", "overview", "settings", "devices"],
+  interface_mode: ["pi", "desktop"], sidebar: ["show", "hide"],
+  inspector: ["Files", "Session", "Activity", "hide"],
+  panel: ["commands", "resume", "palette", "hotkeys", "directory", "workspace", "close"],
+  type_text: ["private draft\n☃"], focus_editor: ["editor"],
+  scroll: ["history_up", "history_down", "history_top", "history_bottom", "dock_up", "dock_down", "page_up", "page_down"],
+};
+const invalidInteraction = { message: "Pi Remote debug interaction is invalid or exceeds its size limit." };
+const invalidResponse = { message: "Pi Remote debug returned an invalid response." };
+
+test("interact sends only the strict version-1 fields for every allowed action/value pair", async () => {
+  const f = await fixture((r, s) => s.end(wire(r.id, { action: r.interaction.action, outcome: "applied" })));
+  for (const [action, values] of Object.entries(allowedInteractions)) for (const value of values) {
+    const interaction = { action, value };
+    assert.deepEqual(validateInteraction(interaction), interaction);
+    const result = await f.client.request("interact", undefined, interaction as any);
+    assert.deepEqual(result, { action, outcome: "applied" });
+    const request = f.requests.at(-1);
+    assert.deepEqual(Object.keys(request).sort(), ["id", "interaction", "operation", "token", "version"]);
+    assert.deepEqual(request.interaction, interaction);
+    assert.equal(request.version, 1); assert.equal(request.operation, "interact"); assert.equal(request.token, token);
+    assert.match(request.id, /^[0-9a-f-]{36}$/);
+  }
+  assert.equal(f.connectionCount, f.requests.length);
+});
+
+test("invalid action/value pairs, missing/extra fields and types fail before a socket opens", async () => {
+  const f = await fixture();
+  const invalid: unknown[] = [undefined, null, [], {}, { action: "sidebar" }, { value: "show" },
+    { action: "sidebar", value: "show", extra: token }, { action: "sidebar", value: 1 },
+    { action: 1, value: "show" }, { action: "type_text", value: "" },
+    ...["submit", "execute", "__proto__", "constructor", "toString", "NAVIGATE"].map(action => ({ action, value: token }))];
+  const allValues = [...new Set(Object.values(allowedInteractions).flat()), "files", "session", "activity", "workspace", token];
+  for (const [action, values] of Object.entries(allowedInteractions)) {
+    if (action === "type_text") continue;
+    for (const value of allValues) if (!values.includes(value)) invalid.push({ action, value });
+  }
+  for (const input of invalid) {
+    assert.throws(() => validateInteraction(input), invalidInteraction);
+    await assert.rejects(f.client.request("interact", undefined, input as any), invalidInteraction);
+  }
+  await assert.rejects(f.client.request("status", undefined, { action: "sidebar", value: "show" }), invalidInteraction);
+  await assert.rejects(f.client.request("capture", undefined, { action: "sidebar", value: "show" }), invalidInteraction);
+  await assert.rejects(f.client.request("submit" as any), { message: "Pi Remote debug operation is unsupported." });
+  assert.equal(f.requests.length, 0); assert.equal(f.connectionCount, 0);
+});
+
+test("text uses the 2048 UTF-8 byte limit and the encoded request keeps the 4096-byte limit", async () => {
+  const f = await fixture((r, s) => s.end(wire(r.id, { action: "type_text", outcome: "applied" })));
+  for (const value of ["a".repeat(2048), "😀".repeat(512), "☃".repeat(682) + "ab", " ", "\n"]) {
+    assert.deepEqual(await f.client.request("interact", undefined, { action: "type_text", value }), { action: "type_text", outcome: "applied" });
+  }
+  for (const value of ["a".repeat(2049), "😀".repeat(512) + "a", "☃".repeat(683), "\0".repeat(2048), "\n".repeat(2048), '"'.repeat(2048)]) {
+    const before = f.connectionCount;
+    await assert.rejects(f.client.request("interact", undefined, { action: "type_text", value }), invalidInteraction);
+    assert.equal(f.connectionCount, before);
+  }
+  const encodedSize = (value: string) => Buffer.byteLength(JSON.stringify({ version: 1, id: "0".repeat(36), token, operation: "interact", interaction: { action: "type_text", value } }) + "\n");
+  let value = "";
+  while (encodedSize(value + "\u0001") <= 4096) value += "\u0001";
+  value += "x".repeat(4096 - encodedSize(value));
+  assert.ok(Buffer.byteLength(value) <= 2048); assert.equal(encodedSize(value), 4096);
+  await f.client.request("interact", undefined, { action: "type_text", value });
+  const before = f.connectionCount;
+  await assert.rejects(f.client.request("interact", undefined, { action: "type_text", value: value + "x" }), invalidInteraction);
+  assert.equal(f.connectionCount, before);
+});
+
+test("interaction responses require exactly the matching allowed action and applied outcome", async () => {
+  assert.deepEqual(validateInteractionResult({ action: "sidebar", outcome: "applied" }, "sidebar"), { action: "sidebar", outcome: "applied" });
+  for (const result of [null, [], {}, { action: "sidebar" }, { action: "sidebar", outcome: "failed" },
+    { action: "submit", outcome: "applied" }, { action: "navigate", outcome: "applied" },
+    { action: "sidebar", outcome: "applied", value: token }, { action: "sidebar", outcome: "applied", text: token }]) {
+    assert.throws(() => validateResponse(Buffer.from(wire("id", result)), "id", "interact", "sidebar"), invalidResponse);
+    const f = await fixture((r, s) => s.end(wire(r.id, result)));
+    await assert.rejects(f.client.request("interact", undefined, { action: "sidebar", value: "show" }), invalidResponse);
+    assert.equal(f.connectionCount, 1); assert.equal(f.requests.length, 1);
+  }
+});
+
+test("interaction server errors use fixed safe text without retries or response text", async () => {
+  const messages = {
+    interaction_blocked: "Pi Remote debug interaction is blocked while a protected surface is visible.",
+    invalid_interaction: invalidInteraction.message,
+    target_unavailable: "Pi Remote debug interaction target is unavailable.",
+    unsupported_operation: "Pi Remote debug operation is unsupported.",
+    [token]: "Pi Remote debug operation failed.",
+  };
+  for (const [error, message] of Object.entries(messages)) {
+    const f = await fixture((r, s) => s.end(JSON.stringify({ version: 1, id: r.id, ok: false, error }) + "\n"));
+    await assert.rejects(f.client.request("interact", undefined, { action: "type_text", value: token }), { message });
+    assert.equal(f.connectionCount, 1); assert.equal(f.requests.length, 1);
+  }
+});
+
+test("interaction timeout, abort and shutdown warn about uncertain application and never retry", async () => {
+  const warning = " The interaction may already apply. Inspect the app before retrying. No automatic retry was made.";
+  const input = { action: "type_text", value: token } as const;
+  const f = await fixture(() => {});
+  await assert.rejects(f.client.request("interact", AbortSignal.abort(token), input), { message: "Pi Remote debug request was cancelled." + warning });
+  assert.equal(f.connectionCount, 0);
+  const controller = new AbortController();
+  const pending = f.client.request("interact", controller.signal, input);
+  await until(() => f.requests.length === 1); controller.abort(token);
+  await assert.rejects(pending, { message: "Pi Remote debug request was cancelled." + warning });
+  await until(() => f.sockets.size === 0);
+  await assert.rejects(f.client.request("interact", undefined, input), { message: "Pi Remote debug timed out after 5 seconds. No request was retried." + warning });
+  await until(() => f.sockets.size === 0);
+  const closing = f.client.request("interact", undefined, input);
+  await until(() => f.requests.length === 3); f.client.close(); f.client.close();
+  await assert.rejects(closing, { message: "Pi Remote debug request was cancelled." + warning });
+  await assert.rejects(f.client.request("interact", undefined, input), { message: "Pi Remote debug request was cancelled." + warning });
+  await until(() => f.sockets.size === 0);
+  assert.equal(f.requests.length, 3); assert.equal(f.connectionCount, 3);
+  for (const error of ["timeout", "cancelled"]) {
+    assert.throws(() => validateResponse(Buffer.from(JSON.stringify({ version: 1, id: "id", ok: false, error })), "id", "interact", "type_text"), e => e instanceof Error && e.message.endsWith(warning));
+  }
+});
 
 test("status call connects on demand with one bounded UUID request and sanitized output", async () => {
   const f = await fixture(); assert.equal(f.requests.length, 0);
@@ -247,10 +369,31 @@ test("CLI probe uses the registered tool, reports only image summary and creates
   });
 });
 
-test("real installed Pi RPC executes both tools before and after reload with no saved session", { timeout: 20000 }, async () => {
-  const f = await fixture((r, s) => s.end(wire(r.id, r.operation === "status" ? status : capture())), true);
+test("CLI interaction probe uses the installed loader without logging values on success or failure", async () => {
+  const f = await fixture((r, s) => s.end(wire(r.id, { action: r.interaction.action, outcome: "applied" })), true);
+  const run = promisify(execFile);
+  const options = { env: { ...process.env, HOME: f.home }, timeout: 10000 };
+  const output = await run(process.execPath, [".pi/tests/debug-probe.ts", "interact", "type_text", token], options);
+  assert.deepEqual(JSON.parse(output.stdout), { ok: true, action: "type_text", outcome: "applied" });
+  assert.equal(output.stderr, ""); assert.ok(!output.stdout.includes(token));
+  assert.deepEqual(f.requests[0].interaction, { action: "type_text", value: token });
+  await assert.rejects(run(process.execPath, [".pi/tests/debug-probe.ts", "interact", "navigate", token], options), e => {
+    assert.ok(e instanceof Error && "stdout" in e && "stderr" in e);
+    assert.deepEqual(JSON.parse(String(e.stdout)), { ok: false, error: invalidInteraction.message });
+    assert.equal(e.stderr, ""); assert.ok(!String(e.stdout).includes(token)); return true;
+  });
+  await assert.rejects(run(process.execPath, [".pi/tests/debug-probe.ts", "interact", "type_text"], options), e => {
+    assert.ok(e instanceof Error && "stderr" in e && "code" in e);
+    assert.equal(e.code, 2); assert.match(String(e.stderr), /^Usage:/); return true;
+  });
+  assert.equal(f.requests.length, 1); assert.equal(f.connectionCount, 1);
+  assert.deepEqual((await readdir(f.directory)).sort(), ["control.sock", "endpoint.json"]);
+});
+
+test("real installed Pi RPC executes all tools before and after reload with no saved session", { timeout: 20000 }, async () => {
+  const f = await fixture((r, s) => s.end(wire(r.id, r.operation === "status" ? status : r.operation === "interact" ? { action: r.interaction.action, outcome: "applied" } : capture())), true);
   const cli = await realpath(execFileSync("which", ["pi"], { encoding: "utf8" }).trim());
-  const child = spawn(process.execPath, [cli, "--mode", "rpc", "--offline", "--no-session", "--approve", "--no-extensions", "--no-mcp", "-e", ".pi/extensions/pi-remote-debug.ts", "-e", ".pi/tests/fixtures/debug-provider.ts", "--provider", "pi-remote-debug-fixture", "--model", "local", "--tools", "pi_remote_debug_status,pi_remote_debug_capture"], { env: { ...process.env, HOME: f.home, PI_CODING_AGENT_DIR: join(f.home, ".pi", "agent") }, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [cli, "--mode", "rpc", "--offline", "--no-session", "--approve", "--no-extensions", "--no-mcp", "-e", ".pi/extensions/pi-remote-debug.ts", "-e", ".pi/tests/fixtures/debug-provider.ts", "--provider", "pi-remote-debug-fixture", "--model", "local", "--tools", "pi_remote_debug_status,pi_remote_debug_capture,pi_remote_debug_interact"], { env: { ...process.env, HOME: f.home, PI_CODING_AGENT_DIR: join(f.home, ".pi", "agent") }, stdio: ["pipe", "pipe", "pipe"] });
   cleanup.push(() => { if (child.exitCode === null) child.kill("SIGTERM"); });
   const records: any[] = []; let buffer = "", stderr = "", rounds = 0;
   child.stderr.on("data", bytes => { stderr += bytes; });
@@ -275,18 +418,19 @@ test("real installed Pi RPC executes both tools before and after reload with no 
   assert.equal(code, 0, stderr);
   assert.ok(records.some(r => r.type === "agent_settled"));
   const tools = records.filter(r => r.type === "tool_execution_end");
-  assert.equal(tools.length, 4);
-  assert.deepEqual(tools.map(r => r.toolName).sort(), ["pi_remote_debug_capture", "pi_remote_debug_capture", "pi_remote_debug_status", "pi_remote_debug_status"]);
+  assert.equal(tools.length, 6);
+  assert.deepEqual(tools.map(r => r.toolName).sort(), ["pi_remote_debug_capture", "pi_remote_debug_capture", "pi_remote_debug_interact", "pi_remote_debug_interact", "pi_remote_debug_status", "pi_remote_debug_status"]);
   assert.ok(records.some(r => r.type === "response" && r.id === "reload" && r.success));
   for (const tool of tools) { assert.equal(tool.isError, false); assert.ok(!JSON.stringify(tool).includes(token)); }
   const imageResult = tools.find(r => r.toolName === "pi_remote_debug_capture").result;
   assert.equal(imageResult.content[1].type, "image"); assert.equal(imageResult.content[1].mimeType, "image/png");
-  assert.equal(f.requests.length, 4);
+  assert.equal(f.requests.length, 6);
+  for (const tool of tools.filter(r => r.toolName === "pi_remote_debug_interact")) assert.deepEqual(tool.result.structuredContent, { action: "navigate", outcome: "applied" });
   await assert.rejects(lstat(join(f.home, ".pi", "agent", "sessions")), { code: "ENOENT" });
 });
 
 test("installed ExtensionRunner creates real tui-mode tool contexts without a terminal renderer", async t => {
-  const f = await fixture((r, s) => s.end(wire(r.id, r.operation === "status" ? status : capture())), true);
+  const f = await fixture((r, s) => s.end(wire(r.id, r.operation === "status" ? status : r.operation === "interact" ? { action: r.interaction.action, outcome: "applied" } : capture())), true);
   const cli = await realpath(execFileSync("which", ["pi"], { encoding: "utf8" }).trim());
   const root = resolve(dirname(cli), "../..");
   const installed = (path: string) => import(pathToFileURL(join(root, "dist/core", path + ".js")).href);
@@ -302,13 +446,15 @@ test("installed ExtensionRunner creates real tui-mode tool contexts without a te
     const contexts = t.mock.method(runner, "createToolContext");
     for (const registered of runner.getAllRegisteredTools()) {
       const tool = wrapRegisteredTool(registered, runner);
-      const result = await tool.execute("real-tui-context", {}, undefined, undefined);
+      const interaction = tool.name.endsWith("interact");
+      const result = await tool.execute("real-tui-context", interaction ? { action: "sidebar", value: "show" } : {}, undefined, undefined);
       assert.equal(contexts.mock.calls.at(-1).result.mode, "tui");
       assert.equal(contexts.mock.calls.at(-1).result.hasUI, false);
       if (tool.name.endsWith("status")) assert.deepEqual(result.structuredContent, status);
+      else if (interaction) assert.deepEqual(result.structuredContent, { action: "sidebar", outcome: "applied" });
       else assert.equal(result.content[1].mimeType, "image/png");
     }
-    assert.equal(f.requests.length, 2);
+    assert.equal(f.requests.length, 3);
     await runner.emit({ type: "session_shutdown", reason: "reload" });
     const old = wrapRegisteredTool(runner.getAllRegisteredTools()[0], runner);
     await assert.rejects(old.execute("after-shutdown", {}, undefined, undefined), { message: "Pi Remote debug request was cancelled." });
@@ -318,18 +464,26 @@ test("installed ExtensionRunner creates real tui-mode tool contexts without a te
   }
 });
 
-test("factory has no endpoint I/O; both zero-argument tools return safe text/image/details without UI", async t => {
+test("factory has no endpoint I/O; tools return safe text/image/details without UI", async t => {
   const registered: any[] = []; const handlers = new Map<string, Function>();
   extension({ registerTool: (tool: any) => registered.push(tool), on: (event: string, handler: Function) => handlers.set(event, handler) } as any);
-  assert.deepEqual(registered.map(tool => tool.name), ["pi_remote_debug_status", "pi_remote_debug_capture"]);
-  for (const tool of registered) { assert.deepEqual(tool.parameters, { type: "object", properties: {}, required: [], additionalProperties: false }); assert.equal(tool.annotations.readOnlyHint, true); assert.ok(tool.outputSchema); }
-  const request = t.mock.method(DebugClient.prototype, "request", async operation => operation === "status" ? validateStatus(status) : validateCapture(capture()));
+  assert.deepEqual(registered.map(tool => tool.name), ["pi_remote_debug_status", "pi_remote_debug_capture", "pi_remote_debug_interact"]);
+  for (const tool of registered.slice(0, 2)) { assert.deepEqual(tool.parameters, { type: "object", properties: {}, required: [], additionalProperties: false }); assert.equal(tool.annotations.readOnlyHint, true); assert.ok(tool.outputSchema); }
+  assert.deepEqual(registered[2].annotations, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+  const request = t.mock.method(DebugClient.prototype, "request", async operation => operation === "status" ? validateStatus(status) : operation === "interact" ? { action: "type_text", outcome: "applied" } : validateCapture(capture()));
   for (const mode of ["tui", "rpc", "json", "print"]) {
     const statusResult = await registered[0].execute("id", {}, undefined, undefined, { mode });
     assert.deepEqual(JSON.parse(statusResult.content[0].text), status); assert.deepEqual(statusResult.details, status); assert.deepEqual(statusResult.structuredContent, status);
     const imageResult = await registered[1].execute("id", {}, undefined, undefined, { mode });
     assert.equal(imageResult.content[1].type, "image"); assert.deepEqual(imageResult.structuredContent.image, imageResult.content[1]);
     assert.deepEqual(JSON.parse(imageResult.content[0].text), imageResult.details); assert.ok(!JSON.stringify(imageResult).includes(token));
+    const input = { action: "type_text", value: token };
+    const interactionResult = await registered[2].execute("id", input, undefined, undefined, { mode });
+    assert.deepEqual(request.mock.calls.at(-1)!.arguments, ["interact", undefined, input]);
+    assert.deepEqual(interactionResult.structuredContent, { action: "type_text", outcome: "applied" });
+    assert.deepEqual(interactionResult.details, interactionResult.structuredContent);
+    assert.deepEqual(JSON.parse(interactionResult.content[0].text), interactionResult.structuredContent);
+    assert.ok(!JSON.stringify(interactionResult).includes(token));
   }
   request.mock.restore();
   handlers.get("session_shutdown")!(); handlers.get("session_shutdown")!();

@@ -2,6 +2,7 @@
 // installed Pi extension factory and calls its registered tool definition.
 // It does not claim to exercise a live interactive or RPC session.
 // HOME=<app CFFIXED_USER_HOME> node .pi/tests/debug-probe.ts status|capture
+// HOME=<app CFFIXED_USER_HOME> node .pi/tests/debug-probe.ts interact ACTION VALUE
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { realpath } from "node:fs/promises";
@@ -41,8 +42,8 @@ function meanLuminance(png: Buffer): number {
 }
 
 const operation = process.argv[2];
-if (!["status", "capture"].includes(operation)) {
-  console.error("Usage: node .pi/tests/debug-probe.ts status|capture"); process.exitCode = 2;
+if (!["status", "capture", "interact"].includes(operation) || process.argv.length !== (operation === "interact" ? 5 : 3)) {
+  console.error("Usage: node .pi/tests/debug-probe.ts status|capture OR interact ACTION VALUE"); process.exitCode = 2;
 } else {
   const cli = await realpath(execFileSync("which", ["pi"], { encoding: "utf8" }).trim());
   const root = resolve(dirname(cli), "../..");
@@ -55,8 +56,10 @@ if (!["status", "capture"].includes(operation)) {
     const extension = loaded.extensions[0];
     try {
       const tool = extension.tools.get(`pi_remote_debug_${operation}`)!.definition;
-      const result = await tool.execute("local-probe", {}, undefined, undefined, undefined);
-      if (operation === "status") console.log(JSON.stringify({ ok: true, status: result.structuredContent }));
+      const params = operation === "interact" ? { action: process.argv[3], value: process.argv[4] } : {};
+      const result = await tool.execute("local-probe", params, undefined, undefined, undefined);
+      if (operation === "interact") console.log(JSON.stringify({ ok: true, ...result.structuredContent }));
+      else if (operation === "status") console.log(JSON.stringify({ ok: true, status: result.structuredContent }));
       else {
         const capture = result.structuredContent as { image: { data: string }; metadata: Record<string, unknown> };
         const png = Buffer.from(capture.image.data, "base64");

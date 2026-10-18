@@ -278,7 +278,7 @@ final class CompanionModel {
         debugDirectory: URL = MacDebugServer.defaultDirectory
     ) {
         self.support = support; self.secrets = secrets; self.defaults = defaults
-        debug = MacDebugController(directory: debugDirectory)
+        debug = MacDebugController(directory: debugDirectory, defaults: defaults)
         sidebarVisible = defaults.bool(forKey: "piSidebarVisible")
         savedInterfaceMode = defaults.string(forKey: "macInterfaceMode").flatMap(MacInterfaceMode.init(rawValue:)) ?? .pi
         let candidates = [
@@ -317,6 +317,7 @@ final class CompanionModel {
             coordinator = nil; registry = nil
             startupError = "Cannot open private host storage. Check disk access and whether another Pi Remote companion is already running."
         }
+        debug.restore(model: self)
     }
 
     func displayName(for session: SessionInfo) -> String {
@@ -684,7 +685,7 @@ final class CompanionModel {
 
     func shutdown() async {
         shuttingDown = true
-        debug.disable()
+        debug.stop()
         startup?.cancel()
         if let startup { await startup.value }
         observation?.cancel(); pairingObservation?.cancel(); connectionObservation?.cancel(); codeExpiry?.cancel()

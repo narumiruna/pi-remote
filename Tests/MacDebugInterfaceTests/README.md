@@ -13,7 +13,7 @@ The one test is intended to check:
 - The actual registered project tools return allowlisted empty-app status and bounded AppKit-view PNG metadata.
 - GUI mode changes produce different Pi/Desktop captures. Process-local appearance arguments request Desktop light and dark. PNG hashes and mean luminance must differ; these checks are not visual acceptance.
 - Disable removes the endpoint/socket and rejects both tools.
-- Ordinary Quit while enabled cleans up. Relaunch starts off.
+- Ordinary Quit while enabled closes access. Relaunch restores debug mode with a fresh capability. After Disable, relaunch stays off.
 
 `HOME` and `CFFIXED_USER_HOME` point to the same new directory under `/private/tmp`. Foundation home, Application Support and cache paths were separately verified with `CFFIXED_USER_HOME`. The app must create `Library/Application Support/PiRemote/host.json` in that home. The test never starts Pi, the iPhone listener or pairing.
 
@@ -87,4 +87,4 @@ Use an outer 90-second process timeout too: the XCTest allowance does not bound 
 - Both dedicated runners were stopped by their verified PIDs. The user's app PID 19988 stayed running. No permission was granted, no system preferences were changed, and no screenshot files were produced in either result directory.
 - Build logs: `/tmp/pi-remote-debug-interface-build-final.log`. Attempt logs: `/tmp/pi-remote-debug-interface-ui-once.log` and `/tmp/pi-remote-debug-interface-ui-signed.log`. The corresponding `.xcresult` directories are incomplete text-diagnostic staging directories, not completed test reports.
 
-Normal-launch enablement, project-tool captures, appearance comparison, disablement and restart-off remain unverified. Do not mark the acceptance gate complete from this target's build result.
+Normal-launch enablement, project-tool captures, appearance comparison, saved-consent restoration, disablement and restart-off remain unverified. The test expectation was updated for saved consent; the updated UI flow has not run. Do not mark the acceptance gate complete from this target's build result.

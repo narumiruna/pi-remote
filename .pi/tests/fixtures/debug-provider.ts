@@ -18,8 +18,8 @@ export default function (pi: ExtensionAPI) {
         };
         stream.push({ type: "start", partial: output });
         if (calls) {
-          for (const [index, operation] of ["status", "capture"].entries()) {
-            const toolCall = { type: "toolCall" as const, id: `debug-fixture-${operation}`, name: `pi_remote_debug_${operation}`, arguments: {} };
+          for (const [index, operation] of ["status", "capture", "interact"].entries()) {
+            const toolCall = { type: "toolCall" as const, id: `debug-fixture-${operation}`, name: `pi_remote_debug_${operation}`, arguments: operation === "interact" ? { action: "navigate", value: "overview" } : {} };
             output.content.push(toolCall);
             stream.push({ type: "toolcall_start", contentIndex: index, partial: output });
             stream.push({ type: "toolcall_end", contentIndex: index, toolCall, partial: output });

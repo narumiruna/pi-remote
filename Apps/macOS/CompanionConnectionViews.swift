@@ -35,7 +35,7 @@ struct CompanionConnectionSettings: View {
     var body: some View {
         Form {
             Section("Network") {
-                Text(model.serverStatus)
+                Text(model.serverStatus).background(MacDebugPageScrollMarker())
                 Picker("Listen address", selection: $model.address) {
                     ForEach(model.addresses) { Text($0.address + " · " + $0.name).tag($0.address) }
                 }.disabled(model.listening || model.starting)
@@ -78,7 +78,7 @@ struct CompanionDevicesView: View {
     var body: some View {
         Form {
             Section("iPhone access") {
-                Text(model.connectionStatus).font(.headline)
+                Text(model.connectionStatus).font(.headline).background(MacDebugPageScrollMarker())
                 if model.listening {
                     Button("Pair iPhone") { model.openPairing() }.buttonStyle(.borderedProminent)
                 } else {

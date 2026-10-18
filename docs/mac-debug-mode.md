@@ -2,20 +2,49 @@
 
 ## Status
 
-The read-only debug service, Mac controls and repository Pi extension are implemented. Focused native and extension checks pass. **Normal-launch acceptance remains incomplete: automated UI runner setup is blocked, and the corrected product needs a rebuild/retest after a live capture failure.** The [implementation plan](plans/2026-10-18_mac-debug-mode-plan.md) remains open.
+The local debug service, Mac controls and repository Pi extension are implemented. Status and capture are read-only. App-only semantic interaction controls are also implemented; see the [interaction plan](plans/2026-10-18_mac-debug-interaction-plan.md). **Normal-launch acceptance remains incomplete. Use the rebuilt app before live verification; earlier session-only builds require one new Enable confirmation.** Debug consent now persists across launches until explicitly disabled. The [initial implementation plan](plans/2026-10-18_mac-debug-mode-plan.md) retains its earlier acceptance limits.
 
 This is repository development tooling. Normal Mac use, upstream Pi RPC and iPhone access do not depend on this extension.
 
 ## Operation
 
 1. Build the Mac app with the verified commands below. A previously running app does not gain this feature until it is replaced and relaunched. Do not interrupt active Pi work without reviewing it.
-2. Open **Settings → Local debug mode → Enable debug mode…**. Read the disclosure and confirm. Access starts only after confirmation. Debug mode starts off on every launch; no preference enables it.
-3. Start Pi in this trusted repository, or reload its extensions. `.pi/extensions/pi-remote-debug.ts` registers two zero-argument tools:
+2. Open **Settings → Local debug mode → Enable debug mode…**. Read the disclosure and confirm. First-time access starts only after confirmation. This saves the choice on this Mac. Later app launches restore debug mode automatically with a fresh capability. Select **Disable debug mode** to clear saved consent and prevent automatic startup.
+3. Start Pi in this trusted repository, or reload its extensions. `.pi/extensions/pi-remote-debug.ts` registers three tools:
    - `pi_remote_debug_status`: interface mode, destination category, content dimensions, session-present flag, execution phase, listener-on flag and bounded session/message/dialog counts. It does not return a host snapshot, names, paths, IDs, drafts, conversation text or tool output.
    - `pi_remote_debug_capture`: one PNG of the identified Pi Remote content window, with dimensions, UTC capture time and `method: appkit-view`. An ordinary tool call returns an image. Codemode callers receive `{ image, metadata }` and can display it with `image(result.image)`.
-4. Use **Disable debug mode** in Settings or the persistent bottom indicator to revoke access. Ordinary confirmed Quit also revokes access. Cancelling Quit leaves it active. Disable does not stop Pi, send a prompt, change a session or stop iPhone access.
+   - `pi_remote_debug_interact`: an explicit `{ action, value }` request for the app-only controls below. Results contain only the action and `outcome: applied`; they never echo text. This means the presentation action was applied, not that physical keyboard/pointer input or a complete workflow was tested.
+4. Use **Disable debug mode** in Settings or the persistent bottom indicator to revoke access. Ordinary confirmed Quit closes the current socket but keeps saved consent for the next launch. Cancelling Quit leaves access active. Disable does not stop Pi, send a prompt, change a session or stop iPhone access.
 
-The controls and socket flow are tested in native fixtures. The steps above have not yet passed the separate normally launched product check.
+The controls and socket flow are tested in native fixtures. The steps above have not yet passed the separate normally launched product check. The consent text includes persistent debug access, UI controls and saved UI preferences/draft edits. Earlier session-only builds did not save consent, so enable once in the rebuilt app. If automatic startup fails, Settings reports the error and offers Retry and Disable; saved consent alone never reports a running service.
+
+## App-only interaction
+
+| Action | Values |
+| --- | --- |
+| `navigate` | `conversation`, `overview`, `settings`, `devices` |
+| `interface_mode` | `pi`, `desktop` |
+| `sidebar` | `show`, `hide` |
+| `inspector` | `Files`, `Session`, `Activity`, `hide` |
+| `panel` | `commands`, `resume`, `palette`, `hotkeys`, `directory`, `workspace`, `close` |
+| `type_text` | Nonempty text, at most 2,048 UTF-8 bytes; NUL is rejected |
+| `focus_editor` | `editor` |
+| `scroll` | `history_up`, `history_down`, `history_top`, `history_bottom`, `dock_up`, `dock_down`, `page_up`, `page_down` |
+
+- Controls use existing presentation state and identified native views in the one marked, visible app window. They do not inject desktop events or use system Accessibility access. Page scrolling supports Settings, Devices and Overview; other targets fail explicitly.
+- Text appends through the native editor without replacing its selection or draft. Native undo remains available. Stale editor text/context, disabled, off-screen and IME-composing editors reject input. No text is submitted. Tool input itself can enter Pi history/model requests; do not use it for secrets.
+- Pairing codes, pending approvals, extension requests, editor replacement/resend consent, native modal/confirmation surfaces, secure fields and ambiguous/unavailable windows block interaction. Only an identified ordinary app panel can be closed. Panels still block capture; there is no screenshot protection bypass.
+- These controls cannot send prompts, run shell commands, start/stop Pi or networking, create/activate sessions, answer extension requests, approve/revoke devices, or change credentials. Opening a session/folder picker is not selecting or executing an item.
+- Each action runs synchronously on MainActor after enablement, cancellation and surface checks. There is no automatic retry. A lost response, timeout or cancellation can occur after an action applied; inspect state before trying again, especially before appending text.
+
+For a registered-tool probe without reloading the current Pi session:
+
+```sh
+node .pi/tests/debug-probe.ts interact navigate settings
+node .pi/tests/debug-probe.ts status
+```
+
+The probe loads the installed extension API. It reports only fixed errors or the action result and does not print the value. This does not prove that a long-running Pi session has reloaded its tool list.
 
 ## Capture and privacy limits
 
@@ -33,7 +62,7 @@ The Swift service binds a Unix domain socket, not a TCP port. It does not reuse 
 `~/Library/Caches/PiRemoteDebug/` contains:
 
 - `control.sock`: mode `0600`.
-- `endpoint.json`: mode `0600`, with protocol version, socket path and a fresh 256-bit capability token per enablement. Never copy it into logs, prompts or Git.
+- `endpoint.json`: mode `0600`, with protocol version, socket path and a fresh 256-bit capability token per enablement or restored app launch. Never copy it into logs, prompts or Git.
 - `server.lock`: mode `0600`. This empty lock file remains after disablement to prevent competing processes from locking different inodes.
 
 The directory must be owned by the current user with mode `0700`. Unsafe ownership, symlinks, hardlinked files and unexpected file types are rejected. Ancestors must be owned by root or the current user and not group/other-writable, except root-owned sticky system directories. Existing live instances cannot be replaced. Stale owned endpoint/socket files can be recovered under the exclusive lock. Cleanup deletes only the artifacts whose owner, device and inode still match this service's files.
@@ -47,7 +76,7 @@ Any process with this Mac user's permissions can read the local capability. This
 | Response record | 3 MiB, including LF |
 | Deadline | 5 seconds total per connection/call; no automatic retry |
 | Protocol | Version 1; one JSONL request and response per connection, then close |
-| Operations | `status`, `capture`; no forwarding or mutations |
+| Operations | `status`, `capture`, `interact`; no arbitrary forwarding or runtime/credential mutations |
 | PNG | 2 MiB; longest edge 1,920 pixels; at most 2,304,000 pixels |
 | Status dimensions/counts | Dimensions clamped to 16,384; counts clamped to 10,000 |
 | Active captures | 1; another capture is rejected as busy |
@@ -68,6 +97,7 @@ xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteMac \
   -derivedDataPath /tmp/pi-remote-debug-mac -parallel-testing-enabled NO \
   -only-testing:PiRemoteMacTests/MacDebugServerTests \
   -only-testing:PiRemoteMacTests/MacDebugControllerTests \
+  -only-testing:PiRemoteMacTests/MacDebugInteractionTests \
   -only-testing:PiRemoteMacTests/CompanionTests/testDebugAccessSurvivesCancelledQuitAndClosesOnConfirmedQuit \
   CODE_SIGNING_ALLOWED=NO test
 node --test .pi/tests/pi-remote-debug*.test.ts
@@ -117,8 +147,33 @@ The correction passes 34 native checks, with one root-only ownership skip, and a
 
 A separate temporary, locally built SwiftUI `WindowGroup` fixture used the product views and debug service in a private home. The actual registered-tool probe returned 900 × 682 status and a valid 70,086-byte PNG, with scene identity unchanged. No image file was saved. This is additional window-lifecycle evidence, not a user-consent or full product acceptance check. The first temporary-home attempt failed to start the endpoint; a second run with a private home under the user's home directory passed. The running user app was not stopped or replaced and must be rebuilt/relaunched before retesting.
 
+## App-only interaction checkpoint
+
+On 2026-10-18, the expanded implementation passes:
+
+- 41 focused native tests; one additional foreign-owner fixture skips because it requires root. The batch covers the debug controller, service and interaction tests.
+- 40 existing editor routing/history/completion/native tests in a separate batch. Native insertion preserves draft text and undo; stale text/session views reject input.
+- All 28 extension tests, including actual installed Pi RPC execution before/after reload against a fixture service, strict action/value validation, encoded-record limits, fixed results, cancellation and no retries.
+- The unsigned Mac product build and `git diff --check`.
+
+The focused batch uses the command above without the optional Quit test. Editor regression filters are `PiEditorRoutingTests`, `PiEditorHistoryTests`, `PiEditorCompletionTests` and `PiEditorNativeTests`. These are configured test classes, not a `PiEditorTests` class.
+
+Hosted product tests operate Settings/Devices navigation, the real inspector hook, ordinary-panel open/close and identified page scrolling. Other native tests cover append/undo, scroll bounds, protected flags/secure fields, foreign confirmation-sheet rejection, actual socket interaction and queued-request disable/re-enable without later navigation. Independent source review found the stale-editor and panel-ownership gaps; the corrections pass these checks. Actual user-driven identity-replacement/revocation/Stop-and-Close confirmations and physical pointer/keyboard behavior remain unverified.
+
+A registered-tool probe against the existing normally launched app returned `Pi Remote debug operation is unsupported.` for `interact navigate settings`. It did not navigate. This proves that app still runs the older service, not that the new controls pass normal-launch acceptance. The user app and its Pi child were not stopped or replaced. Quit/reopen the rebuilt app and enable debug mode again before the live review. The current unsigned build is `/tmp/pi-remote-debug-mac/Build/Products/Debug/PiRemoteMac.app`; this is a local artifact, not an installation or release.
+
+Temporary logs: `/tmp/pi-debug-interaction-final-tests.log`, `/tmp/pi-debug-interaction-editor-tests.log`, `/tmp/pi-debug-interaction-extension-tests.log` and `/tmp/pi-debug-interaction-final-build.log`. No review screenshots or binaries were added to Git.
+
+## Saved-consent checkpoint
+
+The user requested persistent debug mode. Confirmed Enable now saves `macDebugEnabled` in the app's local preferences. Model initialization restores it. Disable clears it; Quit only closes the current service. No token is stored in preferences. Restart uses a fresh private endpoint capability, and unsafe endpoint guards remain unchanged.
+
+The focused debug/controller/interaction/Quit batch passes 44 tests with one root-only ownership skip. Restart tests create successive production models with the same support directory, preferences and socket path: fresh installation off → Enable → shutdown removes endpoint → restart on with different capability → Disable → restart off. Failed automatic startup retains a visible error and can be explicitly disabled. Existing consent-Cancel and native Disable tests verify saved consent too. Log: `/tmp/pi-debug-persistence-tests.log`.
+
+The unsigned product build, all 28 extension tests and the separate-process `build-for-testing` pass. The UI test now expects saved consent and token rotation after Quit, then restart-off after Disable. Its normal-launch execution remains unverified; compiling it is not a passing live restart check. Logs: `/tmp/pi-debug-persistence-build.log`, `/tmp/pi-debug-persistence-extension-tests.log` and `/tmp/pi-debug-persistence-interface-build.log`.
+
 ## Remaining acceptance
 
 The [focused separate-process check](../Tests/MacDebugInterfaceTests/README.md) uses unchanged app sources, a separate bundle identity and a private home. Its locally ad-hoc signed app and runner build and pass signature verification. **Neither dedicated UI runner attempt reached test entry or launched the check app.** The first unsigned runner awaited Gatekeeper execution consent; the corrected-signing attempt also timed out, with its exact setup blocker unresolved. No permission was granted. The existing user app and its Pi process were not stopped.
 
-An attended Mac run must resolve runner setup and confirm off → consent → status/capture in Pi and Desktop light/dark → disable → restart off. Actual window coverage, live editor/Stop responsiveness and the real project-extension-to-product flow remain open. Do not treat build results, fixture images or runtime mode tests as this acceptance. The feature plan remains incomplete until these checks pass.
+An attended Mac run must resolve runner setup and confirm off → consent → status/capture in Pi and Desktop light/dark → Quit/relaunch restores debug access → disable → restart off. Actual window coverage, live editor/Stop responsiveness and the real project-extension-to-product flow remain open. Do not treat build results, fixture images or runtime mode tests as this acceptance. The feature plan remains incomplete until these checks pass.

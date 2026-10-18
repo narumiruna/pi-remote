@@ -646,6 +646,7 @@ private struct PiConversationScrollProbe: NSViewRepresentable {
         override func layout() { super.layout(); register() }
         func register() {
             guard let scroll = enclosingScrollView else { return }
+            scroll.identifier = NSUserInterfaceItemIdentifier(isHistory ? "pi-debug-history" : "pi-debug-dock")
             if isHistory { targets.history = scroll } else { targets.dock = scroll }
         }
     }
