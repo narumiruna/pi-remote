@@ -2,7 +2,7 @@
 
 ## Status
 
-The local debug service, Mac controls and repository Pi extension are implemented. Status and capture are read-only. App-only semantic interaction controls are also implemented; see the [interaction plan](plans/2026-10-18_mac-debug-interaction-plan.md). **Normal-launch acceptance remains incomplete. Use the rebuilt app before live verification; earlier session-only builds require one new Enable confirmation.** Debug consent now persists across launches until explicitly disabled. The [initial implementation plan](plans/2026-10-18_mac-debug-mode-plan.md) retains its earlier acceptance limits.
+The local debug service, Mac controls and repository Pi extension are implemented. Status and capture are read-only. App-only semantic interaction controls are also implemented; see the [interaction plan](plans/2026-10-18_mac-debug-interaction-plan.md). **A normally launched interaction smoke check passes; full acceptance remains incomplete.** Live navigation, appearance, ordinary-panel controls and page scrolling work. Saved-consent relaunch and native draft insertion still need live verification. Earlier session-only builds require one new Enable confirmation in the rebuilt app. Debug consent then persists across launches until explicitly disabled. The [initial implementation plan](plans/2026-10-18_mac-debug-mode-plan.md) retains its earlier acceptance limits.
 
 This is repository development tooling. Normal Mac use, upstream Pi RPC and iPhone access do not depend on this extension.
 
@@ -171,6 +171,18 @@ The user requested persistent debug mode. Confirmed Enable now saves `macDebugEn
 The focused debug/controller/interaction/Quit batch passes 44 tests with one root-only ownership skip. Restart tests create successive production models with the same support directory, preferences and socket path: fresh installation off → Enable → shutdown removes endpoint → restart on with different capability → Disable → restart off. Failed automatic startup retains a visible error and can be explicitly disabled. Existing consent-Cancel and native Disable tests verify saved consent too. Log: `/tmp/pi-debug-persistence-tests.log`.
 
 The unsigned product build, all 28 extension tests and the separate-process `build-for-testing` pass. The UI test now expects saved consent and token rotation after Quit, then restart-off after Disable. Its normal-launch execution remains unverified; compiling it is not a passing live restart check. Logs: `/tmp/pi-debug-persistence-build.log`, `/tmp/pi-debug-persistence-extension-tests.log` and `/tmp/pi-debug-persistence-interface-build.log`.
+
+## Normally launched interaction smoke check
+
+After commit `06a8d14` was pushed, the actual registered-tool probe operated the user's normally launched app:
+
+- Navigation to Overview, Devices, conversation and Settings returned `applied`; status and rendered captures confirmed destinations and Pi/Desktop mode changes.
+- Sidebar hide/show, inspector Activity/Files and identified Devices/Settings page scrolling returned `applied`. A Settings capture showed the changed scroll position.
+- Hotkeys opened and closed through ordinary-panel controls. While open, both capture and navigation were rejected. The fixed capture error was preserved after correcting the probe's overly narrow safe-error filter; all 29 extension tests pass, including the new regression.
+- Editor focus was rejected because no session was loaded. No prompt was sent, no draft text was inserted, and no Pi process/session/listener was started. Final status remained no loaded session, idle, six saved sessions, zero messages/dialogs and listener off.
+- The app was returned to Desktop/Settings with the sidebar shown and Files inspector selected.
+
+The captured disclosure still said debug turns off on app exit, which identifies the running app as the earlier interaction build, not the saved-consent build. Therefore this check does not prove persistent consent in the live app. Relaunch the latest rebuilt app, enable once, then verify another quit/relaunch restores access. No consent preference was injected and no user app was terminated by the agent.
 
 ## Remaining acceptance
 

@@ -369,6 +369,25 @@ test("CLI probe uses the registered tool, reports only image summary and creates
   });
 });
 
+test("CLI capture probe preserves fixed protection and window errors without exposing raw server text", async () => {
+  for (const [code, message] of [
+    ["capture_protected", "Capture is blocked while a protected surface is visible."],
+    ["window_unavailable", "The Pi Remote window is unavailable. Show the main window and try again."],
+    ["window_ambiguous", "The Pi Remote window selection is ambiguous."],
+    [token, "Pi Remote debug operation failed."],
+  ]) {
+    const f = await fixture((r, s) => s.end(JSON.stringify({ version: 1, id: r.id, ok: false, error: code }) + "\n"), true);
+    await assert.rejects(promisify(execFile)(process.execPath, [".pi/tests/debug-probe.ts", "capture"],
+      { env: { ...process.env, HOME: f.home }, timeout: 10000 }), error => {
+        assert.ok(error instanceof Error && "stdout" in error && "stderr" in error);
+        assert.deepEqual(JSON.parse(String(error.stdout)), { ok: false, error: message });
+        assert.equal(error.stderr, "");
+        assert.ok(!String(error.stdout).includes(token));
+        return true;
+      });
+  }
+});
+
 test("CLI interaction probe uses the installed loader without logging values on success or failure", async () => {
   const f = await fixture((r, s) => s.end(wire(r.id, { action: r.interaction.action, outcome: "applied" })), true);
   const run = promisify(execFile);

@@ -68,7 +68,13 @@ if (!["status", "capture", "interact"].includes(operation) || process.argv.lengt
     } catch (error) {
       // The extension reports only fixed, safe errors. Do not print stacks or
       // caught parser/transport objects from other components.
-      const text = error instanceof Error && error.message.startsWith("Pi Remote") ? error.message : "Debug probe failed.";
+      const fixedMessages = new Set([
+        "Capture is blocked while a protected surface is visible.",
+        "The Pi Remote window is unavailable. Show the main window and try again.",
+        "The Pi Remote window selection is ambiguous.",
+      ]);
+      const text = error instanceof Error && (error.message.startsWith("Pi Remote") || fixedMessages.has(error.message))
+        ? error.message : "Debug probe failed.";
       console.log(JSON.stringify({ ok: false, error: text })); process.exitCode = 1;
     } finally {
       for (const handler of extension.handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown", reason: "exit" }, {});

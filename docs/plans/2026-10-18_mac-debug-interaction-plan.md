@@ -21,7 +21,7 @@ Extend the local Mac debug tools so Pi can navigate and inspect the app during a
 - [x] Add guarded app-only handlers and native editor/scroll integration. Hosted product navigation/panels/inspector/page scroll and native text/undo, stale context, protected/foreign sheets and revocation tests pass. No physical input simulation is claimed.
 - [x] Add the Pi interaction tool and client validation. All 28 extension tests pass, including bounds, strict input/results, cancellation, lifecycle and installed Pi fixture execution before/after reload.
 - [x] Run focused native and extension tests, an unsigned Mac build and `git diff --check`. The 41-test debug batch, separate 40-test editor regression batch, 28 extension tests, unsigned build and whitespace check pass. One root-only debug fixture skips.
-- [ ] BLOCKED: verify interactions against the normally launched rebuilt app. The actual registered tool reaches the existing app, which returns `unsupported_operation`; it still runs the read-only service. The user must quit/reopen the rebuilt app and give fresh debug consent. No app/child was stopped or consent bypassed. Hosted evidence is recorded separately.
+- [ ] Finish normally launched verification. After push, the actual registered tool passed navigation, mode, sidebar/inspector, ordinary-panel and page-scroll checks; captures/status confirmed visible changes. Protected panels rejected capture/navigation, and an editor without a loaded session rejected focus. The running earlier interaction build still needs replacement for live saved-consent restart. Native draft insertion needs a user-loaded session. No app/child was stopped or consent bypassed; these limits remain open.
 - [x] Update README.md, PLAN.md and debug operation documentation with verified behavior and limits. Local reference targets and `git diff --check` pass.
 
 ## Completion Checklist
@@ -29,7 +29,7 @@ Extend the local Mac debug tools so Pi can navigate and inspect the app during a
 - [x] Supported UI actions pass focused tests without Pi/session/network mutations.
 - [x] Revocation, protected surfaces, invalid requests and text privacy checks pass in the stated focused fixtures. Full user-driven confirmation workflows remain outside these fixtures.
 - [x] The extension and unsigned app build pass the recorded focused checks.
-- [ ] Complete normal-launch interaction verification after user relaunch and fresh consent. The specific blocker and passing fixture evidence are recorded in `docs/mac-debug-mode.md`; this plan remains open.
+- [ ] Complete live saved-consent restart and native draft insertion after the user opens the latest build and a session. The passing normal-launch smoke check and remaining limits are recorded in `docs/mac-debug-mode.md`; this plan remains open.
 
 ## Rollback / Recovery
 
