@@ -2,7 +2,7 @@
 
 ## Goal
 
-Let Pi running in this repository inspect bounded Mac app state and capture the current Pi Remote window. Use this evidence to diagnose UI defects and compare results after a change. Start with read-only tools.
+Let Pi running in this repository inspect bounded Mac app state and capture the current Pi Remote window. Use this evidence to diagnose UI defects and compare results after a change. Start with read-only tools. The later user-approved [app-only interaction extension](2026-10-18_mac-debug-interaction-plan.md) adds bounded presentation controls; its checks and normal-launch limits are tracked separately.
 
 Status: implemented with focused native and extension evidence; incomplete. Automated UI runner setup is blocked. Manual status inspection reached the normally launched app, but capture exposed a window-identity defect; the corrected product still needs a rebuild/retest. See [operation and verification](../mac-debug-mode.md) and the [separate-process check](../../Tests/MacDebugInterfaceTests/README.md). No permission was granted to bypass the blocker.
 
@@ -26,7 +26,7 @@ flowchart LR
     E -->|Tool text or image| P
 ```
 
-- Add a session-only debug control in Mac Settings. Default to off on every app launch. Show a visible active indicator and an immediate Disable action.
+- Add an opt-in debug control in Mac Settings. Start off without saved consent. Per the later user request, save confirmed consent and restore debug access after app restart. Disable clears consent; Quit closes the current capability. Show a visible active indicator and an immediate Disable action.
 - Explain before enablement that any process running as this Mac user can access the local debug capability. Project extension discovery is not client authentication or a security sandbox.
 - Use a Unix domain socket in a user-owned private runtime directory outside the repository. Do not open a TCP port or reuse iPhone pairing, device credentials, or the phone protocol.
   - Require directory mode `0700`, socket/discovery-file mode `0600`, and a new random capability token for each enablement. Validate ownership and reject symlinks or unsafe existing paths.
@@ -37,7 +37,7 @@ flowchart LR
   - `pi_remote_debug_status`: return allowlisted fields such as interface mode, destination category, window dimensions, session-present flag, execution phase, listener-on flag, and bounded counts. Do not serialize the full host snapshot.
   - `pi_remote_debug_capture`: return a bounded PNG of one identified Pi Remote window plus capture time, dimensions and capture method. Do not accept arbitrary window IDs, filesystem paths or desktop regions.
 - Keep the service and capture code in Swift on macOS. Use `.pi/extensions/pi-remote-debug.ts` only as the Pi client. Connect on demand; do not start a service, watcher or background process when the extension loads.
-- The debug channel must not change sessions, send prompts, answer dialogs, click controls, type text or run commands. Normal app operation must not depend on it.
+- The initial debug channel is read-only. The later interaction extension permits semantic navigation, appearance, ordinary panels, native draft append/focus and identified scrolling. The [integrated control plan](2026-10-18_debug-ui-controls-plan.md) also permits fixed-target native button clicks. It still must not change sessions, send prompts, answer dialogs, approve devices, control Pi/networking or run commands. It does not provide arbitrary clicks or key injection. Normal app operation must not depend on it.
 
 ## Open decisions and risks
 
@@ -54,18 +54,18 @@ flowchart LR
 
 - [x] Resolve capture and protocol unknowns with a small Mac prototype. The standalone native AppKit prototype captured its visible window without Screen Recording access; selected API, excluded surfaces, deterministic rejection rules and numeric limits are recorded in `docs/mac-debug-mode.md`. This does not close the separate product normal-launch gate.
 - [x] Implement the Swift local service and private endpoint lifecycle. Focused transport tests pass the stated failure cases and in-flight revocation. One additional foreign-owner mutation test skips because it needs root; no privilege was requested.
-- [x] Add the session-only Settings control, privacy disclosure, active indicator and disable/Quit integration. Native tests pass consent/Cancel, off-by-default construction, startup failure, enable/disable/re-enable, late-enable rejection, native Disable, in-flight revocation, cancelled Quit and confirmed cleanup without session mutation.
+- [x] Add the opt-in Settings control with saved consent (updated by the later user request), privacy disclosure, active indicator and disable/Quit integration. Native tests pass consent/Cancel, off-by-default construction, startup failure, enable/disable/re-enable, late-enable rejection, native Disable, in-flight revocation, cancelled Quit and confirmed cleanup without session mutation.
 - [x] Add allowlisted status and app-window capture. Native tests pass sensitive-string exclusion, actual socket capture, decoding/dimensions, oversized PNG rejection, unavailable/ambiguous/minimized/hidden windows and protected surfaces. AppKit does not request Screen Recording permission, so that permission-denial path is not applicable. Missing content fails without fallback. Hosted Pi/Desktop light/dark captures differ as expected.
 - [x] Correct the window-identity defect found by the real-app probe. Detection now reads an attached typed view marker instead of `NSWindow.identifier`. The new regression fails on the old code and passes after the fix. The correction passes 34 native checks (one additional root-only ownership skip), 21 extension checks and a separate native SwiftUI WindowGroup capture fixture. The user's existing app was not restarted, so real-product retesting remains open.
 - [x] Add `.pi/extensions/pi-remote-debug.ts` using the installed extension API and image-result types. All 21 extension tests pass. They include the stated failure cases, real installed Pi RPC execution before/after reload, and installed `ExtensionRunner` execution in real `tui` contexts without opening a renderer. Fixture sockets do not prove a real product-app connection.
 - [x] Run focused Mac tests and an unsigned Mac build using the configured `PiRemoteMac` scheme. Commands and results are recorded in `docs/mac-debug-mode.md`; 28 focused native checks and 11 existing mode/Quit regression tests pass. One root-only ownership fixture skips. No broad iPhone or UI/E2E suites ran.
-- [ ] BLOCKED: run the real project-extension-to-normally-launched-app flow, Pi/Desktop light/dark comparison, live responsiveness, disable and restart-off checks. The isolated app/test runner builds, but both finite UI attempts stopped before test entry/product launch. The first awaited Gatekeeper consent; the corrected-signing attempt's exact setup blocker is unresolved. A later manual status probe reached the real app but capture failed with zero dimensions; the window-detection correction now awaits a rebuilt product retest. An attended run must resolve the remaining setup/automation or manual acceptance steps without weakening macOS security. Do not substitute hosted/runtime or standalone WindowGroup fixtures for this gate.
+- [ ] BLOCKED: run the real project-extension-to-normally-launched-app flow, Pi/Desktop light/dark comparison, live responsiveness, saved-consent restart, disable and restart-off checks. The isolated app/test runner builds, but both finite UI attempts stopped before test entry/product launch. The first awaited Gatekeeper consent; the corrected-signing attempt's exact setup blocker is unresolved. A later manual status probe reached the real app but capture failed with zero dimensions; the window-detection correction now awaits a rebuilt product retest. An attended run must resolve the remaining setup/automation or manual acceptance steps without weakening macOS security. Do not substitute hosted/runtime or standalone WindowGroup fixtures for this gate.
 - [x] Document implemented operation, privacy limits, exact verified commands and check evidence in `docs/mac-debug-mode.md`. README and root plan separate implemented tooling from blocked acceptance. Whitespace and existing-path checks pass; proposed runtime paths are identified as such.
 
 ## Completion Checklist
 
 - [ ] The selected capture method and consent behavior pass the normal-launch checks above; remaining platform limits are documented and accepted.
 - [ ] Complete the required normal-launch UI verification. The unsigned Mac build, 28 focused native tests, 11 regression tests and 21 extension tests pass; one root-only ownership test skips. UI runner setup remains blocked, with evidence separate from passing checks.
-- [ ] The real project-extension-to-app flow passes for both tools, disablement and restart-off behavior without changing sessions or iPhone access.
+- [ ] The real project-extension-to-app flow passes for both tools, saved-consent restoration, disablement and restart-off behavior without changing sessions or iPhone access.
 - [x] Security review confirms private local access, bounded data, inode-aware cleanup, protected-surface rejection and no sensitive routine logs. Same-user and model-provider exposure limits are explicit. The foreign-owner mutation test is an unverified privileged check, not a claim of a test pass.
 - [x] Documentation and path checks pass: `git diff --check` and 87 existing local Markdown link targets. This plan is retained because normal-launch completion checks remain open; remove it only after every task and criterion passes.

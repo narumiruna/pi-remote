@@ -61,11 +61,13 @@ struct CompanionWindow: View {
                            height: min(640, max(360, geometry.size.height - 40)))
             }
         }
-        .background(MacDebugWindowMarker().frame(width: 1, height: 1).allowsHitTesting(false))
+        .background(MacDebugWindowMarker(selectInspector: { section in
+            showInspector(section)
+        }).frame(width: 1, height: 1).allowsHitTesting(false))
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.debug.enabled {
                 HStack {
-                    Label("Local debug mode is on · window captures are available", systemImage: "ladybug")
+                    Label("Local debug mode is on · app-only UI controls enabled", systemImage: "ladybug")
                         .font(.caption).lineLimit(1)
                     Spacer()
                     Button("Disable debug mode") { model.debug.disable() }
@@ -267,6 +269,8 @@ struct CompanionWindow: View {
 
     private var sidebarSelection: Binding<MacDestination?> {
         Binding(get: { model.destination }, set: { destination in
+            // Removing a sidebar List can emit nil. Keep the displayed screen.
+            guard let destination else { return }
             if case .session(let id) = destination { Task { await model.openSession(id) } }
             else { model.destination = destination }
         })
@@ -545,7 +549,7 @@ struct CompanionWindow: View {
     private var overview: some View {
         List {
             Section {
-                Text("Sessions").font(.title2.bold())
+                Text("Sessions").font(.title2.bold()).background(MacDebugPageScrollMarker())
                 Text("Opening a session never stops work in another session. Closing keeps saved history and drafts.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
@@ -840,6 +844,7 @@ struct CompanionWindow: View {
             }
         }
         .formStyle(.grouped)
+        .background(MacDebugPanelMarker(panel: model.panel ?? ""))
         .toolbar {
             if model.panel == "workspace" || model.panel == "directory" {
                 ToolbarItem(placement: .primaryAction) {

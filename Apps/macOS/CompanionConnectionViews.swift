@@ -36,6 +36,7 @@ struct CompanionConnectionSettings: View {
         Form {
             Section("Pi and folder access") {
                 LabeledContent("Pi version", value: model.state.piVersion == "Not running" ? "Not checked" : model.state.piVersion)
+                    .background(MacDebugPageScrollMarker())
                 LabeledContent("Pi executable") {
                     Text(model.piPath).font(.caption.monospaced()).textSelection(.enabled)
                 }
@@ -91,7 +92,7 @@ struct CompanionDevicesView: View {
     var body: some View {
         Form {
             Section("iPhone access") {
-                Text(model.connectionStatus).font(.headline)
+                Text(model.connectionStatus).font(.headline).background(MacDebugPageScrollMarker())
                 if model.listening {
                     Button("Pair iPhone") { model.openPairing() }.buttonStyle(.borderedProminent)
                 } else {
