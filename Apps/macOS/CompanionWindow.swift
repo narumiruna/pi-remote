@@ -61,6 +61,22 @@ struct CompanionWindow: View {
                            height: min(640, max(360, geometry.size.height - 40)))
             }
         }
+        .background(MacDebugWindowMarker().frame(width: 0, height: 0))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if model.debug.enabled {
+                HStack {
+                    Label("Local debug mode is on · window captures are available", systemImage: "ladybug")
+                        .font(.caption).lineLimit(1)
+                    Spacer()
+                    Button("Disable debug mode") { model.debug.disable() }
+                        .accessibilityIdentifier("mac-debug-banner-disable")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(theme.background).foregroundStyle(theme.text)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("mac-debug-banner")
+            }
+        }
         .environment(\.colorScheme, model.interfaceMode == .pi ? .dark : systemColorScheme)
         .environment(\.macInterfaceMode, model.interfaceMode)
         .tint(theme.accent)

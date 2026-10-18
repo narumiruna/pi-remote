@@ -309,6 +309,10 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [x] Verify the final Mac implementation: 207 configured Mac tests and the unsigned Mac build pass. Review 12 paired 900/1300-point hosted captures for Pi dark and Desktop light/dark. Native tests preserve editor state and dialog input across mode changes. See [evidence and limits](docs/mac-interface-modes.md).
 - [ ] Complete live normal-launch/provider, VoiceOver, streaming scroll and user visual acceptance. These remain separate from hosted fixtures; no host/shared/iPhone or protocol change is included.
 
+### Local Mac debug tooling
+
+- [ ] Complete the [Mac debug mode and project extension plan](docs/plans/2026-10-18_mac-debug-mode-plan.md). The session-only Swift Unix service, consent/Disable controls, bounded AppKit content captures and project Pi tools are implemented with focused native and extension checks. This is repository development tooling, not a product extension dependency or a change to iPhone access. Normal-launch end-to-end acceptance is blocked before UI test entry; fixture and runtime checks do not close that gate. See [operation, limits and evidence](docs/mac-debug-mode.md).
+
 ### Mac interface structure review
 
 - [x] Resolve all six [structure findings](docs/mac-interface-structure.md): expose scoped Session actions, identify active work truthfully in the inspector, reuse typed Activity outcomes, unify live conversation aliases, group secondary toolbar controls, and keep Desktop input visible below independent history.

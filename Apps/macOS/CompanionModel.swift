@@ -252,9 +252,10 @@ final class CompanionModel {
     @ObservationIgnored private let support: URL
     @ObservationIgnored private let secrets: any SecretStore
     @ObservationIgnored private let defaults: UserDefaults
+    let debug: MacDebugController
     @ObservationIgnored private var server: AppServer?
     @ObservationIgnored private var startup: Task<Void, Never>?
-    @ObservationIgnored private var shuttingDown = false
+    @ObservationIgnored private(set) var shuttingDown = false
     @ObservationIgnored private var terminationTask: Task<Void, Never>?
     @ObservationIgnored private var terminationFinished = false
     @ObservationIgnored private var identity: ServerIdentity?
@@ -273,9 +274,11 @@ final class CompanionModel {
     init(
         support: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PiRemote", isDirectory: true),
         secrets: any SecretStore = KeychainSecrets(service: "dev.narumi.PiRemote.Host"),
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        debugDirectory: URL = MacDebugServer.defaultDirectory
     ) {
         self.support = support; self.secrets = secrets; self.defaults = defaults
+        debug = MacDebugController(directory: debugDirectory)
         sidebarVisible = defaults.bool(forKey: "piSidebarVisible")
         savedInterfaceMode = defaults.string(forKey: "macInterfaceMode").flatMap(MacInterfaceMode.init(rawValue:)) ?? .pi
         let candidates = [
@@ -681,6 +684,7 @@ final class CompanionModel {
 
     func shutdown() async {
         shuttingDown = true
+        debug.disable()
         startup?.cancel()
         if let startup { await startup.value }
         observation?.cancel(); pairingObservation?.cancel(); connectionObservation?.cancel(); codeExpiry?.cancel()

@@ -91,6 +91,7 @@ playground.xcworkspace
 .transport-fixture/
 Spikes/TransportDevice/TransportDeviceSpike.xcodeproj/
 PiRemote.xcodeproj/
+Spikes/MacDebugInterfaceCheck/MacDebugInterfaceCheck.xcodeproj/
 
 # CocoaPods
 #
