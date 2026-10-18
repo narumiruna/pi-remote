@@ -195,11 +195,14 @@ final class CompanionModel {
         default: return nil
         }
     }
-    var connectionStatus: String { !listening ? "Remote access off" : (connectedDevices.isEmpty ? "No devices connected" : "\(connectedDevices.count) device\(connectedDevices.count == 1 ? "" : "s") connected") }
+    var hasInspectorContext: Bool {
+        selectedWorkspace != nil || state.sessions.contains { $0.id == state.selected }
+    }
+    var connectionStatus: String { !listening ? "iPhone access off" : (connectedDevices.isEmpty ? "No devices connected" : "\(connectedDevices.count) device\(connectedDevices.count == 1 ? "" : "s") connected") }
     var remoteAccessSummary: String {
-        if starting { return "Remote access updating" }
-        if !listening { return "Remote access off" }
-        return connectedDevices.isEmpty ? "Remote access on · no devices" : connectionStatus
+        if starting { return "iPhone access updating" }
+        if !listening { return "iPhone access off" }
+        return connectedDevices.isEmpty ? "iPhone access on · no devices" : connectionStatus
     }
     var showingLoadedSession: Bool {
         guard let selected = state.selected else { return false }
@@ -224,11 +227,11 @@ final class CompanionModel {
     var address = ""
     var listening = false
     var starting = false
-    var serverStatus: String { starting ? "Server: Updating" : (listening ? "Server: Listening" : "Server: Stopped") }
+    var serverStatus: String { starting ? "iPhone access: Updating" : (listening ? "iPhone access: On" : "iPhone access: Off") }
     var serverEndpoint: String { "wss://\(address):7443" }
     var sessionStatus: String { state.selected == nil ? "Session: None" : "Session: \(state.phase)" }
     var piStatus: String {
-        guard state.selected != nil else { return "Pi: Not started" }
+        guard state.selected != nil else { return "Pi: No session loaded" }
         switch state.phase {
         case "unavailable", "interrupted": return "Pi: Unavailable"
         case "recovering": return "Pi: Status uncertain"
@@ -509,8 +512,17 @@ final class CompanionModel {
     }
     func stopWork() { Task { do { _ = try await request(.stop) } catch { fault = error as? RemoteFault ?? .unavailable } } }
 
+    /// Re-enumeration never replaces identity, revokes devices, or restarts the listener.
+    func refreshListenAddresses(_ fresh: [ListenAddress] = ListenAddress.all()) {
+        guard !listening, !starting, !shuttingDown else { return }
+        addresses = fresh
+        if !fresh.contains(where: { $0.address == address }) {
+            address = fresh.first(where: { !$0.address.hasPrefix("127.") })?.address ?? fresh.first?.address ?? ""
+        }
+    }
+
     func startNetwork() {
-        guard !starting, !listening, !shuttingDown, let coordinator, let registry else { return }
+        guard !starting, !listening, !shuttingDown, !address.isEmpty, let coordinator, let registry else { return }
         starting = true
         startup = Task {
             defer { starting = false }

@@ -9,6 +9,7 @@ struct ConversationView<Extras: View>: View {
     @Binding var text: String
     @Binding var delivery: Delivery
     var sending: Bool
+    var remoteAvailable = true
     var send: () -> Void
     var stop: () -> Void
     var request: ((SessionAction) async throws -> AppResult)? = nil
@@ -151,13 +152,7 @@ struct ConversationView<Extras: View>: View {
                 }
             }
             #if !os(macOS)
-            if !state.notices.isEmpty {
-                DisclosureGroup("Extension status") {
-                    ForEach(Array(state.notices.enumerated()), id: \.offset) { _, line in
-                        Text(line).font(.caption).textSelection(.enabled)
-                    }
-                }.font(.caption).padding(.horizontal, 20).padding(.bottom, 8)
-            }
+            PhoneExtensionNotices(state: state)
             #endif
             Divider()
             #if os(macOS)
@@ -168,11 +163,11 @@ struct ConversationView<Extras: View>: View {
                     Picker("Send as", selection: $delivery) {
                         Text("Steering").tag(Delivery.steer)
                         Text("Follow-up").tag(Delivery.followUp)
-                    }.pickerStyle(.menu)
+                    }.pickerStyle(.menu).disabled(!remoteAvailable)
                     .accessibilityHint("Steering guides Pi after the current response and tool calls finish. Follow-up waits until Pi finishes the current task.")
                 }
                 HStack(alignment: .bottom, spacing: 10) {
-                    extras()
+                    extras().disabled(!remoteAvailable)
                     TextField("Message Pi", text: $text, prompt: Text("Message Pi").foregroundColor(.primary.opacity(0.75)), axis: .vertical)
                         .lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 2 : 6)).textFieldStyle(.plain)
                         .accessibilityLabel("Prompt").accessibilityIdentifier("instruction")
@@ -183,12 +178,13 @@ struct ConversationView<Extras: View>: View {
                         }
                             .accessibilityLabel("Stop")
                             .accessibilityHint("Clear queued messages and stop current work. File changes are not undone.")
+                            .disabled(!remoteAvailable)
                     }
                     Button(action: send) {
                         Label("Send", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                     }
                         .buttonStyle(.borderedProminent).foregroundStyle(.background).accessibilityLabel("Send")
-                        .disabled(sending || !canCompose)
+                        .disabled(!remoteAvailable || sending || !canCompose)
                         .keyboardShortcut(.return, modifiers: .command)
                 }
             }
@@ -569,6 +565,75 @@ private final class ComposerTextView: NSTextView {
             return
         }
         super.keyDown(with: event)
+    }
+}
+#endif
+
+#if !os(macOS)
+struct PhoneExtensionNotices: View {
+    let state: HostSnapshot
+    @State private var contentHeight: CGFloat = 44
+
+    // Typed notices keep severity. Status, widgets and diagnostics have a separate collapsed view.
+    static func notices(in state: HostSnapshot) -> [ExtensionNotice] {
+        if let display = state.extensionDisplay { return display.notices }
+        return state.notices.enumerated().map { ExtensionNotice(id: "legacy-\($0.offset)", text: $0.element) }
+    }
+
+    static func information(in state: HostSnapshot) -> [String] {
+        guard let display = state.extensionDisplay else { return [] }
+        let information = display.statuses.map(\.text) + display.widgets.map(\.text)
+        let hasRecovery = display.notices.contains { $0.id == "recovery" }
+        let noticeCount = display.notices.count - (hasRecovery ? 1 : 0)
+        // Host legacy order: recovery, sorted statuses, sorted widgets, then notices.
+        // Use positions, not text equality: typed text has terminal controls removed.
+        if !hasRecovery, state.notices.count > information.count + noticeCount,
+           let recovery = state.notices.first {
+            return [recovery] + information
+        }
+        return information
+    }
+
+    private func notice(_ item: ExtensionNotice) -> some View {
+        let severity = item.severity == .error ? "Error" : (item.severity == .warning ? "Warning" : "Information")
+        let icon = item.severity == .error ? "exclamationmark.octagon" : (item.severity == .warning ? "exclamationmark.triangle" : "info.circle")
+        return Label(severity + ": " + item.text, systemImage: icon)
+            .font(.caption).textSelection(.enabled)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(severity + ": " + item.text)
+            .accessibilityIdentifier("extension-notice-" + item.id)
+    }
+
+    var body: some View {
+        let notices = Self.notices(in: state)
+        let information = Self.information(in: state)
+        if !notices.isEmpty || !information.isEmpty {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(notices.filter { $0.severity != .info }) { notice($0) }
+                    if notices.contains(where: { $0.severity == .info }) {
+                        DisclosureGroup {
+                            ForEach(notices.filter { $0.severity == .info }) { notice($0) }
+                        } label: {
+                            Text("Extension information").frame(minHeight: 44)
+                        }.font(.caption)
+                    }
+                    if !information.isEmpty {
+                        DisclosureGroup {
+                            ForEach(Array(information.enumerated()), id: \.offset) { item in
+                                Text(item.element).textSelection(.enabled)
+                                    .accessibilityIdentifier("extension-information-\(item.offset)")
+                            }
+                        } label: {
+                            Text("Extension status and diagnostics").frame(minHeight: 44)
+                        }.font(.caption)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in contentHeight = height }
+            .frame(height: min(180, max(44, contentHeight)))
+            .padding(.horizontal, 20).padding(.bottom, 8)
+        }
     }
 }
 #endif

@@ -1,5 +1,7 @@
 import AppKit
 import PiRemoteCore
+import PiRemoteHost
+import Vision
 import PiRemoteSecurity
 import SwiftUI
 import XCTest
@@ -224,6 +226,13 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
         return result
     }
 
+    private func hasInspectorControls(_ root: NSView) -> Bool {
+        descendants(root).contains {
+            guard let control = $0 as? NSSegmentedControl else { return false }
+            return control.label(forSegment: 0) == "Files" && !control.isHiddenOrHasHiddenAncestor && !control.visibleRect.isEmpty
+        }
+    }
+
     private func element(_ id: String, in root: NSView) throws -> StructureElement {
         let nodes = elements(root)
         let title = id == "mac-session-menu" ? "Session" : (id == "mac-global-actions" ? "Actions" : nil)
@@ -277,6 +286,128 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
             characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
         XCTAssertTrue(window.performKeyEquivalent(with: event), "Missing keyboard workflow: " + text)
         if let root = window.contentView { try await settle(root) }
+    }
+
+    func testFilesInspectorHidesOnGlobalPagesWithoutClearingSavedVisibility() async throws {
+        try await withModel { model in
+            model.inspectorVisible = true
+            let directory = FileManager.default.temporaryDirectory.path
+            model.destination = .workspace(directory)
+            try await self.hosted(model, width: 1300, height: 800) { root, _ in
+                XCTAssertTrue(self.hasInspectorControls(root))
+                let state = model.state
+                for destination in [MacDestination.overview, .settings, .devices, .conversation] {
+                    model.destination = destination
+                    try await self.settle(root)
+                    XCTAssertFalse(self.hasInspectorControls(root))
+                    XCTAssertTrue(model.inspectorVisible, "Automatic scoping must preserve the saved preference")
+                    XCTAssertFalse(model.hasInspectorContext)
+                    XCTAssertEqual(model.state, state)
+                }
+                model.destination = .workspace(directory)
+                try await self.settle(root)
+                XCTAssertTrue(self.hasInspectorControls(root))
+            }
+        }
+    }
+
+    func testExplicitFilesFromSettingsUsesLoadedConversationWithoutRuntimeMutation() async throws {
+        try await withModel { model in
+            let session = SessionInfo(id: UUID(), title: "Files fixture", directory: "/tmp")
+            model.state.sessions = [session]; model.state.selected = session.id; model.state.phase = "idle"
+            model.destination = .settings
+            model.text = "Keep files navigation draft"
+            try await self.hosted(model, width: 1300, height: 800) { root, _ in
+                let before = model.state
+                let runtime = await model.coordinator?.state()
+                XCTAssertTrue(try self.element("mac-files", in: root).press())
+                try await self.settle(root)
+                XCTAssertEqual(model.destination, .session(session.id))
+                XCTAssertTrue(self.hasInspectorControls(root))
+                XCTAssertEqual(model.state, before)
+                XCTAssertEqual(model.text, "Keep files navigation draft")
+                let after = await model.coordinator?.state()
+                XCTAssertEqual(after?.context, runtime?.context)
+                XCTAssertEqual(after?.selected, runtime?.selected)
+                XCTAssertEqual(after?.phase, runtime?.phase)
+                XCTAssertEqual(after?.messages, runtime?.messages)
+                XCTAssertEqual(after?.sessions, runtime?.sessions)
+            }
+        }
+    }
+
+    func testInspectorTabChangesFromSettingsRetainVisibleContextWithoutActivatingPi() async throws {
+        try await withModel { model in
+            let session = SessionInfo(id: UUID(), title: "Inspector tabs fixture", directory: "/tmp")
+            model.state.sessions = [session]; model.state.selected = session.id; model.state.phase = "working"
+            model.text = "Keep inspector tab draft"
+            model.destination = .settings
+            try await self.hosted(model, width: 1300, height: 800) { root, window in
+                let before = model.state
+                for index in [0, 2] {
+                    model.destination = .settings
+                    try await self.settle(root)
+                    try await self.choose("Session controls", from: "mac-session-menu", in: root)
+                    let picker = try XCTUnwrap(self.descendants(root).compactMap { $0 as? NSSegmentedControl }.first { $0.label(forSegment: 0) == "Files" })
+                    let point = picker.convert(NSPoint(x: picker.bounds.width * (CGFloat(index) + 0.5) / 3, y: picker.bounds.midY), to: nil)
+                    let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                    let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime + 0.01, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+                    NSApp.postEvent(up, atStart: true)
+                    window.sendEvent(down)
+                    window.sendEvent(up)
+                    try await self.settle(root)
+                    XCTAssertEqual(model.destination, .session(session.id))
+                    XCTAssertTrue(self.hasInspectorControls(root))
+                    XCTAssertEqual(model.state, before)
+                    XCTAssertEqual(model.text, "Keep inspector tab draft")
+                }
+            }
+        }
+    }
+
+    func testLocalSetupPrecedesOptionalPhoneAccessAndRefreshIsNonDestructive() async throws {
+        try await withModel { model in
+            model.destination = .settings
+            try await self.hosted(model, width: 1300, height: 800) { root, window in
+                // Grouped Form buttons are drawn by SwiftUI and are not exposed by
+                // this in-process AX fixture. Read only this private window in memory.
+                @MainActor func renderedText() throws -> [VNRecognizedTextObservation] {
+                    let pixels = try MacDebugController.snapshot(window: window)
+                    let request = VNRecognizeTextRequest()
+                    request.recognitionLevel = .accurate
+                    request.recognitionLanguages = ["en-US"]
+                    try VNImageRequestHandler(cgImage: pixels.value).perform([request])
+                    return request.results ?? []
+                }
+                @MainActor func box(_ text: String, in observations: [VNRecognizedTextObservation]) throws -> CGRect {
+                    try XCTUnwrap(observations.first { $0.topCandidates(1).first?.string == text }, "Missing rendered settings text: " + text).boundingBox
+                }
+                let observations = try renderedText()
+                let local = try box("Pi and folder access", in: observations)
+                let remote = try box("iPhone access (optional)", in: observations)
+                XCTAssertGreaterThan(local.minY, remote.maxY, "Local Pi setup must appear before optional iPhone access")
+                let before = model.state
+                let devices = model.devices
+                model.addresses = []; model.address = ""
+                try await self.settle(root)
+                let empty = try renderedText()
+                XCTAssertTrue(empty.contains { $0.topCandidates(1).first?.string.contains("No local address") == true })
+                let refresh = try box("Refresh addresses", in: empty)
+                let point = root.convert(NSPoint(x: root.bounds.width * refresh.midX,
+                    y: root.bounds.height * (root.isFlipped ? 1 - refresh.midY : refresh.midY)), to: nil)
+                let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime + 0.01, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+                NSApp.postEvent(up, atStart: true)
+                window.sendEvent(down); window.sendEvent(up)
+                try await self.settle(root)
+                XCTAssertEqual(model.addresses, ListenAddress.all())
+                XCTAssertFalse(model.addresses.isEmpty)
+                XCTAssertEqual(model.state, before)
+                XCTAssertEqual(model.devices, devices)
+                XCTAssertFalse(model.listening)
+                XCTAssertFalse(model.starting)
+            }
+        }
     }
 
     func testContextualActionsAreReachableInNativeSessionMenuForBothAliases() async throws {
@@ -723,7 +854,7 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
                 }
                 let popover = try XCTUnwrap(statusPopover(), "The menu must open the actual native status popover")
                 let content = try XCTUnwrap(popover.contentView)
-                let settings = try XCTUnwrap(self.elements(content).first { $0.label == "Network settings" })
+                let settings = try XCTUnwrap(self.elements(content).first { $0.label == "iPhone access settings" })
                 XCTAssertTrue(settings.press())
                 for _ in 0..<100 {
                     if !popover.isVisible { break }

@@ -336,6 +336,11 @@ struct PiConversationView: View {
         return PiPalette.thinking(model.state.thinking)
     }
 
+    private var editorHint: String {
+        if model.state.selected == nil { return "Choose or resume a session" }
+        return model.state.working ? "Enter to steer · ⌥Enter follow-up" : "Enter to send · ⇧Enter new line"
+    }
+
     private var editor: some View {
         VStack(spacing: 0) {
             if isDesktop {
@@ -369,16 +374,24 @@ struct PiConversationView: View {
                      onToggleTools: { expandTools.toggle(); if isDesktop { showResources = expandTools } },
                      onToggleThinking: { showThinking.toggle() },
                      onCycleThinking: { perform(.cycleThinking) }, separatorColor: NSColor(editorRule), interfaceMode: model.interfaceMode)
+                .disabled(model.state.selected == nil)
                 .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8)
                 .accessibilityIdentifier("pi-editor")
+                .accessibilityHint(editorHint)
+            if !isDesktop, model.state.selected == nil {
+                Text(editorHint).font(.system(size: 12, design: .monospaced)).foregroundStyle(theme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 4)
+                    .accessibilityIdentifier("pi-editor-hint")
+            }
             if isDesktop {
                 HStack(spacing: 12) {
                     Button { _ = openControls("commands") } label: { Label("Commands", systemImage: "slash.circle") }
                         .buttonStyle(.plain).foregroundStyle(theme.muted).font(.system(size: 12))
                         .accessibilityIdentifier("desktop-commands")
                     Spacer(minLength: 4)
-                    Text(model.state.working ? "Enter to steer · ⌥Enter follow-up" : "Enter to send · ⇧Enter new line")
+                    Text(editorHint)
                         .font(.system(size: 11)).foregroundStyle(theme.muted).lineLimit(1)
+                        .accessibilityIdentifier("pi-editor-hint")
                     Button { submit(model.state.working ? .steer : .prompt) } label: {
                         Image(systemName: "arrow.up").font(.system(size: 12, weight: .semibold)).frame(width: 18, height: 18)
                     }.buttonStyle(.borderedProminent).controlSize(.small)

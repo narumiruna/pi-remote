@@ -41,27 +41,38 @@ struct PhoneRoot: View {
                             if let session = state.sessions.first(where: { $0.id == state.selected }) {
                                 WorkingDirectoryHeader(directory: session.directory, status: model.connected ? state.phase.capitalized : "Disconnected")
                             }
+                            if !model.connected {
+                                HStack {
+                                    Text("Disconnected · Cached conversation").font(.caption)
+                                    Spacer()
+                                    reconnectButton
+                                }.padding(.horizontal)
+                            }
+                            if let dialog = model.pendingDialog {
+                                Button { model.reopenDialog() } label: {
+                                    Label("Pending request: " + dialog.title, systemImage: "questionmark.bubble")
+                                        .frame(minHeight: 44)
+                                }.accessibilityIdentifier("reopen-extension-dialog")
+                            }
                             if model.image != nil {
                                 HStack { Label("Image attached", systemImage: "photo"); Button("Remove") { model.image = nil; photo = nil } }.font(.caption).padding(.horizontal)
                             }
-                            ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending,
+                            ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending, remoteAvailable: model.connected,
                                              send: { model.send(context: state.context) },
                                              stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } },
-                                             request: model.scopedRequest(for: state)) {
+                                             request: model.connected ? model.scopedRequest(for: state) : nil) {
                                 Menu {
                                     Button("Photo", systemImage: "photo") { attachmentScope = model.contentScope; pickingPhoto = true }
                                     Button("Text file") { attachmentScope = model.contentScope; importing = true }
                                 } label: { Label("Attach", systemImage: "plus").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44) }
                                     .accessibilityLabel("Attach")
-                            }.disabled(!model.connected)
+                            }
                         } else {
                             ScrollView {
                                 VStack(spacing: 16) {
                                     ContentUnavailableView("Connect to your Mac", systemImage: "network",
                                                            description: Text("Start Pi Remote for Mac, then pair or select a saved connection."))
-                                    Button { model.connect() } label: {
-                                        Text(model.connecting ? "Connecting…" : "Reconnect").frame(minHeight: 44)
-                                    }.disabled(model.connecting)
+                                    reconnectButton
                                     Button { model.panel = "connections" } label: { Text("Connections").frame(minHeight: 44) }
                                 }.padding(.bottom, 24)
                             }
@@ -85,7 +96,7 @@ struct PhoneRoot: View {
                 }.privacySensitive()
             }
         }
-        .sheet(isPresented: Binding(get: { model.panel != nil && !model.locked && !model.covered }, set: { if !$0 { model.panel = nil } })) {
+        .sheet(isPresented: Binding(get: { model.panel != nil && !model.locked && !model.covered }, set: { if !$0 { model.closePanel() } })) {
             NavigationStack {
                 sheet
                     .navigationBarTitleDisplayMode(.inline)
@@ -147,6 +158,13 @@ struct PhoneRoot: View {
         .modifier(InterfaceAppearance())
     }
 
+    private var reconnectButton: some View {
+        Button { model.connect() } label: {
+            Text(model.connecting ? "Connecting…" : "Reconnect").frame(minHeight: 44)
+        }.disabled(model.connecting || model.selectedMac == nil)
+            .accessibilityIdentifier("reconnect")
+    }
+
     @ViewBuilder private var sheet: some View {
         if model.panel == "connections" { ConnectionsView(model: model) }
         else if model.panel == "pair" { PairingView(model: model) }
@@ -156,6 +174,7 @@ struct PhoneRoot: View {
         }
         else if let state = model.state {
             let request = model.scopedRequest(for: state)
+            let scope = model.contentScope
             Group {
                 switch model.panel {
                 case "sessions": SessionListView(state: state, request: request, newSession: { model.panel = "directory" }, selected: { model.panel = nil })
@@ -171,9 +190,11 @@ struct PhoneRoot: View {
                 case "history": HistoryView(request: request, paged: state.capabilities.contains("history-pages")) { model.panel = nil }
                 case "preview": if let value = model.preview { FilePreviewView(preview: value) }
                 case "dialog":
-                    if let dialog = state.dialogs.first {
-                        ExtensionDialogView(dialog: dialog) { value, confirmed, cancelled in
-                            Task { _ = try? await request(.answer(dialog: dialog.id, value: value, confirmed: confirmed, cancelled: cancelled)) }
+                    if let dialog = model.pendingDialog {
+                        ExtensionDialogView(dialog: dialog, available: model.connected, sending: model.dialogSending,
+                                            fault: model.dialogFault, connecting: model.connecting,
+                                            close: { model.closePanel() }, reconnect: { model.connect() }) { value, confirmed, cancelled in
+                            model.answerDialog(dialog, in: state, scope: scope, value: value, confirmed: confirmed, cancelled: cancelled)
                         }.id(dialog.id)
                     }
                 default: EmptyView()
@@ -214,13 +235,20 @@ struct ConnectionsView: View {
                     HStack {
                         Button { editing = mac; address = mac.url.absoluteString } label: { Text("Edit address").frame(minWidth: 44, minHeight: 44) }
                         Spacer()
-                        Button(role: .destructive) { model.forget(mac) } label: { Text("Forget").foregroundStyle(Color.primary).frame(minWidth: 44, minHeight: 44) }
+                        Button(role: .destructive) { model.requestForget(mac) } label: { Text("Forget").foregroundStyle(Color.primary).frame(minWidth: 44, minHeight: 44) }
                             .buttonStyle(.plain)
                     }
                 }
             }
         }
         .navigationTitle("Mac connections")
+        .alert("Forget " + (model.macToForget?.name ?? "Mac") + "?",
+               isPresented: Binding(get: { model.macToForget != nil }, set: { if !$0 { model.macToForget = nil } })) {
+            Button("Forget Mac", role: .destructive) { model.confirmForget() }
+            Button("Cancel", role: .cancel) { model.macToForget = nil }
+        } message: {
+            Text("This disconnects this iPhone from this Mac, if connected, and deletes its saved credentials for this Mac. Pair again to reconnect. It does not revoke this iPhone on the Mac. To revoke access, use Devices on the Mac.")
+        }
         .alert("Server address", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             TextField("wss://address:7443/", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled()
             Button("Save") { if let mac = editing { model.updateURL(address, mac: mac) }; editing = nil }
@@ -236,7 +264,7 @@ struct PairingView: View {
 
     var body: some View {
         Form {
-            Text("In Pi Remote for Mac, select Start server, then Pair iPhone to show a pairing QR code. The code expires in two minutes.")
+            Text("In Pi Remote for Mac, select Start iPhone access, then Pair iPhone to show a pairing QR code. The code expires in two minutes.")
             Button("Scan QR code", systemImage: "qrcode.viewfinder") {
                 scanScope = model.contentScope
                 scanning = true

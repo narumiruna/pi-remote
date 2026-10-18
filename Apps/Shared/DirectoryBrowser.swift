@@ -319,6 +319,12 @@ struct FilePreviewView: View {
 
 struct ExtensionDialogView: View {
     let dialog: ExtensionDialog
+    var available = true
+    var sending = false
+    var fault: RemoteFault? = nil
+    var connecting = false
+    var close: (() -> Void)? = nil
+    var reconnect: (() -> Void)? = nil
     let answer: (String?, Bool?, Bool) -> Void
     @State private var value = ""
     var body: some View {
@@ -332,6 +338,7 @@ struct ExtensionDialogView: View {
                             Text(option).frame(maxWidth: .infinity, minHeight: directoryControlMinimum, alignment: .leading)
                         }
                         .accessibilityIdentifier("extension-dialog-option-\(option)")
+                        .disabled(!available || sending)
                     }
                 case "input", "editor":
                     TextEditor(text: $value).frame(height: 160).accessibilityLabel("Dialog text")
@@ -342,17 +349,40 @@ struct ExtensionDialogView: View {
         }
         .safeAreaInset(edge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {
+                if let fault {
+                    Label("Answer failed: " + fault.title, systemImage: "exclamationmark.triangle")
+                        .accessibilityIdentifier("extension-dialog-error")
+                    Text(fault.explanation).font(.caption)
+                }
+                if !available {
+                    Text("Disconnected. The request stays pending on the Mac. Reconnect before answering.").font(.caption)
+                    if let reconnect {
+                        Button(action: reconnect) { Text(connecting ? "Connecting…" : "Reconnect").frame(minHeight: directoryControlMinimum) }
+                            .disabled(connecting).accessibilityIdentifier("extension-dialog-reconnect")
+                    }
+                }
+                if sending { Text("Sending answer…").font(.caption) }
                 if dialog.method == "confirm" {
                     Button { answer(nil, true, false) } label: { Text("Confirm").frame(minHeight: directoryControlMinimum) }
                         .buttonStyle(.borderedProminent).foregroundStyle(.background)
                         .accessibilityIdentifier("extension-dialog-confirm")
+                        .disabled(!available || sending)
                 } else if dialog.method == "input" || dialog.method == "editor" {
                     Button { answer(value, nil, false) } label: { Text("Submit").frame(minHeight: directoryControlMinimum) }
                         .buttonStyle(.borderedProminent).foregroundStyle(.background)
                         .accessibilityIdentifier("extension-dialog-submit")
+                        .disabled(!available || sending)
                 }
                 Button(role: .cancel) { answer(nil, nil, true) } label: { Text("Cancel").frame(minHeight: directoryControlMinimum) }
                     .accessibilityIdentifier("extension-dialog-cancel")
+                    .accessibilityHint("Cancel this request on the Mac.")
+                    .disabled(!available || sending)
+                if let close {
+                    Button(action: close) { Text("Close").frame(minHeight: directoryControlMinimum) }
+                        .accessibilityHint("Close on this iPhone only. This does not answer or cancel the request on the Mac.")
+                        .accessibilityIdentifier("extension-dialog-close")
+                    Text("Close leaves this request pending on the Mac.").font(.caption)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(.bar)
         }
         .navigationTitle(dialog.title)
