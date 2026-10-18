@@ -41,4 +41,27 @@ A mixed native test attempt also overlapped two test processes and produced menu
 
 The initial review used the opted-in normal app in Desktop mode at 1104 × 829. It had a saved session but no loaded session. Debug captures verified the original Files and Session states; Activity correctly rejected selection in that older build. These captures are not evidence for the new implementation.
 
-The user's process is not stopped or replaced. Normal-launch review of the revised build, provider operation and live VoiceOver remain unverified. Hosted fixtures use private state and do not connect to a provider or start iPhone access. No captures enter Git. The [active plan](plans/2026-10-19_mac-inspector-review-plan.md) stays open for revised-app debug-mode acceptance after an approved relaunch.
+Hosted fixtures use private state and do not connect to a provider or start iPhone access. No captures enter Git. The [active plan](plans/2026-10-19_mac-inspector-review-plan.md) stays open for the remaining live loaded-session acceptance checks.
+
+## Normal-app debug-mode check
+
+The running opted-in app showed the revised UI on 2026-10-18, 17:45:40–17:47:04 UTC. No rebuild, process replacement or restart was needed during this check. The window was 1104 × 829 with one saved session selected and no loaded session. The listener was off, the phase was idle, and message/dialog counts were zero.
+
+Verified through the registered debug tools and app-only captures:
+
+- Files shows neutral full-width rows, one compact navigation row and no dotfiles by default. The folder name and edit/more icons remain visible.
+- Session shows the selected saved session's name, working directory and Saved / Not loaded status, with compact explanatory text.
+- Activity now accepts selection without a loaded session. It retains saved-session metadata and explains that activity requires an opened session.
+- All three states were reviewed in Desktop and Pi modes. Central selection and the open-saved-session screen stayed unchanged across tab and mode changes.
+- The native allowlisted inspector toggle hides the pane. The native toolbar Files control restores it without changing the central destination.
+- The app was restored to Desktop/Files. The complete bounded status matches its starting value. No Pi, prompt, listener or dialog-answer actions were dispatched.
+
+Evidence: `/tmp/pi-mac-inspector-review/live-debug-summary.json` and debug captures in the tool history. The Files capture immediately after switching in Pi mode showed loading; a later capture at 17:46:28 UTC verified the populated list. These are app-content captures, not physical desktop-input or window-chrome checks.
+
+Not verified in this normal-app pass:
+
+- Loaded Session controls, actual tool Activity and context changes while another session is loaded: no loaded session was present. A user must open a session before these checks can continue; debug controls cannot start Pi.
+- More actions, hidden-file toggling, path copying/editing and file previews: the current native-click allowlist does not expose these controls. Their earlier native-fixture evidence still applies, but is not normal-app evidence.
+- Live window resizing, physical pointer/keyboard traversal, VoiceOver and provider operation.
+
+No new visual defect was found in the available saved-session states. This check does not establish full UI acceptance.
