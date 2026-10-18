@@ -61,7 +61,7 @@ struct CompanionWindow: View {
                            height: min(640, max(360, geometry.size.height - 40)))
             }
         }
-        .background(MacDebugWindowMarker().frame(width: 0, height: 0))
+        .background(MacDebugWindowMarker().frame(width: 1, height: 1).allowsHitTesting(false))
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if model.debug.enabled {
                 HStack {

@@ -6,7 +6,6 @@ import UniformTypeIdentifiers
 
 /// Read-only, session-scoped development access. No state is saved in preferences.
 @MainActor @Observable final class MacDebugController {
-    static let windowIdentifier = NSUserInterfaceItemIdentifier("pi-remote-session-window")
     nonisolated static let maxImageBytes = 2 * 1024 * 1024
     static let maxEdge = 1920
     static let maxPixels = 2_304_000
@@ -52,7 +51,7 @@ import UniformTypeIdentifiers
     }
 
     func status(model: CompanionModel, windows: [NSWindow]? = nil) throws -> Data {
-        let candidates = (windows ?? NSApp.windows).filter { $0.identifier == Self.windowIdentifier }
+        let candidates = (windows ?? NSApp.windows).filter { MacDebugWindowMarker.isAttached(to: $0) }
         let window = candidates.count == 1 ? candidates.first : nil
         let size = window?.contentView?.bounds.size ?? .zero
         let phases = ["starting", "idle", "working", "queued", "bash", "waiting", "stopping", "retrying", "compacting", "recovering", "unavailable", "interrupted"]
@@ -88,7 +87,7 @@ import UniformTypeIdentifiers
               model.state.dialogs.isEmpty, modalWindow == nil else {
             throw MacDebugServer.OperationError.captureProtected
         }
-        let candidates = windows.filter { $0.identifier == windowIdentifier }
+        let candidates = windows.filter { MacDebugWindowMarker.isAttached(to: $0) }
         guard candidates.count <= 1 else { throw MacDebugServer.OperationError.windowAmbiguous }
         guard let window = candidates.first, !appHidden, window.isVisible, !window.isMiniaturized,
               window.contentView != nil else { throw MacDebugServer.OperationError.windowUnavailable }
@@ -185,15 +184,26 @@ private struct DebugCapture: Encodable {
     let method: String
 }
 
-/// Identify only the product's main content windows, never a picker or another app.
-struct MacDebugWindowMarker: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { Marker() }
+/// Identify the product content by an attached view, not SwiftUI-owned window identity.
+@MainActor struct MacDebugWindowMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let marker = Marker()
+        marker.setAccessibilityElement(false)
+        return marker
+    }
     func updateNSView(_ nsView: NSView, context: Context) {}
-    private final class Marker: NSView {
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            window?.identifier = MacDebugController.windowIdentifier
-        }
+
+    static func isAttached(to window: NSWindow) -> Bool {
+        guard window.sheetParent == nil, !(window is NSPanel), let content = window.contentView else { return false }
+        return containsMarker(content)
+    }
+
+    private static func containsMarker(_ view: NSView) -> Bool {
+        view is Marker || view.subviews.contains { containsMarker($0) }
+    }
+
+    final class Marker: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
