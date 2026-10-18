@@ -44,6 +44,25 @@ private final class PiFixtureSecrets: SecretStore, @unchecked Sendable {
         XCTAssertNil(PiPathQuery.parse(text: "Read @\"folder name/file.swift\"", selection: NSRange(location: 24, length: 0), directory: "/tmp"))
     }
 
+    func testStartupResourcesUseDiscoveredKindsWithoutGuessingContext() {
+        let commands = [CommandOption(name: "skill:fixture-skill", detail: "", source: "skill"),
+                        CommandOption(name: "review", detail: "", source: "prompt"),
+                        CommandOption(name: "fixture-extension", detail: "", source: "extension"),
+                        CommandOption(name: "skill:fixture-skill", detail: "duplicate", source: "skill"),
+                        CommandOption(name: "", detail: "", source: "prompt")]
+        XCTAssertEqual(PiStartupResources.names(source: "skill", commands: commands), ["fixture-skill"])
+        XCTAssertEqual(PiStartupResources.names(source: "prompt", commands: commands), ["/review"])
+    }
+
+    func testFooterUsesRealContextWindowAndAutoCompactionWithoutInventingSubscription() throws {
+        var state = HostSnapshot(host: UUID(), epoch: UUID())
+        state.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
+        let json = #"{"userMessages":0,"assistantMessages":0,"toolCalls":0,"toolResults":0,"totalMessages":0,"tokens":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0},"cost":0,"contextUsage":{"tokens":0,"contextWindow":500000,"percent":0}}"#
+        let stats = try JSONDecoder().decode(SessionStatistics.self, from: Data(json.utf8))
+        XCTAssertEqual(PiFooterValue(state: state, statistics: stats).usage, "$0.000 0.0%/500k (auto)")
+        XCTAssertFalse(PiFooterValue(state: state, statistics: stats).usage.contains("sub"))
+    }
+
     func testBuiltinCommandParserDoesNotTreatAbsolutePathsAsCommands() {
         XCTAssertEqual(PiBuiltinCommand.parse(" /model ")?.name, "model")
         XCTAssertEqual(PiBuiltinCommand.parse("/name Saved name")?.arguments, "Saved name")

@@ -203,6 +203,7 @@ struct PiEditor: NSViewRepresentable {
     var onToggleTools: () -> Void = {}
     var onToggleThinking: () -> Void = {}
     var onCycleThinking: () -> Void = {}
+    var separatorColor: NSColor? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> PiEditorNativeView {
@@ -213,6 +214,10 @@ struct PiEditor: NSViewRepresentable {
     func updateNSView(_ view: PiEditorNativeView, context: Context) {
         context.coordinator.update(self)
     }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: PiEditorNativeView, context: Context) -> CGSize? {
+        nsView.fittingSize(for: proposal.width ?? max(1, nsView.bounds.width))
+    }
+
     static func dismantleNSView(_ view: PiEditorNativeView, coordinator: Coordinator) {
         view.editor.delegate = nil
         view.editor.routeKey = nil
@@ -240,6 +245,8 @@ struct PiEditor: NSViewRepresentable {
             view.editor.setSelectedRange(input.selection)
             view.editor.delegate = self
             view.editor.routeKey = { [weak self] event in self?.handle(PiEditorKey(event: event)) ?? false }
+            view.separatorColor = parent.separatorColor
+            view.invalidateTextSize()
             refreshCompletions()
             requestCompletion()
         }
@@ -248,6 +255,7 @@ struct PiEditor: NSViewRepresentable {
             let contextChanged = self.parent.contextID != parent.contextID
             self.parent = parent
             guard let editor = view?.editor else { return }
+            view?.separatorColor = parent.separatorColor
             let desiredText = parent.text
             if contextChanged {
                 changingText = true
@@ -354,6 +362,7 @@ struct PiEditor: NSViewRepresentable {
             editor.setSelectedRange(selection)
             editor.breakUndoCoalescing()
             changingText = false
+            view?.invalidateTextSize()
         }
 
         private func captureInput() {
@@ -385,6 +394,7 @@ struct PiEditor: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard !changingText, let editor = view?.editor else { return }
+            view?.invalidateTextSize()
             history.reset()
             parent.text = editor.string
             captureInput()
@@ -397,6 +407,7 @@ struct PiEditor: NSViewRepresentable {
                   input.selection != editor.selectedRange() || input.text != editor.string else { return }
             // AppKit can report an undo through selection before its text-change notification.
             if input.text != editor.string {
+                view?.invalidateTextSize()
                 history.reset()
                 parent.text = editor.string
             }
@@ -411,6 +422,11 @@ struct PiEditor: NSViewRepresentable {
     private let editorUndoManager = UndoManager()
     override var undoManager: UndoManager? { editorUndoManager }
     var routeKey: ((NSEvent) -> Bool)?
+    var onTextChange: (() -> Void)?
+    override func didChangeText() {
+        onTextChange?()
+        super.didChangeText()
+    }
     override func keyDown(with event: NSEvent) {
         // Let the input context consume Return, arrows, Tab and Escape during composition.
         if hasMarkedText() || routeKey?(event) != true { super.keyDown(with: event) }
@@ -436,14 +452,32 @@ struct PiEditor: NSViewRepresentable {
 
 @MainActor final class PiEditorNativeView: NSView {
     let editor = PiEditorTextView(frame: .zero)
-    private let suggestions = NSStackView()
+    let bottomRule = NSView()
+    private let scroll = NSScrollView()
+    private let suggestions = PiEditorSuggestionList()
     private let suggestionScroll = NSScrollView()
-    private var suggestionHeight: NSLayoutConstraint!
+    private let measurementStorage = NSTextStorage()
+    private let measurementLayout = NSLayoutManager()
+    private let measurementContainer = NSTextContainer(size: .zero)
+    private var options: [PiEditorCompletions.Option] = []
+    private var selectedID: String?
+    private var hasInitialFocus = false
+    var separatorColor: NSColor? {
+        didSet {
+            bottomRule.layer?.backgroundColor = (separatorColor ?? NSColor(
+                calibratedRed: 0.42, green: 0.46, blue: 0.48, alpha: 1)).cgColor
+        }
+    }
+
+    override var isFlipped: Bool { true }
+    private var suggestionHeight: CGFloat { CGFloat(min(5, options.count)) * 28 }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        let scroll = NSScrollView()
+        appearance = NSAppearance(named: .darkAqua)
         scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
         scroll.drawsBackground = false
         editor.isRichText = false
         editor.importsGraphics = false
@@ -451,79 +485,179 @@ struct PiEditor: NSViewRepresentable {
         editor.isAutomaticQuoteSubstitutionEnabled = false
         editor.isAutomaticDashSubstitutionEnabled = false
         editor.isAutomaticTextReplacementEnabled = false
-        editor.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        let foreground = NSColor(calibratedRed: 0.87, green: 0.88, blue: 0.88, alpha: 1)
+        editor.font = font
+        editor.textColor = foreground
+        editor.insertionPointColor = foreground
+        editor.typingAttributes = [.font: font, .foregroundColor: foreground]
+        editor.selectedTextAttributes = [
+            .foregroundColor: foreground,
+            .backgroundColor: NSColor(calibratedRed: 0.29, green: 0.31, blue: 0.43, alpha: 1)
+        ]
         editor.drawsBackground = false
         editor.textContainerInset = NSSize(width: 6, height: 8)
+        editor.minSize = .zero
+        editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]
         editor.textContainer?.widthTracksTextView = true
         editor.setAccessibilityIdentifier("pi-editor")
         editor.setAccessibilityLabel("Prompt")
+        editor.onTextChange = { [weak self] in self?.invalidateTextSize() }
         scroll.documentView = editor
 
-        suggestions.orientation = .vertical
-        suggestions.alignment = .leading
-        suggestions.spacing = 0
+        measurementStorage.addLayoutManager(measurementLayout)
+        measurementLayout.addTextContainer(measurementContainer)
+        bottomRule.wantsLayer = true
+        bottomRule.setAccessibilityIdentifier("pi-editor-bottom-rule")
+        separatorColor = nil
+        bottomRule.layer?.backgroundColor = NSColor(calibratedRed: 0.42, green: 0.46, blue: 0.48, alpha: 1).cgColor
         suggestionScroll.documentView = suggestions
+        suggestionScroll.setAccessibilityIdentifier("pi-editor-suggestions")
         suggestionScroll.drawsBackground = false
         suggestionScroll.hasVerticalScroller = true
-        let stack = NSStackView(views: [scroll, suggestionScroll])
-        stack.orientation = .vertical
-        stack.spacing = 0
-        stack.alignment = .leading
-        addSubview(stack)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        suggestions.translatesAutoresizingMaskIntoConstraints = false
-        suggestionHeight = suggestionScroll.heightAnchor.constraint(equalToConstant: 0)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
-            scroll.heightAnchor.constraint(lessThanOrEqualToConstant: 180),
-            suggestionScroll.widthAnchor.constraint(equalTo: stack.widthAnchor), suggestionHeight,
-            suggestions.widthAnchor.constraint(equalTo: suggestionScroll.contentView.widthAnchor)
-        ])
+        suggestionScroll.autohidesScrollers = true
+        suggestionScroll.scrollerStyle = .overlay
+        suggestionScroll.isHidden = true
+        addSubview(scroll)
+        addSubview(bottomRule)
+        addSubview(suggestionScroll)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let window = self.window, window.attachedSheet == nil,
-                  window.firstResponder === window || window.firstResponder === window.contentView else { return }
-            window.makeFirstResponder(self.editor)
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowBecameKey),
+                                                  name: NSWindow.didBecomeKeyNotification, object: window)
         }
+        scheduleInitialFocus()
     }
 
-    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 100 + suggestionHeight.constant) }
+    @objc private func windowBecameKey(_ notification: Notification) { scheduleInitialFocus() }
+
+    private func scheduleInitialFocus() {
+        DispatchQueue.main.async { [weak self] in self?.focusInitiallyIfAvailable() }
+    }
+
+    /// Retry after window attachment/key activation, but never reclaim focus from another control.
+    func focusInitiallyIfAvailable() {
+        guard !hasInitialFocus, let window, window.attachedSheet == nil,
+              window.sheetParent == nil, NSApplication.shared.modalWindow == nil else { return }
+        if window.firstResponder === editor { hasInitialFocus = true; return }
+        if let responder = window.firstResponder, responder !== window {
+            guard let view = responder as? NSView, !(view is NSTextView), !(view is NSControl),
+                  self.isDescendant(of: view) else { return }
+        }
+        hasInitialFocus = window.makeFirstResponder(editor)
+    }
+
+    /// Measure a separate TextKit layout. SwiftUI sizing must not move the live caret or scroll view.
+    private var measuredHeights: [CGFloat: CGFloat] = [:]
+    private var measuredText: String?
+
+    private func textHeight(for width: CGFloat) -> CGFloat {
+        if measuredText != editor.string {
+            measuredHeights.removeAll(keepingCapacity: true)
+            measuredText = editor.string
+        }
+        if let height = measuredHeights[width] { return height }
+        measurementStorage.setAttributedString(editor.textStorage ?? NSAttributedString(string: editor.string))
+        measurementContainer.lineFragmentPadding = editor.textContainer?.lineFragmentPadding ?? 5
+        measurementContainer.containerSize = NSSize(width: max(1, width - editor.textContainerInset.width * 2),
+                                                    height: .greatestFiniteMagnitude)
+        measurementLayout.ensureLayout(for: measurementContainer)
+        let lineHeight = measurementLayout.defaultLineHeight(for: editor.font ?? .systemFont(ofSize: NSFont.systemFontSize))
+        let height = max(lineHeight, measurementLayout.usedRect(for: measurementContainer).maxY,
+                         measurementLayout.extraLineFragmentRect.maxY)
+        let measured = ceil(height + editor.textContainerInset.height * 2)
+        measuredHeights[width] = measured
+        return measured
+    }
+
+    func fittingSize(for width: CGFloat) -> NSSize {
+        let width = width.isFinite ? max(1, width) : max(1, bounds.width)
+        return NSSize(width: width, height: min(180, max(34, textHeight(for: width))) + 1 + suggestionHeight)
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: fittingSize(for: bounds.width).height)
+    }
+
+    func invalidateTextSize() {
+        measuredHeights.removeAll(keepingCapacity: true)
+        measuredText = nil
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        if widthChanged { invalidateTextSize() }
+    }
+
+    override func layout() {
+        super.layout()
+        let inputHeight = fittingSize(for: bounds.width).height - 1 - suggestionHeight
+        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: inputHeight)
+        editor.setFrameSize(NSSize(width: scroll.contentSize.width,
+                                  height: max(inputHeight, textHeight(for: scroll.contentSize.width))))
+        bottomRule.frame = NSRect(x: 0, y: inputHeight, width: bounds.width, height: 1)
+        suggestionScroll.frame = NSRect(x: 0, y: inputHeight + 1, width: bounds.width, height: suggestionHeight)
+        suggestions.setFrameSize(NSSize(width: suggestionScroll.contentSize.width, height: CGFloat(options.count) * 28))
+        for (index, button) in suggestions.subviews.enumerated() {
+            button.frame = NSRect(x: 0, y: CGFloat(index) * 28, width: suggestions.frame.width, height: 28)
+        }
+    }
 
     func showCompletions(_ options: [PiEditorCompletions.Option], selectedID: String?, choose: @escaping (PiEditorCompletions.Option) -> Void) {
-        for child in suggestions.arrangedSubviews { suggestions.removeArrangedSubview(child); child.removeFromSuperview() }
-        for option in options {
-            let button = PiEditorCompletionButton()
-            button.title = option.label + (option.detail.isEmpty ? "" : "  —  " + option.detail)
-            button.alignment = .left
-            button.lineBreakMode = .byTruncatingTail
-            button.bezelStyle = .inline
-            button.state = option.id == selectedID ? .on : .off
-            button.setAccessibilityIdentifier("pi-completion-" + option.id)
-            button.setAccessibilityLabel(button.title)
-            button.choose = { choose(option) }
-            suggestions.addArrangedSubview(button)
-            button.widthAnchor.constraint(equalTo: suggestions.widthAnchor).isActive = true
-            button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        let changed = self.options != options || self.selectedID != selectedID
+        self.options = options
+        self.selectedID = selectedID
+        // Refresh callbacks even when the visible results have not changed.
+        if changed {
+            for child in suggestions.subviews { child.removeFromSuperview() }
+            for option in options {
+                let button = PiEditorCompletionButton()
+                button.title = option.label + (option.detail.isEmpty ? "" : "  —  " + option.detail)
+                button.alignment = .left
+                button.lineBreakMode = .byTruncatingTail
+                button.bezelStyle = .inline
+                button.state = option.id == selectedID ? .on : .off
+                button.setAccessibilityIdentifier("pi-completion-" + option.id)
+                button.setAccessibilityLabel(button.title)
+                suggestions.addSubview(button)
+            }
+            suggestionScroll.isHidden = options.isEmpty
+            invalidateTextSize()
         }
-        suggestionHeight.constant = CGFloat(min(5, options.count)) * 28
-        suggestionScroll.isHidden = options.isEmpty
+        for (option, button) in zip(options, suggestions.subviews) {
+            (button as? PiEditorCompletionButton)?.choose = { choose(option) }
+        }
+        guard changed else { return }
         layoutSubtreeIfNeeded()
-        if let index = options.firstIndex(where: { $0.id == selectedID }), suggestions.arrangedSubviews.indices.contains(index) {
-            suggestions.scrollToVisible(suggestions.arrangedSubviews[index].frame)
+        suggestions.layoutSubtreeIfNeeded()
+        if let index = options.firstIndex(where: { $0.id == selectedID }) {
+            // Scroll only this clip view. NSView.scrollToVisible can move the outer conversation.
+            let row = suggestions.subviews[index].frame
+            let clip = suggestionScroll.contentView
+            var origin = clip.bounds.origin
+            if row.minY < clip.bounds.minY { origin.y = row.minY }
+            else if row.maxY > clip.bounds.maxY { origin.y = row.maxY - clip.bounds.height }
+            clip.scroll(to: origin)
+            suggestionScroll.reflectScrolledClipView(clip)
         }
-        invalidateIntrinsicContentSize()
     }
+}
+
+@MainActor private final class PiEditorSuggestionList: NSView {
+    override var isFlipped: Bool { true }
 }
 
 @MainActor private final class PiEditorCompletionButton: NSButton {

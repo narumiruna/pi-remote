@@ -84,8 +84,7 @@ public actor HostCoordinator {
     private var closing = false
     private var utility: Task<(Data, Bool), any Error>?
     private var dialogDeadlines: [String: TimeInterval] = [:]
-    private var statuses: [String: String] = [:]
-    private var notifications: [String] = []
+    private var extensionMetadata = ExtensionDisplayMetadata()
     private var recoveringEvents = false
     private var recoveryNotice: String?
     private var lifecycleTransition: UUID?
@@ -388,7 +387,7 @@ public actor HostCoordinator {
             snapshot.selected = nil; snapshot.phase = "idle"; snapshot.messages = []; snapshot.dialogs = []
             snapshot.model = ""; snapshot.thinking = ""; snapshot.models = []; snapshot.thinkingLevels = []; snapshot.commands = []
             snapshot.runtime = nil; snapshot.pendingMessages = nil; snapshot.draft = nil; snapshot.draftID = nil; snapshot.notices = []; snapshot.hasOlderMessages = false
-            dialogDeadlines = [:]; statuses = [:]; notifications = []
+            dialogDeadlines = [:]; clearExtensionDisplay()
         case .exportSession:
             guard !snapshot.working else { throw RemoteFault.busy }
             try await requireIdle()
@@ -1104,7 +1103,7 @@ public actor HostCoordinator {
             reducer = TranscriptReducer(); outputImages = OutputImages()
             snapshot.messages = []; snapshot.hasOlderMessages = false; snapshot.dialogs = []
             snapshot.draft = nil; snapshot.draftID = nil; snapshot.notices = []; snapshot.pendingMessages = 0
-            dialogDeadlines = [:]; statuses = [:]; notifications = []
+            dialogDeadlines = [:]; clearExtensionDisplay()
             // runtime is intentionally retained until read-back: retry acknowledgement is process-scoped.
             try saveSessions()
             try await refreshConfiguration(); try check(item.info.id); try validateManaged(item)
@@ -1138,8 +1137,8 @@ public actor HostCoordinator {
         for event in events { extensionEvent(event) }
         if lifecycleUIOverflow {
             snapshot.error = .capacity
-            notifications.append("Some session-transition UI updates exceeded the display limit.")
-            notifications = Array(notifications.suffix(8)); refreshNotices()
+            extensionMetadata.appendNotice("Some session-transition UI updates exceeded the display limit.", severity: .warning)
+            refreshNotices()
         }
         lifecycleUIOverflow = false
         // Keep the subscription: a UI record queued before the RPC reply may not yet
@@ -1148,8 +1147,15 @@ public actor HostCoordinator {
 
     private func retainLifecycleUI(_ event: JSONValue) {
         guard let method = event["method"]?.string,
-              ["set_editor_text", "notify", "setTitle", "setStatus", "setWidget"].contains(method) else { return }
+              ["set_editor_text", "notify", "setTitle", "setStatus", "setWidget"].contains(method) else {
+            snapshot.error = .unsupportedFeature; return
+        }
+        if method != "set_editor_text" {
+            do { var validation = ExtensionDisplayMetadata(); try validation.consume(event) }
+            catch { snapshot.error = error as? RemoteFault ?? .incompatiblePi; return }
+        }
         var fields: [String: JSONValue] = ["type": .string("extension_ui_request"), "method": .string(method)]
+        for key in ["notifyType", "widgetPlacement"] { fields[key] = event[key] }
         let textLimit = method == "set_editor_text" ? 256 * 1_024 : 2_048
         for key in ["text", "message", "title", "statusText"] {
             if let value = event[key]?.string {
@@ -1216,7 +1222,7 @@ public actor HostCoordinator {
         snapshot.draft = nil; snapshot.draftID = nil; snapshot.runtime = nil; snapshot.pendingMessages = nil
         reducer = TranscriptReducer(); outputImages = OutputImages()
         recoveringEvents = false; recoveryNotice = nil
-        dialogDeadlines = [:]; statuses = [:]; notifications = []; publish()
+        dialogDeadlines = [:]; clearExtensionDisplay(); publish()
         if let previous, !(await previous.shutdown()) {
             preserveUnconfirmedShutdown(previous, selected: previousSelection)
             throw RemoteFault.unavailable
@@ -1438,8 +1444,8 @@ public actor HostCoordinator {
             guard generation == token, lifecycleTransition == token, rpc === child, !closing, !Task.isCancelled else { throw RemoteFault.conflict }
             try finishLifecycleObservation(child)
             if oversizedDraft {
-                notifications.append("Fork succeeded. The source message exceeds the 256 KiB draft limit and was not copied to the draft.")
-                notifications = Array(notifications.suffix(8)); refreshNotices()
+                extensionMetadata.appendNotice("Fork succeeded. The source message exceeds the 256 KiB draft limit and was not copied to the draft.", severity: .warning)
+                refreshNotices()
             }
             snapshot.phase = "idle"; publish()
         } catch {
@@ -1468,7 +1474,7 @@ public actor HostCoordinator {
         snapshot.bash = nil
         snapshot.selected = info.id; reducer = TranscriptReducer(); outputImages = OutputImages()
         snapshot.messages = []; snapshot.hasOlderMessages = false; snapshot.dialogs = []; snapshot.notices = []; snapshot.pendingMessages = 0
-        dialogDeadlines = [:]; statuses = [:]; notifications = []
+        dialogDeadlines = [:]; clearExtensionDisplay()
         try saveSessions()
         try await refreshConfiguration()
         guard generation == token, rpc === child, snapshot.selected == info.id, lifecycleTransition == token, !closing else { throw RemoteFault.conflict }
@@ -1487,6 +1493,7 @@ public actor HostCoordinator {
     private func preserveUnconfirmedShutdown(_ child: RPCProcess, selected: UUID?) {
         if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
         rpc = child; snapshot.selected = selected
+        clearExtensionDisplay()
         recoveringEvents = true; snapshot.phase = "recovering"; snapshot.error = .unknownOutcome
         snapshot.dialogs = []; dialogDeadlines = [:]; snapshot.pendingMessages = nil
         recoveryNotice = "Pi did not confirm shutdown. Use Stop again before changing sessions."
@@ -1506,6 +1513,7 @@ public actor HostCoordinator {
         guard generation == token, rpc === child, !closing else { return false }
         if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
         recoveringEvents = true
+        clearExtensionDisplay()
         recoveryNotice = "Live events were lost. Recovery is in progress; do not resend accepted work."
         snapshot.phase = "recovering"; snapshot.error = .unknownOutcome
         snapshot.dialogs = []; dialogDeadlines = [:]
@@ -1538,6 +1546,7 @@ public actor HostCoordinator {
         snapshot.dialogs = []; dialogDeadlines = [:]; snapshot.pendingMessages = nil
         snapshot.phase = stopped ? "interrupted" : "recovering"
         snapshot.error = .unknownOutcome
+        clearExtensionDisplay()
         recoveryNotice = stopped
             ? "Pi stopped after an event-stream gap. Reopen the saved session; do not resend uncertain actions."
             : "Pi did not confirm shutdown after lost events. Use Stop again; do not resend uncertain actions."
@@ -1734,22 +1743,21 @@ public actor HostCoordinator {
             let text = event["text"]?.string ?? ""
             if text.utf8.count <= 256 * 1_024 { snapshot.draft = text; snapshot.draftID = UUID() }
             else { snapshot.error = .tooLarge }
-        } else if method == "setStatus" || method == "setWidget" {
-            let rawKey = event["statusKey"]?.string ?? event["widgetKey"]?.string ?? method
-            guard rawKey.utf8.count <= 256 else { snapshot.error = .tooLarge; return }
-            let key = method + ":" + rawKey
-            let text = event["statusText"]?.string ?? (event["widgetLines"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
-            if text.isEmpty { statuses.removeValue(forKey: key) }
-            else if statuses.count < 16 || statuses[key] != nil { statuses[key] = DisplayLimit.text(text, bytes: 2_048) }
         } else {
-            let text = event["message"]?.string ?? event["title"]?.string ?? ""
-            if !text.isEmpty { notifications.append(DisplayLimit.text(text, bytes: 2_048)); notifications = Array(notifications.suffix(8)) }
+            do { try extensionMetadata.consume(event) }
+            catch { snapshot.error = error as? RemoteFault ?? .incompatiblePi }
         }
         refreshNotices()
     }
 
+    private func clearExtensionDisplay() {
+        extensionMetadata = ExtensionDisplayMetadata(); recoveryNotice = nil
+        snapshot.notices = []; snapshot.extensionDisplay = nil
+    }
+
     private func refreshNotices() {
-        snapshot.notices = (recoveryNotice.map { [$0] } ?? []) + Array(statuses.values.prefix(16)) + notifications
+        snapshot.notices = extensionMetadata.legacyNotices(recovery: recoveryNotice)
+        snapshot.extensionDisplay = extensionMetadata.display(recovery: recoveryNotice)
     }
 
     private func expireDialog(_ id: String, generation token: UUID) {
@@ -1765,7 +1773,7 @@ public actor HostCoordinator {
         runRevision &+= 1
         if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
         rpc = nil; recoveringEvents = false; snapshot.phase = "interrupted"; snapshot.error = .unavailable
-        snapshot.dialogs = []; dialogDeadlines = [:]
+        snapshot.dialogs = []; dialogDeadlines = [:]; clearExtensionDisplay()
         do { try markInterrupted(true) } catch { snapshot.error = .storageFailure }
         publish()
     }
@@ -1790,6 +1798,129 @@ public actor HostCoordinator {
         let child = rpc; rpc = nil
         if let child { _ = await child.shutdown() }
         if snapshot.bash?.working == true { snapshot.bash?.status = .unknownOutcome; snapshot.bash?.fault = .unknownOutcome }
+        clearExtensionDisplay()
         snapshot.phase = "unavailable"; publish()
+    }
+}
+
+/// Retains bounded RPC text for legacy clients and plain text for native display slots.
+struct ExtensionDisplayMetadata {
+    private var statuses: [String: String] = [:]
+    private var widgets: [String: ExtensionWidget] = [:]
+    private var notices: [ExtensionNotice] = []
+
+    mutating func consume(_ event: JSONValue) throws {
+        switch event["method"]?.string {
+        case "setStatus":
+            let key = try key(event["statusKey"])
+            guard event["statusText"] == nil || event["statusText"]?.string != nil else { throw RemoteFault.incompatiblePi }
+            let text = event["statusText"]?.string ?? ""
+            if text.isEmpty { statuses.removeValue(forKey: key) }
+            else {
+                try checkCapacity(replacing: statuses[key] != nil)
+                statuses[key] = DisplayLimit.text(text, bytes: 2_048)
+            }
+        case "setWidget":
+            let key = try key(event["widgetKey"])
+            let placement: ExtensionWidgetPlacement
+            if let value = event["widgetPlacement"] {
+                guard let raw = value.string, let parsed = ExtensionWidgetPlacement(rawValue: raw) else { throw RemoteFault.incompatiblePi }
+                placement = parsed
+            } else { placement = .aboveEditor }
+            var text = ""
+            if let value = event["widgetLines"] {
+                guard let lines = value.array, lines.allSatisfy({ $0.string != nil }) else { throw RemoteFault.incompatiblePi }
+                text = lines.compactMap(\.string).joined(separator: "\n")
+            }
+            if text.isEmpty { widgets.removeValue(forKey: key) }
+            else {
+                try checkCapacity(replacing: widgets[key] != nil)
+                widgets[key] = ExtensionWidget(id: key, text: DisplayLimit.text(text, bytes: 2_048), placement: placement)
+            }
+        case "notify", "setTitle":
+            let isTitle = event["method"]?.string == "setTitle"
+            guard let text = event[isTitle ? "title" : "message"]?.string else { throw RemoteFault.incompatiblePi }
+            var severity = ExtensionNoticeSeverity.info
+            if !isTitle, let value = event["notifyType"] {
+                guard let raw = value.string, let parsed = ExtensionNoticeSeverity(rawValue: raw) else { throw RemoteFault.incompatiblePi }
+                severity = parsed
+            }
+            appendNotice(text, severity: severity)
+        default: throw RemoteFault.unsupportedFeature
+        }
+    }
+
+    private func key(_ value: JSONValue?) throws -> String {
+        guard let key = value?.string else { throw RemoteFault.incompatiblePi }
+        guard key.utf8.count <= 256 else { throw RemoteFault.tooLarge }
+        return key
+    }
+
+    private func checkCapacity(replacing: Bool) throws {
+        guard replacing || statuses.count + widgets.count < 16 else { throw RemoteFault.capacity }
+    }
+
+    mutating func appendNotice(_ text: String, severity: ExtensionNoticeSeverity = .info) {
+        guard !text.isEmpty else { return }
+        notices.append(ExtensionNotice(id: UUID().uuidString, text: DisplayLimit.text(text, bytes: 2_048), severity: severity))
+        notices = Array(notices.suffix(8))
+    }
+
+    func legacyNotices(recovery: String?) -> [String] {
+        (recovery.map { [$0] } ?? []) + statuses.keys.sorted().compactMap { statuses[$0] } +
+            widgets.keys.sorted().compactMap { widgets[$0]?.text } + notices.map(\.text)
+    }
+
+    func display(recovery: String?) -> ExtensionDisplayState {
+        let recoveryNotices = recovery.map { [ExtensionNotice(id: "recovery", text: Self.plainText($0), severity: .warning)] } ?? []
+        return ExtensionDisplayState(
+            statuses: statuses.keys.sorted().compactMap { key in
+                statuses[key].map { ExtensionStatus(id: key, text: Self.plainText($0)) }
+            },
+            widgets: widgets.keys.sorted().compactMap { key in
+                widgets[key].map { ExtensionWidget(id: $0.id, text: Self.plainText($0.text), placement: $0.placement) }
+            },
+            notices: recoveryNotices + notices.suffix(recovery == nil ? 8 : 7).map { ExtensionNotice(id: $0.id, text: Self.plainText($0.text), severity: $0.severity) }
+        )
+    }
+
+    /// Discards terminal commands, including OSC clipboard/title payloads and incomplete sequences.
+    private static func plainText(_ text: String) -> String {
+        enum State { case text, escape, escapeIntermediate, csi, controlString, stringEscape }
+        var state = State.text, result = ""
+        for scalar in text.unicodeScalars {
+            let value = scalar.value
+            switch state {
+            case .text:
+                switch value {
+                case 0x1B: state = .escape
+                case 0x9B: state = .csi
+                case 0x90, 0x98, 0x9D, 0x9E, 0x9F: state = .controlString
+                case 0x09, 0x0A: result.unicodeScalars.append(scalar)
+                case 0...0x1F, 0x7F...0x9F: break
+                default: result.unicodeScalars.append(scalar)
+                }
+            case .escape:
+                switch value {
+                case 0x5B: state = .csi
+                case 0x50, 0x58, 0x5D, 0x5E, 0x5F: state = .controlString
+                case 0x20...0x2F: state = .escapeIntermediate
+                case 0x1B: break
+                default: state = .text
+                }
+            case .escapeIntermediate:
+                if (0x30...0x7E).contains(value) { state = .text }
+            case .csi:
+                if (0x40...0x7E).contains(value) { state = .text }
+                else if value == 0x1B { state = .escape }
+            case .controlString:
+                if value == 0x07 || value == 0x9C { state = .text }
+                else if value == 0x1B { state = .stringEscape }
+            case .stringEscape:
+                if value == 0x5C || value == 0x07 || value == 0x9C { state = .text }
+                else if value != 0x1B { state = .controlString }
+            }
+        }
+        return result
     }
 }

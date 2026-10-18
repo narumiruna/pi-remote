@@ -11,7 +11,7 @@ Verified in this review:
 - Direct component `render(width)` calls work without `terminal.start()`, a Pi session or a provider request. Twenty synthetic checks passed, including width checks at 80 and 48 columns, tool expansion and slash-completion submission.
 - No interactive process, provider call, upload, clipboard operation, personal history read or binary capture was used.
 
-**Not verified:** the user's live terminal appearance, terminal canvas color, font, text size, window dimensions, invocation flags or extension-replaced header/footer/editor. Attended UI access is not available in this review. The settings below describe the normal saved configuration, not an inspected live terminal session. User-provided or attended synthetic terminal captures remain required for visual acceptance. Library renders are not screenshots or normal-launch evidence.
+The user later supplied a 2191 × 593 startup reference and a 2240 × 216 extension-widget/footer crop after rejecting the first native layout. These establish the requested structure: startup logo/help, Context/Skills/Prompts sections, thin ruled input, two-line footer, and extension content in its own slots. No live terminal interaction, font measurement, invocation flags or extension configuration was inspected. The settings below remain saved-configuration evidence. Corrected native captures and final user review remain required; library renders are not normal-launch evidence.
 
 ## Sources
 
@@ -145,7 +145,7 @@ flowchart TD
     F --> G[Footer: directory, usage/model, extension status]
 ```
 
-Regular mode uses terminal scrollback. It does not reserve a terminal-height transcript viewport. The native target can keep its editor visible with native scrolling, but must identify that as a platform adaptation, not the selected terminal renderer's geometry. No persistent sidebar or Files/Session/Activity inspector exists in the built-in terminal surface.
+Regular mode uses terminal scrollback. It does not reserve a terminal-height transcript viewport. The corrected native target uses one scroll flow through startup, conversation, extension slots, editor and footer. It must not add a viewport-sized blank gap before input. Native scroll storage remains a platform adaptation, not terminal scrollback. No persistent sidebar or Files/Session/Activity inspector exists in the built-in terminal surface.
 
 Startup has one blank row before and after its header. The compact header includes version and interrupt, clear/exit, commands, shell and expand-help hints, followed by onboarding text. Control-O expands startup help and loaded resources together with tool output. Normal startup details can list loaded context/resource paths and conflicts; do not read personal resources to fabricate this list. The native startup must show only authoritative data it has, with unavailable details stated explicitly.
 
@@ -266,8 +266,8 @@ No screenshots or binary files were created or committed. The first exploratory 
 
 The library check does not prove startup rendering with real resources, cursor/IME positioning, scrollback, streaming animation, native interaction or extension replacements. Avoid constructing `ModelSelectorComponent` merely to capture a fixture: its constructor starts a model-catalog refresh. Avoid marking edit arguments complete against a real path: its renderer can compute a local diff. Use synthetic native selector/diff fixtures or a strictly isolated harness instead.
 
-Still required, with synthetic content and no provider request where possible:
+Still required, with synthetic content and no provider request where possible. Startup and extension-crop references have been supplied; other states and final native acceptance remain open:
 
-1. Attended/user-supplied terminal captures: startup, idle multiline editor, slash and path completion, active output, pending queues, tools collapsed/expanded, selectors and errors. Record terminal application, mode/theme, window size, cell dimensions or text size, and any extension replacement. Do not include personal conversation or credentials.
+1. Additional attended/user-supplied terminal captures: startup, idle multiline editor, slash and path completion, active output, pending queues, tools collapsed/expanded, selectors and errors. Record terminal application, mode/theme, window size, cell dimensions or text size, and any extension replacement. Do not include personal conversation or credentials.
 2. Paired native Mac captures of those states at normal and narrow sizes, plus attended keyboard/IME/selection checks. The parent implementation owns the native build and visual captures.
 3. User review of layout, palette, interaction and every retained protocol/platform difference. Until then, reference capture and visual acceptance plan items remain open.

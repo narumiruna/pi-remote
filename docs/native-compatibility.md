@@ -50,7 +50,7 @@ The 24 event types in Pi 1.3.0's `json.md` have the following app mappings. The 
 
 ### Standard extension UI mapping
 
-All nine upstream Pi core UI methods have native mappings. `select`, `confirm`, `input` and `editor` use session-bound dialogs and typed responses. `notify` and `setTitle` use notices. `setStatus` and `setWidget` have independent bounded key namespaces. `set_editor_text` proposes a draft update, with an explicit decision before replacing a nonempty draft. Terminal severity styling, widget placement and terminal titles are not reproduced.
+All nine upstream Pi core UI methods have native mappings. `select`, `confirm`, `input` and `editor` use session-bound dialogs and typed responses. `notify` and `setTitle` use notices. `setStatus` and `setWidget` have independent bounded key namespaces. `set_editor_text` proposes a draft update, with an explicit decision before replacing a nonempty draft. Native display now retains widget placement and notification severity through optional typed snapshot metadata, while legacy notice strings remain for older clients. ANSI styling is removed rather than rendered; terminal titles and custom component factories are not reproduced. The [extension display research](pi-extension-native-display.md) distinguishes standard widgets/status entries from unavailable custom footer/header/editor factories.
 
 Installed `NativeWorkflowCheck` verifies the four dialog methods, prefill, timeout and late-answer rejection. Installed `NativeUIStateCheck` verifies notices, status/widget replacement and clearing, and Stop-cancelled input. Host and app checks verify oversized-dialog cancellation, stale contexts and draft-replacement consent. This is standard protocol support, not a dependency on the fixture extension.
 

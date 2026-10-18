@@ -4,12 +4,12 @@
 
 The Mac app now has a SwiftUI/AppKit coding surface based on installed Pi 1.3.0: a compact dark transcript, ruled native editor, completion list, model/thinking controls and directory/usage footer. Workspace and inspector functions remain secondary. Pi still owns execution through JSONL RPC.
 
-**The redesign plan is not complete.** Source inspection, isolated runtime checks and native fixtures do not establish a match to the user's live terminal. Attended terminal captures, a normal-launch coding/keyboard review and user acceptance remain open. The [tracked plan](plans/2026-10-18_pi-like-mac-interface-plan.md) is retained. No release, signing or full terminal-extension compatibility is claimed.
+**The redesign plan is not complete.** Source inspection, isolated runtime checks and native fixtures do not establish a match to the user's live terminal. The user supplied normal startup and extension-widget/footer reference captures after rejecting the first native layout. The follow-up corrects that structure. A complete normal-launch coding/keyboard review, other terminal states and final user acceptance remain open. The [tracked plan](plans/2026-10-18_pi-like-mac-interface-plan.md) is retained. No release, signing or full terminal-extension compatibility is claimed.
 
 ## Implemented behavior
 
 - The selected source reference is Pi 1.3.0, built-in `dark`, `regular` mode, thinking initially collapsed. See [reference evidence](pi-like-mac-reference.md).
-- The default coding surface is one column with compact monospaced text. The sidebar starts hidden and remembers explicit changes in local preferences. The optional inspector retains Files, Session and Activity. Compact Files/Commands toolbar buttons retain direct access; Actions also retains settings, devices, import and workspace management.
+- The default coding surface is one column with compact monospaced text. Its startup logo/help and resource sections remain above the conversation after the first prompt. Skills and prompts come from `get_commands`; Context explicitly states that loaded paths are not exposed by RPC. Startup, output, editor and footer share one scroll flow. The empty editor is 34 points and grows to 180; suggestions follow the bottom rule. There is no fixed-height blank band or viewport-sized gap before input. The sidebar starts hidden and remembers explicit changes in local preferences. The optional inspector retains Files, Session and Activity. Compact Files/Commands toolbar buttons retain direct access; Actions also retains settings, devices, import and workspace management.
 - User messages, Markdown, thinking, image references, error details and tool output remain native. Tool panels distinguish pending/success/error. Collapsed bash tools show a bounded tail; other generic tools show a bounded preview. Read output stays collapsed until requested; errors retain an excerpt. This is not a port of custom tool renderers.
 - Enter sends a prompt while idle or steering while busy. Option-Enter sends follow-up while busy and a prompt while idle. Shift-Enter, Control-Enter and Control-J insert a newline. IME composition owns these keys before application shortcuts.
 - Return/Tab with suggestions completes only. Up/Down first navigates suggestions, then local prompt history at the visual text boundaries. History restores the unsent draft. Selection and Command-based native editing remain AppKit behavior.
@@ -43,14 +43,29 @@ Verified during implementation:
 
 - Unsigned Mac build passed: `/tmp/pi-like-build.log`.
 - Shared package: 52 tests passed: `/tmp/pi-like-core-tests.log`.
-- Final root package: 188 test functions passed: `/tmp/pi-like-root-final.log`. This includes recovery after Stop failure/child exit, persisted interruption and non-reserving footer-read regression checks.
+- Initial PR root checkpoint: 188 test functions passed: `/tmp/pi-like-root-final.log`. This includes recovery after Stop failure/child exit, persisted interruption and non-reserving footer-read regression checks.
 - Shell/RPC/lifecycle focused batch: 41 tests passed: `/tmp/pi-shell-final-focused.log`.
-- Final sequential Thread Sanitizer checks passed: 19 shell/recovery/footer/correlation functions (`/tmp/pi-like-final-tsan-focused.log`), 28 PiRPC functions (`/tmp/pi-like-final-tsan-rpc.log`), 27 related lifecycle/recovery functions (`/tmp/pi-like-final-tsan-recovery.log`) and 52 shared functions (`/tmp/pi-like-final-core-tsan.log`). These selections overlap; do not sum them as distinct tests. No race diagnostics were reported.
+- Initial PR sequential Thread Sanitizer checks passed: 19 shell/recovery/footer/correlation functions (`/tmp/pi-like-final-tsan-focused.log`), 28 PiRPC functions (`/tmp/pi-like-final-tsan-rpc.log`), 27 related lifecycle/recovery functions (`/tmp/pi-like-final-tsan-recovery.log`) and 52 shared functions (`/tmp/pi-like-final-core-tsan.log`). These selections overlap; do not sum them as distinct tests. No race diagnostics were reported.
 - Final opt-in installed Pi execution, streaming, cancellation, context flags, two shell results and seeded-session resume passed: `/tmp/pi-like-installed-final.log`.
-- Final Mac scheme: all 114 tests passed with zero failures/skips, including 24 editor helper/AppKit tests, seven new surface/selector tests and migrated session/management checks. Log: `/tmp/pi-like-all-mac-final.log`; summary: `/tmp/pi-like-all-mac-final-summary.json`. The editor checks cover composition, undo, draft retention, completion precedence, stale text/caret/session results and bounded height.
+- Initial PR Mac scheme: all 114 tests passed with zero failures/skips, including 24 editor helper/AppKit tests, seven new surface/selector tests and migrated session/management checks. Log: `/tmp/pi-like-all-mac-final.log`; summary: `/tmp/pi-like-all-mac-final-summary.json`. The editor checks cover composition, undo, draft retention, completion precedence, stale text/caret/session results and bounded height.
 - Unsigned iOS simulator build passed: `/tmp/pi-like-ios-build.log`.
 - Three iPhone 17 Pro, iOS 26.5 product smoke checks passed with no failures/skips: draft retention, old-epoch action rejection and conversation state rendering. Log: `/tmp/pi-like-phone-smoke.log`.
 - Native fixture captures are written to `/tmp/pi-like-mac-captures/` by `PiPresentationTests`. They cover startup, active output at 900/1300 points, retry/compaction/interruption/unavailability, root layout, model/thinking selectors and standard dialogs. These are hosted views, not a normally launched product session.
+
+### Screenshot and extension follow-up
+
+The first native layout did not meet the supplied terminal reference. It removed startup information after the first message, expanded the transcript viewport, used a fixed 100-point input, and displayed every extension notice above it. The correction uses content flow and measured input height, with a native Pi logo and resource sections. `PiStartupView.swift` does not read instructions or invent loaded context paths.
+
+Static [extension research](pi-extension-native-display.md) confirms that the installed Progress package emits standard RPC widget lines, while Starship installs its segmented footer only in TUI mode. Native code now uses generic optional `ExtensionDisplayState` data: keyed statuses, placed widgets and severity-bearing notices. Legacy notice strings remain unchanged for older clients. ANSI/control sequences are removed from typed native text, not interpreted as terminal commands. No package-specific adapter or custom component transport was added.
+
+- Root: 193 test functions pass (`/tmp/pi-reference-root-final.log`).
+- Shared: 54 tests pass normally and with Thread Sanitizer (`/tmp/pi-reference-core-final.log`, `/tmp/pi-reference-core-tsan.log`).
+- Focused metadata sanitizer checks pass: five host and two shared tests (`/tmp/pi-reference-metadata-tsan.log`). The log includes repeated host selections; do not sum repetitions as unique coverage.
+- Final integrated Mac run: 127 tests pass with zero failures/skips (`/tmp/pi-reference-mac-all.log`, `/tmp/pi-reference-mac-all-summary.json`). The compact editor has 33 tests, including measured growth/shrink, IME/undo, focus guards, completion below the rule and outer-scroll stability. New fixtures check startup-to-editor geometry, footer placement, generic widget slots and visible error severity. The final unsigned Mac build also passes (`/tmp/pi-reference-mac-build.log`).
+- All 142 local links in nine changed Markdown files and `git diff --check` pass.
+- Reference captures use synthetic resource and task names, not hardcoded personal configuration. Local captures: `/tmp/pi-remote-mac-ux-captures/terminal-reference-startup.png` and `terminal-reference-extension-slots.png`.
+- Initial follow-up runs exposed obsolete popup-scroll selection, inaccessible plain footer controls and undo-sizing timing/cache errors. The tests now select the actual suggestion viewport; footer controls are native buttons; sizing invalidates before binding updates and permits a bounded native render cycle after undo. Close-dialog checks wait for actual presentation after large draft edits. Earlier failing runs are not treated as passing evidence.
+- The iPhone uses the unchanged legacy notice surface. The simulator build and three product smoke checks pass after the optional snapshot field change (`/tmp/pi-reference-phone-smoke.log`, `/tmp/pi-reference-phone-summary.json`).
 
 ### Failures and limits
 
@@ -94,18 +109,18 @@ The opt-in installed shell check runs only fixed synthetic commands in private t
 
 Still required before declaring the redesign plan complete:
 
-1. Capture the user's actual terminal reference with synthetic content, including startup, completion, tools, queues, selectors and errors. Confirm canvas, font, dimensions and extension-replaced components.
+1. Extend the user-supplied startup and extension crop references with completion, tools, queues, selectors and errors as needed. The supplied references establish the requested structure, not acceptance of the corrected native app.
 2. Run the built Mac app normally and review session creation/resume, real keyboard/IME, scrolling, selectors, Actions-menu item selection, shell review/cancellation and error recovery. Do not replace or stop existing personal work to obtain evidence.
 3. Compare paired terminal/Mac captures and obtain user acceptance for the resemblance and retained differences below.
 
 Retained differences needing that review:
 
-- Native scrolling keeps the editor visible; it is not regular-mode terminal scrollback.
+- The native view uses one scrolling content flow; it does not implement terminal scrollback storage or ANSI rendering.
 - Return on slash completion completes only; terminal Pi completes and submits. Native shell, copy, export and settings retain explicit review/consent.
 - Path completion inserts paths only. No shell path completion or automatic `@file` content expansion is claimed.
 - Native editor padding, a 13-point font and dark canvas are design choices, not sampled terminal dimensions. Syntax coloring, Mermaid rendering, specialized tool renderers and arbitrary terminal extension components are not reproduced fully.
 - Tree inspection is read-only with explicit fork/clone, not in-place terminal navigation. Double-Escape tree, external terminal editor, terminal exit/suspend key sequences and terminal-only auth/trust/reload management are not implemented.
 - Native slash controls reject inline arguments and open pickers. Reverse model cycling opens the selector. Some controls retain native forms rather than exact terminal picker geometry.
 - Queue recovery is a local unsent offer, not automatic replacement of an existing draft. Recovery text is not durable across a lost response or host restart.
-- Startup/footer omit unavailable resources, git branch, subscription and routed-model details. Usage is read while idle rather than live token accounting.
+- Context paths, git branch, subscription and routed-model details remain unavailable in the native startup/footer. Skills and prompt names use actual RPC discovery. Usage is read while idle rather than live token accounting.
 - Only one managed Pi runtime executes at a time. The app cannot attach to a terminal-owned runtime. iPhone shell-entry UI is not part of this Mac redesign.

@@ -8,6 +8,7 @@ struct PiConversationView: View {
     var openControls: (String) -> Void
     @State private var showThinking = false
     @State private var expandTools = false
+    @State private var showActivity = false
     @State private var following = true
     @State private var statistics: SessionStatistics?
     @State private var statisticsSequence: UInt64?
@@ -24,36 +25,17 @@ struct PiConversationView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            transcript
-            if let shell = model.state.bash,
-               shell.working || shell.status == .unknownOutcome || !model.state.messages.contains(where: {
-                   $0.role == "bash" && $0.text.hasPrefix((shell.excludeFromContext ? "!! " : "! ") + shell.command + "\n")
-               }) { shellOutput(shell) }
-            if let count = model.state.pendingMessages, count > 0 {
-                Text("\(count) queued · option+up edits queued input · esc stops and offers queued text · Stop clears it")
-                    .foregroundStyle(PiPalette.warning).padding(.horizontal, 16).padding(.vertical, 4)
-            }
-            if let error = completionError {
-                Text(error).foregroundStyle(PiPalette.warning).padding(.horizontal, 16)
-                    .accessibilityIdentifier("pi-completion-error")
-            }
-            if !model.state.notices.isEmpty {
-                ForEach(Array(model.state.notices.enumerated()), id: \.offset) { _, notice in
-                    Text(notice).foregroundStyle(PiPalette.muted).textSelection(.enabled).padding(.horizontal, 16)
-                }
-            }
-            editor
-            footer
-        }
+        surface
         .font(.system(size: 13, design: .monospaced))
         .foregroundStyle(PiPalette.text)
         .background(PiPalette.background)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Pi conversation")
         .accessibilityIdentifier("pi-coding-surface")
         .task(id: model.state.phase + contextID) { await refreshStatistics() }
         .onChange(of: model.state.context) { _, _ in
             shellOffer = nil; completions = nil; completionError = nil
-            completionGeneration = UUID(); statistics = nil; statisticsSequence = nil; following = true
+            completionGeneration = UUID(); statistics = nil; statisticsSequence = nil; following = true; showActivity = false
         }
         .sheet(item: $shellOffer) { offer in
             VStack(alignment: .leading, spacing: 16) {
@@ -74,55 +56,123 @@ struct PiConversationView: View {
         }
     }
 
-    private var transcript: some View {
+    private var surface: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if model.state.messages.isEmpty { startup }
-                    if model.state.hasOlderMessages {
-                        Button("Earlier messages are saved on the Mac · /history") { model.openNativeWorkflow(.history) }
-                            .buttonStyle(.plain).foregroundStyle(PiPalette.muted)
+                VStack(alignment: .leading, spacing: 0) {
+                    transcript.padding(.horizontal, 12).padding(.top, 8)
+                    if let shell = model.state.bash,
+                       shell.working || shell.status == .unknownOutcome || !model.state.messages.contains(where: {
+                           $0.role == "bash" && $0.text.hasPrefix((shell.excludeFromContext ? "!! " : "! ") + shell.command + "\n")
+                       }) { shellOutput(shell).padding(.top, 12) }
+                    if let count = model.state.pendingMessages, count > 0 {
+                        Text("\(count) queued · option+up edits queued input · esc stops and offers queued text · Stop clears it")
+                            .foregroundStyle(PiPalette.warning).padding(.horizontal, 12).padding(.top, 12)
                     }
-                    ForEach(model.state.messages) { message in
-                        PiTranscriptRow(message: message, showThinking: showThinking, expandTools: expandTools,
-                                        request: model.scopedRequest(for: model.state))
+                    if let error = completionError {
+                        Text(error).foregroundStyle(PiPalette.warning).padding(.horizontal, 12)
+                            .accessibilityIdentifier("pi-completion-error")
                     }
-                    Color.clear.frame(height: 1).id("pi-transcript-end")
-                }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                    if !diagnosticNotices.isEmpty { activity.padding(.horizontal, 12).padding(.top, 12) }
+                    ForEach(importantNotices) { notice in
+                        Text((notice.severity == .error ? "Error: " : "Warning: ") + DisplayLimit.text(notice.text, bytes: 512))
+                            .lineLimit(3).textSelection(.enabled)
+                            .foregroundStyle(PiPalette.warning).help(notice.text)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 8)
+                    }
+                    widgets(at: .aboveEditor)
+                    editor.padding(.top, 16)
+                    widgets(at: .belowEditor)
+                    footer
+                    Color.clear.frame(height: 1).id("pi-surface-end")
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 8)
+            }
+            .task(id: contextID) {
+                await Task.yield()
+                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting { following = false }
             }
             .onChange(of: model.state.messages) { _, _ in
-                if following { proxy.scrollTo("pi-transcript-end", anchor: .bottom) }
+                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+            }
+            .onChange(of: model.text) { _, _ in
+                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+            }
+            .onChange(of: model.state.extensionDisplay) { _, _ in
+                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+            }
+            .onChange(of: model.state.commands) { _, _ in
+                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+            }
+            .onChange(of: completions?.options.count) { _, _ in
+                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
             .overlay(alignment: .bottomTrailing) {
                 if !following {
-                    Button("↓ Latest") { following = true; proxy.scrollTo("pi-transcript-end", anchor: .bottom) }
+                    Button("↓ Latest") { following = true; proxy.scrollTo("pi-surface-end", anchor: .bottom) }
                         .buttonStyle(.bordered).padding(12).accessibilityIdentifier("pi-follow-latest")
                 }
             }
         }
     }
 
-    private var startup: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            (Text("pi ").foregroundColor(PiPalette.accent) + Text(model.state.piVersion).foregroundColor(PiPalette.muted))
-            Text(model.state.selected == nil ? "Choose a folder to start Pi, or resume a saved session." : startupStatus)
-            Text("enter send · shift+enter newline · tab complete · esc stop")
-            Text("ctrl+l model · shift+tab thinking · ctrl+o tools · ctrl+t thinking text")
-            Text("/ for commands · @ for file paths · ! / !! for reviewed shell commands")
-            if model.state.selected == nil {
-                HStack(spacing: 20) {
-                    Button("New session…") { model.panel = "directory" }.disabled(model.startupError != nil || model.state.working)
-                    Button("Resume…") { model.openNativeWorkflow(.resume) }
-                }.foregroundStyle(PiPalette.accent).padding(.top, 8)
+    private var transcript: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            PiStartupView(state: model.state, expanded: expandTools,
+                          newSession: { if !model.state.working, model.startupError == nil { model.panel = "directory" } },
+                          resume: { model.openNativeWorkflow(.resume) })
+                .padding(.bottom, 12)
+            if ["starting", "waiting", "retrying", "compacting", "interrupted", "unavailable", "recovering"].contains(model.state.phase) {
+                Text(startupStatus).foregroundStyle(PiPalette.muted)
             }
-            Text("Loaded resource inventory is unavailable through RPC. Use Commands to inspect discovered commands.")
-                .foregroundStyle(PiPalette.muted)
+            if model.state.hasOlderMessages {
+                Button("Earlier messages are saved on the Mac · /history") { model.openNativeWorkflow(.history) }
+                    .buttonStyle(.plain).foregroundStyle(PiPalette.muted)
+            }
+            ForEach(model.state.messages) { message in
+                PiTranscriptRow(message: message, showThinking: showThinking, expandTools: expandTools,
+                                request: model.scopedRequest(for: model.state))
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var diagnosticNotices: [String] {
+        model.state.extensionDisplay?.notices.map(\.text) ?? model.state.notices
+    }
+
+    private var importantNotices: [ExtensionNotice] {
+        (model.state.extensionDisplay?.notices ?? []).filter { $0.severity != .info }
+    }
+
+    @ViewBuilder private func widgets(at placement: ExtensionWidgetPlacement) -> some View {
+        let items = (model.state.extensionDisplay?.widgets ?? []).filter { $0.placement == placement }
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(items) { widget in
+                    Text(widget.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("pi-widget-" + widget.id)
+                }
+            }.padding(.horizontal, 12).padding(.top, 12)
         }
-        .foregroundStyle(PiPalette.muted).frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier("pi-startup")
+    }
+
+    private var activity: some View {
+        DisclosureGroup(isExpanded: $showActivity) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(diagnosticNotices.enumerated()), id: \.offset) { _, notice in
+                        Text(notice).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }.frame(maxHeight: 160)
+        } label: {
+            Text("Activity · \(diagnosticNotices.count) notices").textSelection(.enabled)
+        }.foregroundStyle(PiPalette.muted)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Activity · \(diagnosticNotices.count) notices")
+            .accessibilityIdentifier("pi-activity")
     }
 
     private var startupStatus: String {
@@ -145,7 +195,15 @@ struct PiConversationView: View {
 
     private var editor: some View {
         VStack(spacing: 0) {
-            Rectangle().fill(editorRule).frame(height: 1)
+            if model.state.working {
+                HStack(spacing: 6) {
+                    Rectangle().fill(editorRule).frame(width: 20, height: 1)
+                    ProgressView().controlSize(.mini).frame(width: 12, height: 12)
+                    Text(model.state.phase == "bash" ? "Running command" : model.state.phase.capitalized)
+                        .foregroundStyle(editorRule).font(.system(size: 13, design: .monospaced))
+                    Rectangle().fill(editorRule).frame(height: 1)
+                }.frame(height: 18)
+            } else { Rectangle().fill(editorRule).frame(height: 1) }
             PiEditor(text: $model.text, contextID: contextID, isBusy: model.state.working,
                      canSubmit: canCompose && !model.sending, completions: completions, history: model.promptHistory,
                      onSubmit: submit, onStop: { if model.state.working { recoverQueue(stop: true) } },
@@ -157,10 +215,9 @@ struct PiConversationView: View {
                          else { openControls("model") }
                      },
                      onToggleTools: { expandTools.toggle() }, onToggleThinking: { showThinking.toggle() },
-                     onCycleThinking: { perform(.cycleThinking) })
-                .frame(height: completions?.options.isEmpty == false ? 240 : 100).padding(.horizontal, 8).padding(.vertical, 4)
+                     onCycleThinking: { perform(.cycleThinking) }, separatorColor: NSColor(editorRule))
+                .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8)
                 .accessibilityIdentifier("pi-editor")
-            Rectangle().fill(editorRule).frame(height: 1)
         }
     }
 
@@ -168,32 +225,40 @@ struct PiConversationView: View {
         let value = PiFooterValue(state: model.state, statistics: statistics)
         return VStack(alignment: .leading, spacing: 3) {
             HStack {
-                Text(value.directory).lineLimit(1).truncationMode(.middle).help(value.directory)
+                Text(value.directory).lineLimit(1).truncationMode(.middle).help(value.directory).textSelection(.enabled)
                 Spacer(minLength: 8)
-                Text(value.phase).foregroundStyle(model.state.working ? PiPalette.warning : PiPalette.muted)
+                Text(value.phase).foregroundStyle(model.state.working ? PiPalette.warning : PiPalette.muted).textSelection(.enabled)
                 if model.state.working {
                     Button("Stop") { model.stopWork() }.buttonStyle(.plain).foregroundStyle(PiPalette.warning)
                         .accessibilityIdentifier("pi-stop")
                 }
             }
-            ViewThatFits(in: .horizontal) {
-                HStack { usage(value); Spacer(minLength: 8); configuration(value) }
-                VStack(alignment: .leading, spacing: 3) { configuration(value); usage(value) }
+            HStack {
+                usage(value)
+                Spacer(minLength: 8)
+                configuration(value).layoutPriority(1)
             }
-        }.font(.system(size: 11, design: .monospaced)).foregroundStyle(PiPalette.muted)
+            if let display = model.state.extensionDisplay, !display.statuses.isEmpty {
+                let text = display.statuses.map(\.text).joined(separator: " · ")
+                Text(text).lineLimit(1).truncationMode(.tail).textSelection(.enabled).help(text)
+                    .accessibilityIdentifier("pi-extension-status")
+            }
+        }.font(.system(size: 13, design: .monospaced)).foregroundStyle(PiPalette.muted)
             .padding(.horizontal, 16).padding(.vertical, 7).accessibilityIdentifier("pi-footer")
     }
 
     private func usage(_ value: PiFooterValue) -> some View {
         Text(value.usage + (statistics != nil && model.state.working ? " · last settled" : ""))
-            .lineLimit(1).help(value.usage)
+            .lineLimit(1).help(value.usage).textSelection(.enabled)
     }
 
     private func configuration(_ value: PiFooterValue) -> some View {
         HStack(spacing: 8) {
-            Button(value.model) { openControls("model") }.buttonStyle(.plain).help("Select model (Control-L)")
-            Button(model.state.thinking.isEmpty ? "thinking unavailable" : model.state.thinking) { openControls("thinking") }
-                .buttonStyle(.plain).foregroundStyle(PiPalette.thinking(model.state.thinking))
+            PiFooterAction(title: value.model, color: NSColor(PiPalette.muted), identifier: "pi-model-selector") { openControls("model") }
+                .help("Select model (Control-L): " + value.model)
+            Text("·")
+            PiFooterAction(title: model.state.thinking.isEmpty ? "thinking unavailable" : model.state.thinking,
+                           color: NSColor(PiPalette.thinking(model.state.thinking)), identifier: "pi-thinking-selector") { openControls("thinking") }
         }
     }
 
@@ -348,6 +413,39 @@ struct PiConversationView: View {
     private func complete(_ option: PiEditorCompletions.Option) {
         // PiEditor applies a validated edit; this callback invalidates the asynchronous batch.
         completions = nil; completionGeneration = UUID()
+    }
+}
+
+/// Native borderless controls keep the compact footer selectable through Mac accessibility.
+private struct PiFooterAction: NSViewRepresentable {
+    let title: String
+    let color: NSColor
+    let identifier: String
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(action) }
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: title, target: context.coordinator, action: #selector(Coordinator.activate))
+        button.isBordered = false
+        button.setButtonType(.momentaryPushIn)
+        button.lineBreakMode = .byTruncatingMiddle
+        return button
+    }
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.isEnabled = context.environment.isEnabled
+        button.attributedTitle = NSAttributedString(string: title, attributes: [.font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular), .foregroundColor: color])
+        button.setAccessibilityLabel(title)
+        button.setAccessibilityIdentifier(identifier)
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSButton, context: Context) -> CGSize? {
+        let size = nsView.intrinsicContentSize
+        return CGSize(width: min(proposal.width ?? size.width, size.width), height: max(18, size.height))
+    }
+    @MainActor final class Coordinator: NSObject {
+        var action: () -> Void
+        init(_ action: @escaping () -> Void) { self.action = action }
+        @objc func activate() { action() }
     }
 }
 

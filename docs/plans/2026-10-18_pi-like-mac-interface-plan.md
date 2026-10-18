@@ -6,7 +6,7 @@ Recreate the interface seen when running `pi-coding-agent` in Terminal as a nati
 
 The terminal Pi interface is the design reference. The current workspace-first Mac window is not the reference. Similar functions behind a different layout do not meet this goal.
 
-Status: implementation and automated verification are recorded in [Mac redesign verification](../pi-like-mac-verification.md). The plan remains incomplete. Attended terminal captures, normal-launch interaction checks and user visual acceptance are blocked on an attended review. Keep this plan until those checks pass; no acceptance is inferred from source inspection or hosted captures.
+Status: implementation and automated verification are recorded in [Mac redesign verification](../pi-like-mac-verification.md). The plan remains incomplete. The user has supplied startup and extension-widget/footer references and rejected the first native layout. The follow-up uses those references. Other terminal-state captures, normal-launch interaction checks and final user visual acceptance remain open. Keep this plan until those checks pass; no acceptance is inferred from source inspection or hosted captures.
 
 ## Context
 
@@ -14,10 +14,10 @@ Verified repository and local package evidence:
 
 - Installed `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui` report version 1.3.0. This is the initial reference, not a supported-version range.
 - `Apps/macOS/CompanionWindow.swift` implements the workspace sidebar, conversation destination, inspector and native pickers.
-- `Apps/Shared/ConversationView.swift` implements conversation rendering and a Mac `NSTextView` editor. Mac Return currently inserts a newline unless completing a command; Command-Return submits.
+- The pre-redesign `Apps/Shared/ConversationView.swift` remains the phone/shared fixture view. The Mac now uses `Apps/macOS/PiConversationView.swift` and `PiEditor.swift`.
 - `Apps/macOS/PiRemoteMacApp.swift` defines the main window and menu-bar entry.
 - `Apps/macOS/CompanionModel.swift` connects local controls to existing host state and session actions.
-- `docs/native-compatibility.md` records existing RPC support and limits. Native shell controls and shell output streaming remain open.
+- `docs/native-compatibility.md` records existing RPC support and limits. Typed shell actions, Mac controls and bounded streaming are implemented; native workflow acceptance remains open.
 - `project.yml` defines the `PiRemoteMac` scheme and `PiRemoteMacTests`. It also includes `Apps/Shared` in the iPhone app.
 
 This plan changes the Mac presentation target. It does not authorize a TypeScript backend, embedded terminal, upstream modifications or extension-specific adapters. Existing RPC coverage requirements remain. Protocol limits must be recorded, not presented as implemented behavior.
@@ -54,7 +54,7 @@ flowchart LR
 - [x] Inspect installed Pi interactive components, editor, keybindings, theme and renderer documentation; record the effective runtime version, fullscreen/regular mode, theme and relevant non-secret settings in a focused interface reference document. Evidence: source paths and a behavior table; do not inspect or copy credentials.
 - [ ] Obtain reference captures of the user's normal Pi interface for startup, idle editing, completion, active output, tools, selectors and errors. Use synthetic fixture content and no provider request where possible. Evidence: reviewed captures with window dimensions and text size; ask for user-provided captures if normal interactive inspection is unavailable. Do not start an interactive process through Bash.
 - [x] Compare each reference interaction with current Mac behavior and the RPC contract. Record the reference action, expected result, current result, target behavior, validation method and any deliberate difference. Include keyboard precedence, queued-input recovery, data needed by the startup/footer, shell execution and session-tree navigation. Evidence: every selected workflow has a supported implementation path or an explicit limitation.
-- [ ] Present the target layout and behavior table for user approval before replacing the main interface. Resolve required behavior that lacks RPC support by an approved alternative or explicit exclusion. Evidence: user acceptance; no silent expansion into adapters or upstream changes.
+- [x] Establish the target layout from the user's supplied normal-startup and extension-widget/footer references and record its behavior table in the reference/research documents. The requested structure is explicit: Pi startup/resources, compact ruled input, footer and extension-aware placement. The user authorized source research. No adapter or upstream change was added; final native visual acceptance remains a separate open check.
 
 ### 2. Build the native Pi-like main surface
 
@@ -109,6 +109,8 @@ Do not claim normal-launch success from a build or model test alone. Provider ca
 - Final root checks: 188 functions pass. All 114 integrated Mac tests pass without skips. Shared checks: 52 pass normally and with Thread Sanitizer. Focused sanitizer selections of 19, 28 and 27 functions pass; selections overlap. Three primary-phone product smoke checks pass. The final opt-in installed-Pi shell check passes. Local links and `git diff --check` pass. A broader 69-test sanitizer attempt failed at fixture startup and remains recorded as failed evidence.
 - Open checkboxes that include visual comparison, normal-app keyboard use or user acceptance remain open even where their implementation and hosted fixtures exist. Native captures are local temporary artifacts; no binary screenshots are committed.
 - An existing normal Mac app instance was left unchanged. Do not stop personal work or treat hosted fixture windows as proof of a normally launched product coding session.
+- Screenshot follow-up: the user provided a normal startup reference and an extension progress/footer crop. Source research confirms standard text widgets/statuses/severity are transported, but custom Starship footer/header/editor factories are not. See [extension research](../pi-extension-native-display.md). The implementation now preserves generic typed display slots, keeps the startup header after prompts, uses one content flow and grows input from 34 to 180 points. Context paths remain explicitly unavailable; skills/prompts use RPC discovery. No screenshot values are hardcoded.
+- Follow-up host checks: 193 root tests, 54 shared tests normally and with Thread Sanitizer, and focused metadata sanitizer checks pass. The Mac captures now verify startup/input/footer geometry and standard extension placement. All 127 Mac tests, the final unsigned Mac build, the iOS simulator build and three phone smoke checks pass. All 142 local documentation links and `git diff --check` pass. The [verification record](../pi-like-mac-verification.md) separates these results from normal-app/user acceptance; earlier PR counts above remain historical checkpoints.
 
 ## Risks
 

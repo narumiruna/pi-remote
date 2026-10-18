@@ -222,7 +222,7 @@ done
     private func accessibilityElements(in root: NSView) -> [PresentationAccessibility] {
         var hitElements: [NSObject] = []
         if let window = root.window {
-            for y in stride(from: CGFloat(20), to: root.bounds.height, by: 30) {
+            for y in stride(from: CGFloat(20), to: root.bounds.height, by: 15) {
                 for x in stride(from: CGFloat(20), to: root.bounds.width, by: 120) {
                     if let hit = root.accessibilityHitTest(window.convertPoint(toScreen: root.convert(NSPoint(x: x, y: y), to: nil))) as? NSObject {
                         hitElements.append(hit)
@@ -232,9 +232,12 @@ done
         }
         for scroll in descendants(root).compactMap({ $0 as? NSScrollView }) {
             guard let window = scroll.window else { continue }
-            for y in stride(from: CGFloat(15), to: scroll.bounds.height, by: 30) {
-                let point = window.convertPoint(toScreen: scroll.convert(NSPoint(x: min(30, scroll.bounds.width / 2), y: y), to: nil))
-                if let hit = scroll.accessibilityHitTest(point) as? NSObject { hitElements.append(hit) }
+            // Compact terminal rows can be shorter than the old 30-point scan step.
+            for y in stride(from: CGFloat(6), to: scroll.bounds.height, by: 12) {
+                for x in [min(30, scroll.bounds.width / 2), max(0, scroll.bounds.width - 20)] {
+                    let point = window.convertPoint(toScreen: scroll.convert(NSPoint(x: x, y: y), to: nil))
+                    if let hit = scroll.accessibilityHitTest(point) as? NSObject { hitElements.append(hit) }
+                }
             }
         }
         var visited = Set<ObjectIdentifier>()
@@ -600,6 +603,9 @@ done
 
                 model.text = String(repeating: "x", count: 256 * 1_024 + 1)
                 try await self.press("mac-inspector-close-session", in: host)
+                try await self.waitForPresentationState {
+                    self.managementDialogRoots(window).contains { self.hasLabel("Stop and Close", in: $0) }
+                }
                 let oversized = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
                 try await self.press("mac-session-stop-and-close", in: oversized, title: "Stop and Close")
                 XCTAssertNotNil(model.draftSaveError)
@@ -611,6 +617,9 @@ done
 
                 model.text = "Retain confirmed inspector draft"
                 try await self.press("mac-inspector-close-session", in: host)
+                try await self.waitForPresentationState {
+                    self.managementDialogRoots(window).contains { self.hasLabel("Stop and Close", in: $0) }
+                }
                 let confirmed = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
                 try await self.press("mac-session-stop-and-close", in: confirmed, title: "Stop and Close")
                 try await self.waitForPresentationState { model.closedSessionIDs.contains(session.id) }
@@ -1139,6 +1148,69 @@ done
             XCTAssertTrue(model.showingLoadedSession)
             model.destination = .overview
             XCTAssertFalse(model.showingLoadedSession)
+        }
+    }
+
+    func testTerminalReferenceStartupFlowsDirectlyIntoCompactEditorAndFooter() async throws {
+        try await withModel { model in
+            let id = UUID()
+            model.state.selected = id; model.state.piVersion = "1.3.0"
+            model.state.model = "fixture/model"; model.state.thinking = "high"
+            model.state.sessions = [SessionInfo(id: id, title: "Reference fixture", directory: "/tmp/reference")]
+            model.state.commands = [CommandOption(name: "skill:fixture-skill", detail: "", source: "skill"),
+                                    CommandOption(name: "review-fixture", detail: "", source: "prompt")]
+            model.text = ""
+            try await capture(PiConversationView(model: model, openControls: { _ in }), name: "terminal-reference-startup", width: 1100, height: 593) { host, window in
+                _ = try self.labelled("[Context]", in: host)
+                _ = try self.labelled("fixture-skill", in: host)
+                let prompts = try self.labelled("/review-fixture", in: host)
+                let promptsFrame = try XCTUnwrap(prompts.frame())
+                let editor = try self.nativeEditor(in: host)
+                let scroll = try XCTUnwrap(editor.enclosingScrollView)
+                let input = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+                XCTAssertLessThanOrEqual(input.height, 40, "An empty editor is one text row, not a fixed blank band")
+                XCTAssertGreaterThanOrEqual(promptsFrame.minY - input.maxY, 0)
+                XCTAssertLessThan(promptsFrame.minY - input.maxY, 70, "No viewport-sized gap may separate startup resources and input")
+                let usage = try self.labelled("Usage unavailable", in: host)
+                let usageFrame = try XCTUnwrap(usage.frame())
+                XCTAssertLessThan(input.minY - usageFrame.maxY, 80, "The two-line footer follows the editor")
+                let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+                XCTAssertGreaterThan(usageFrame.minY - viewport.minY, 100, "Unused window space belongs after the footer, not before input")
+            }
+        }
+    }
+
+    func testStandardExtensionSlotsKeepProgressAboveInputAndStatusInFooter() async throws {
+        try await withModel { model in
+            let id = UUID()
+            model.state.selected = id; model.state.piVersion = "1.3.0"
+            model.state.model = "fixture/model"; model.state.thinking = "high"; model.state.phase = "working"
+            model.state.sessions = [SessionInfo(id: id, title: "Extension fixture", directory: "/tmp/reference")]
+            model.state.extensionDisplay = ExtensionDisplayState(
+                statuses: [ExtensionStatus(id: "fixture-status", text: "Native status fixture")],
+                widgets: [ExtensionWidget(id: "fixture-progress", text: "Progress · 0/2 complete\n▶ First fixture task\n○ Second fixture task"),
+                          ExtensionWidget(id: "fixture-below", text: "Below-editor fixture", placement: .belowEditor)],
+                notices: [ExtensionNotice(id: "fixture-info", text: "Background diagnostic fixture"),
+                          ExtensionNotice(id: "fixture-error", text: "Fixture resource is unavailable", severity: .error)])
+            model.state.notices = ["Background diagnostic fixture", "Native status fixture", "Legacy flattened widget"]
+            try await capture(PiConversationView(model: model, openControls: { _ in }), name: "terminal-reference-extension-slots", width: 1200, height: 760) { host, window in
+                let above = try self.labelled("Progress · 0/2 complete\n▶ First fixture task\n○ Second fixture task", in: host)
+                let aboveFrame = try XCTUnwrap(above.frame())
+                let editor = try self.nativeEditor(in: host)
+                let scroll = try XCTUnwrap(editor.enclosingScrollView)
+                let input = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+                XCTAssertGreaterThan(aboveFrame.minY, input.maxY)
+                XCTAssertLessThan(aboveFrame.minY - input.maxY, 45)
+                let below = try self.labelled("Below-editor fixture", in: host)
+                let belowFrame = try XCTUnwrap(below.frame())
+                XCTAssertLessThan(belowFrame.maxY, input.minY)
+                let status = try self.labelled("Native status fixture", in: host)
+                XCTAssertLessThan(try XCTUnwrap(status.frame()).maxY, belowFrame.minY)
+                _ = try self.labelled("Activity · 2 notices", in: host)
+                _ = try self.labelled("Error: Fixture resource is unavailable", in: host)
+                XCTAssertFalse(self.hasLabel("Background diagnostic fixture", in: host))
+                XCTAssertFalse(self.hasLabel("Legacy flattened widget", in: host))
+            }
         }
     }
 
@@ -1855,7 +1927,7 @@ done
                     try await self.key("/", in: editor)
                     self.assertNoConversationTabs(in: host)
                     let suggestions = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSScrollView }.first {
-                        self.descendants($0).contains { $0.accessibilityIdentifier().hasPrefix("pi-completion-") }
+                        $0.accessibilityIdentifier() == "pi-editor-suggestions"
                     })
                     XCTAssertFalse(suggestions.isHidden)
                     let popup = window.convertToScreen(suggestions.convert(suggestions.bounds, to: nil))
@@ -2037,7 +2109,7 @@ done
         }
     }
 
-    func testUsabilityDiagnosticsInlineAndInActivity() async throws {
+    func testUsabilityDiagnosticsSummaryAndInActivity() async throws {
         try await withModel { model in
             let id = UUID(); model.state.selected = id
             let path = FileManager.default.temporaryDirectory.appendingPathComponent("pi-diagnostics-" + UUID().uuidString)
@@ -2046,8 +2118,10 @@ done
             model.state.sessions = [SessionInfo(id: id, title: "Diagnostics fixture", directory: path.path)]
             model.state.notices = ["Synthetic extension diagnostic"]
             model.destination = .session(id); model.inspectorVisible = true
-            try await capture(CompanionWindow(model: model), name: "usability-diagnostics-activity", width: 1300, height: 800) { host, _ in
-                _ = try self.labelled("Synthetic extension diagnostic", in: host)
+            try await capture(CompanionWindow(model: model), name: "reference-diagnostics-collapsed", width: 1300, height: 800)
+            try await capture(CompanionWindow(model: model), name: "usability-diagnostics-activity", width: 1300, height: 800, hostingController: true) { host, _ in
+                _ = try self.labelled("Activity · 1 notices", in: host)
+                XCTAssertFalse(self.hasLabel("Synthetic extension diagnostic", in: host), "Informational diagnostics start collapsed")
                 try self.assertPiFooter(model, in: host)
                 let picker = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
                     (0..<control.segmentCount).contains { control.label(forSegment: $0) == "Activity" }

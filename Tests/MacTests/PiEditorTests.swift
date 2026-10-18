@@ -351,16 +351,242 @@ final class PiEditorCompletionTests: XCTestCase {
         XCTAssertEqual(draft.text, "new edited")
     }
 
-    func testNativeScrollHeightIsBounded() throws {
+    func testEmptyAndSingleLineUseCompactNativeHeight() throws {
+        let draft = Draft("")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let empty = view.fittingSize(for: 300)
+        XCTAssertEqual(empty.height, 35) // 34-point input and its bottom rule.
+        draft.text = "one line"
+        coordinator.update(parent)
+        XCTAssertEqual(view.fittingSize(for: 300), empty)
+        window.setContentSize(view.fittingSize(for: 300))
+        view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(try XCTUnwrap(view.editor.enclosingScrollView).frame.height, 34)
+        parent.isBusy = true
+        coordinator.update(parent)
+        XCTAssertEqual(view.intrinsicContentSize.height, empty.height)
+    }
+
+    func testMultilineWrappedAndTrailingNewlineGrowToNativeCap() throws {
+        let draft = Draft("line")
+        let (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let oneLine = view.fittingSize(for: 300).height
+        draft.text = "line\n"
+        coordinator.update(parent)
+        let twoLines = view.fittingSize(for: 300).height
+        XCTAssertGreaterThan(twoLines, oneLine)
+        draft.text = "line\nline\nline"
+        coordinator.update(parent)
+        XCTAssertGreaterThan(view.fittingSize(for: 300).height, twoLines)
+        draft.text = String(repeating: "word ", count: 30)
+        coordinator.update(parent)
+        let wide = view.fittingSize(for: 600).height
+        let narrow = view.fittingSize(for: 200).height
+        XCTAssertGreaterThan(narrow, wide)
+        draft.text = String(repeating: "line\n", count: 100)
+        coordinator.update(parent)
+        XCTAssertEqual(view.fittingSize(for: 300).height, 181)
+        window.setContentSize(view.fittingSize(for: 300))
+        view.layoutSubtreeIfNeeded()
+        let scroll = try XCTUnwrap(view.editor.enclosingScrollView)
+        XCTAssertEqual(scroll.frame.height, 180)
+        XCTAssertGreaterThan(view.editor.frame.height, scroll.contentSize.height)
+        draft.text = ""
+        coordinator.update(parent)
+        XCTAssertEqual(view.fittingSize(for: 300).height, 35)
+    }
+
+    func testMeasurementPreservesSelectionCompositionUndoAndScrollPosition() throws {
+        let draft = Draft(String(repeating: "line\n", count: 50))
+        let (_, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        view.editor.setSelectedRange(NSRange(location: 2, length: 0))
+        view.editor.setMarkedText("かな", selectedRange: NSRange(location: 2, length: 0),
+                                  replacementRange: view.editor.selectedRange())
+        let input = coordinator.input
+        let selection = view.editor.selectedRange()
+        let clip = try XCTUnwrap(view.editor.enclosingScrollView?.contentView)
+        let origin = clip.bounds.origin
+        let canUndo = view.editor.undoManager?.canUndo
+        for width: CGFloat in [100, 600, 300, 120] { _ = view.fittingSize(for: width) }
+        XCTAssertEqual(coordinator.input, input)
+        XCTAssertEqual(view.editor.selectedRange(), selection)
+        XCTAssertTrue(view.editor.hasMarkedText())
+        XCTAssertEqual(view.editor.undoManager?.canUndo, canUndo)
+        XCTAssertEqual(clip.bounds.origin, origin)
+    }
+
+    func testTextCaretAndTypingColorsRemainVisibleOnDarkSurface() throws {
         let draft = Draft("prompt")
         let (_, coordinator, view, window) = fixture(draft)
         defer { window.close() }
-        window.setContentSize(NSSize(width: 300, height: 240))
+        XCTAssertEqual(view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]), .darkAqua)
+        for color in [view.editor.textColor, view.editor.insertionPointColor,
+                      view.editor.typingAttributes[.foregroundColor] as? NSColor] {
+            let rgb = try XCTUnwrap(color?.usingColorSpace(.deviceRGB))
+            XCTAssertGreaterThan(rgb.redComponent, 0.8)
+            XCTAssertGreaterThan(rgb.greenComponent, 0.8)
+            XCTAssertGreaterThan(rgb.blueComponent, 0.8)
+            XCTAssertEqual(rgb.alphaComponent, 1)
+        }
+        withExtendedLifetime(coordinator) {}
+    }
+
+    func testCompletionsAreBelowBottomRuleAndAddOnlyTheirOwnHeight() throws {
+        let draft = Draft("/m")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let plainHeight = view.fittingSize(for: 300).height
+        parent.separatorColor = .systemPurple
+        parent.completions = PiEditorCompletions(input: coordinator.input, replacementRange: NSRange(location: 0, length: 2),
+                                                 options: (0..<8).map { .init(id: "\($0)", label: "/model \($0)", replacement: "/model ") })
+        coordinator.update(parent)
+        XCTAssertEqual(view.fittingSize(for: 300).height, plainHeight + 140)
+        window.setContentSize(view.fittingSize(for: 300))
         view.layoutSubtreeIfNeeded()
         let scroll = try XCTUnwrap(view.editor.enclosingScrollView)
-        XCTAssertLessThanOrEqual(scroll.frame.height, 180)
-        XCTAssertGreaterThanOrEqual(scroll.frame.height, 48)
-        withExtendedLifetime(coordinator) {}
+        XCTAssertEqual(view.bottomRule.frame.minY, scroll.frame.maxY)
+        XCTAssertEqual(view.bottomRule.frame.height, 1)
+        XCTAssertEqual(view.bottomRule.layer?.backgroundColor, NSColor.systemPurple.cgColor)
+        let suggestions = try XCTUnwrap(view.subviews.compactMap { $0 as? NSScrollView }.first { $0 !== scroll })
+        XCTAssertEqual(suggestions.frame.minY, view.bottomRule.frame.maxY)
+        XCTAssertEqual(suggestions.frame.height, 140)
+        let buttons = try XCTUnwrap(suggestions.documentView).subviews.compactMap { $0 as? NSButton }
+        XCTAssertEqual(buttons.count, 8)
+        XCTAssertEqual(buttons.first?.frame.minY, 0)
+        XCTAssertEqual(buttons.last?.frame.maxY, 224)
+        let origin = suggestions.contentView.bounds.origin
+        coordinator.update(parent)
+        XCTAssertEqual(suggestions.contentView.bounds.origin, origin)
+        XCTAssertEqual(scroll.frame.height, 34)
+    }
+
+    func testSwiftUIUsesMeasuredHeightWithoutFixedEditorFrame() {
+        let draft = Draft("")
+        func content(width: CGFloat) -> some View {
+            PiEditor(text: .constant(draft.text), onSubmit: { _ in }, onStop: {}).frame(width: width)
+        }
+        let hosting = NSHostingView(rootView: content(width: 300))
+        XCTAssertEqual(hosting.fittingSize.height, 35)
+        draft.text = String(repeating: "line\n", count: 50)
+        hosting.rootView = content(width: 300)
+        XCTAssertEqual(hosting.fittingSize.height, 181)
+        draft.text = String(repeating: "word ", count: 30)
+        hosting.rootView = content(width: 600)
+        let wide = hosting.fittingSize.height
+        hosting.rootView = content(width: 200)
+        XCTAssertGreaterThan(hosting.fittingSize.height, wide)
+        draft.text = ""
+        hosting.rootView = content(width: 300)
+        XCTAssertEqual(hosting.fittingSize.height, 35)
+    }
+
+    private struct SizingFixture: View {
+        @State private var text = ""
+        var body: some View {
+            PiEditor(text: $text, onSubmit: { _ in }, onStop: {})
+        }
+    }
+
+    func testSwiftUIHeightUpdatesAfterNativeTypingAndUndo() async throws {
+        let hosting = NSHostingView(rootView: SizingFixture().frame(width: 300))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = hosting
+        hosting.layoutSubtreeIfNeeded()
+        XCTAssertEqual(hosting.fittingSize.height, 35)
+        func nativeView(in view: NSView) -> PiEditorNativeView? {
+            (view as? PiEditorNativeView) ?? view.subviews.lazy.compactMap { nativeView(in: $0) }.first
+        }
+        let native = try XCTUnwrap(nativeView(in: hosting))
+        for _ in 0..<100 where window.firstResponder !== native.editor { await Task.yield() }
+        XCTAssertTrue(window.firstResponder === native.editor)
+        native.editor.insertText("first\nsecond\nthird", replacementRange: NSRange(location: 0, length: 0))
+        for _ in 0..<100 where hosting.fittingSize.height == 35 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertGreaterThan(hosting.fittingSize.height, 35)
+        native.editor.undoManager?.undo()
+        for _ in 0..<100 where hosting.fittingSize.height != 35 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(hosting.fittingSize.height, 35)
+    }
+
+    func testCompletionNavigationDoesNotScrollOuterConversation() throws {
+        let draft = Draft("/m")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { window.close() }
+        let outer = NSScrollView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
+        let document = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 1000))
+        outer.documentView = document
+        window.contentView = outer
+        document.addSubview(view)
+        view.frame = NSRect(x: 0, y: 600, width: 300, height: 175)
+        outer.contentView.scroll(to: NSPoint(x: 0, y: 100))
+        let origin = outer.contentView.bounds.origin
+        parent.completions = PiEditorCompletions(input: coordinator.input, replacementRange: NSRange(location: 0, length: 2),
+                                                 options: (0..<8).map { .init(id: "\($0)", label: "/model \($0)", replacement: "/model ") })
+        coordinator.update(parent)
+        XCTAssertEqual(outer.contentView.bounds.origin, origin)
+        for _ in 0..<7 { XCTAssertTrue(coordinator.handle(PiEditorKey(.down))) }
+        XCTAssertEqual(outer.contentView.bounds.origin, origin)
+        let inputScroll = try XCTUnwrap(view.editor.enclosingScrollView)
+        let completionScroll = try XCTUnwrap(view.subviews.compactMap { $0 as? NSScrollView }.first { $0 !== inputScroll })
+        XCTAssertGreaterThan(completionScroll.contentView.bounds.origin.y, 0)
+        let completionOrigin = completionScroll.contentView.bounds.origin
+        coordinator.update(parent)
+        XCTAssertEqual(completionScroll.contentView.bounds.origin, completionOrigin)
+        XCTAssertEqual(outer.contentView.bounds.origin, origin)
+    }
+
+    private final class FocusWindow: NSWindow {
+        var blockingSheet: NSWindow?
+        override var attachedSheet: NSWindow? { blockingSheet ?? super.attachedSheet }
+    }
+
+    func testInitialFocusRetriesButDoesNotStealFromTextFieldOrSheet() async {
+        _ = NSApplication.shared
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 120))
+        let window = FocusWindow(contentRect: root.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = root
+        defer { window.close() }
+        let field = NSTextField(frame: NSRect(x: 0, y: 80, width: 200, height: 24))
+        root.addSubview(field)
+        window.makeFirstResponder(field)
+        let editor = PiEditorNativeView(frame: NSRect(x: 0, y: 0, width: 300, height: 35))
+        root.addSubview(editor)
+        for _ in 0..<10 { await Task.yield() }
+        editor.focusInitiallyIfAvailable()
+        XCTAssertTrue(window.firstResponder === field.currentEditor())
+        window.makeFirstResponder(window)
+        let sheet = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
+        sheet.isReleasedWhenClosed = false
+        window.blockingSheet = sheet
+        editor.focusInitiallyIfAvailable()
+        XCTAssertFalse(window.firstResponder === editor.editor)
+        window.blockingSheet = nil
+        sheet.close()
+        editor.focusInitiallyIfAvailable()
+        XCTAssertTrue(window.firstResponder === editor.editor)
+        window.makeFirstResponder(field)
+        editor.focusInitiallyIfAvailable()
+        XCTAssertTrue(window.firstResponder === field.currentEditor())
+        window.makeFirstResponder(window)
+        editor.focusInitiallyIfAvailable()
+        XCTAssertTrue(window.firstResponder === window)
+    }
+
+    func testInitialFocusAfterWindowAttachmentWithoutActiveControl() async {
+        _ = NSApplication.shared
+        let view = PiEditorNativeView(frame: NSRect(x: 0, y: 0, width: 300, height: 35))
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = view
+        for _ in 0..<100 where window.firstResponder !== view.editor { await Task.yield() }
+        XCTAssertTrue(window.firstResponder === view.editor)
     }
 
     func testVisualWrappingAndEmptyFinalLineAreNotHistoryBoundaries() {

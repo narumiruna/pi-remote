@@ -63,6 +63,7 @@ targets:
       - Apps/macOS/PiConversationView.swift
       - Apps/macOS/PiConfigurationPicker.swift
       - Apps/macOS/PiPresentation.swift
+      - Apps/macOS/PiStartupView.swift
       - Apps/macOS/PiEditor.swift
       - Apps/macOS/PiExtensionDialog.swift
       - Apps/macOS/CompanionConnectionViews.swift

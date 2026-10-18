@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Native equivalents of the built-in dark terminal theme, not an ANSI renderer.
 enum PiPalette {
-    static let background = Color(red: 0.10, green: 0.10, blue: 0.10)
+    static let background = Color(red: 17 / 255, green: 17 / 255, blue: 17 / 255)
     static let panel = Color(red: 0.13, green: 0.23, blue: 0.29)
     static let accent = Color(red: 0.65, green: 0.60, blue: 0.84)
     static let muted = Color(red: 0.62, green: 0.65, blue: 0.66)
@@ -136,12 +136,28 @@ struct PiFooterValue: Equatable {
     let phase: String
 
     init(state: HostSnapshot, statistics: SessionStatistics?) {
-        directory = state.sessions.first { $0.id == state.selected }?.directory ?? "No working directory"
+        let path = state.sessions.first { $0.id == state.selected }?.directory
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        directory = path.map { $0 == home ? "~" : ($0.hasPrefix(home + "/") ? "~" + String($0.dropFirst(home.count)) : $0) } ?? "No working directory"
         model = state.model.isEmpty ? "Model unavailable" : state.model
         phase = state.selected == nil ? "No session" : state.phase
         if let statistics {
-            let context = statistics.contextUsage?.percent.map { String(format: "%.1f%% context", $0) } ?? "context unavailable"
-            usage = "↑\(statistics.tokens.input) ↓\(statistics.tokens.output) · " + String(format: "$%.4f", statistics.cost) + " · " + context
+            var parts: [String] = []
+            for (prefix, count) in [("↑", statistics.tokens.input), ("↓", statistics.tokens.output),
+                                    ("R", statistics.tokens.cacheRead), ("W", statistics.tokens.cacheWrite)] where count > 0 {
+                parts.append(prefix + Self.count(count))
+            }
+            parts.append(String(format: "$%.3f", statistics.cost))
+            if let context = statistics.contextUsage {
+                let percent = context.percent.map { String(format: "%.1f%%", $0) } ?? "?"
+                parts.append(percent + "/" + Self.count(context.contextWindow))
+            } else { parts.append("context unavailable") }
+            if state.runtime?.autoCompactionEnabled == true { parts.append("(auto)") }
+            usage = parts.joined(separator: " ")
         } else { usage = "Usage unavailable" }
+    }
+
+    private static func count(_ value: Int) -> String {
+        value >= 1_000 && value % 1_000 == 0 ? "\(value / 1_000)k" : String(value)
     }
 }
