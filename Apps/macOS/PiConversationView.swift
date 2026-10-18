@@ -17,6 +17,15 @@ struct PiConversationView: View {
     @State private var completions: PiEditorCompletions?
     @State private var completionGeneration = UUID()
     @State private var completionError: String?
+    @State private var viewportHeight: CGFloat = 1
+    @State private var disclosure: ToolDisclosureRequest?
+
+    private struct ToolDisclosureRequest {
+        let id = UUID()
+        let message: UUID
+        let viewportY: CGFloat
+        let context: String
+    }
 
     private var contextID: String { model.state.epoch.uuidString + (model.state.selected?.uuidString ?? "none") }
     private var canCompose: Bool {
@@ -34,7 +43,7 @@ struct PiConversationView: View {
         .accessibilityIdentifier("pi-coding-surface")
         .task(id: model.state.phase + contextID) { await refreshStatistics() }
         .onChange(of: model.state.context) { _, _ in
-            shellOffer = nil; completions = nil; completionError = nil
+            shellOffer = nil; completions = nil; completionError = nil; disclosure = nil
             completionGeneration = UUID(); statistics = nil; statisticsSequence = nil; scrollFollowing.reset(); showActivity = false
         }
         .sheet(item: $shellOffer) { offer in
@@ -60,7 +69,10 @@ struct PiConversationView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    transcript.padding(.horizontal, 12).padding(.top, 8)
+                    transcript { message, viewportY in
+                        scrollFollowing.pause()
+                        disclosure = ToolDisclosureRequest(message: message, viewportY: viewportY, context: contextID)
+                    }.padding(.horizontal, 12).padding(.top, 8)
                     if let shell = model.state.bash,
                        shell.working || shell.status == .unknownOutcome || !model.state.messages.contains(where: {
                            $0.role == "bash" && $0.text.hasPrefix((shell.excludeFromContext ? "!! " : "! ") + shell.command + "\n")
@@ -87,6 +99,15 @@ struct PiConversationView: View {
                     Color.clear.frame(height: 1).id("pi-surface-end")
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, 8)
             }
+            .coordinateSpace(name: "pi-surface-viewport")
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = max(1, $0) }
+            .task(id: disclosure?.id) {
+                guard let request = disclosure else { return }
+                await Task.yield()
+                guard !Task.isCancelled, request.context == contextID else { return }
+                let anchor = UnitPoint(x: 0, y: min(1, max(0, request.viewportY / viewportHeight)))
+                proxy.scrollTo("pi-tool-anchor-" + request.message.uuidString, anchor: anchor)
+            }
             .task(id: contextID) {
                 await Task.yield()
                 if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
@@ -96,7 +117,13 @@ struct PiConversationView: View {
             } action: { _, atBottom in
                 scrollFollowing.geometryChanged(atBottom: atBottom)
             }
-            .onScrollPhaseChange { _, phase in scrollFollowing.phaseChanged(phase) }
+            .onScrollPhaseChange { _, phase in
+                if phase == .tracking || phase == .interacting || phase == .decelerating { disclosure = nil }
+                scrollFollowing.phaseChanged(phase)
+            }
+            .onChange(of: expandTools) { _, _ in
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+            }
             .onChange(of: model.state.messages) { _, _ in
                 if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
@@ -121,7 +148,7 @@ struct PiConversationView: View {
         }
     }
 
-    private var transcript: some View {
+    private func transcript(onDisclosure: @escaping (UUID, CGFloat) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             PiStartupView(state: model.state, expanded: expandTools,
                           newSession: { if !model.state.working, model.startupError == nil { model.panel = "directory" } },
@@ -136,7 +163,7 @@ struct PiConversationView: View {
             }
             ForEach(model.state.messages) { message in
                 PiTranscriptRow(message: message, showThinking: showThinking, expandTools: expandTools,
-                                request: model.scopedRequest(for: model.state))
+                                request: model.scopedRequest(for: model.state), onDisclosure: onDisclosure, runtimePhase: model.state.phase)
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -461,34 +488,14 @@ private struct PiTranscriptRow: View {
     let showThinking: Bool
     let expandTools: Bool
     let request: (SessionAction) async throws -> AppResult
+    var onDisclosure: (UUID, CGFloat) -> Void = { _, _ in }
+    var runtimePhase: String? = nil
     @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if message.role == "tool" {
-                Button { expanded.toggle() } label: {
-                    HStack(alignment: .top, spacing: 6) {
-                        Text((expanded || expandTools) ? "▾" : "▸")
-                        Text(message.text.components(separatedBy: "\n").first ?? "Tool")
-                            .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(message.streaming ? "…" : (message.isError ? "failed" : "✓"))
-                    }
-                }.buttonStyle(.plain).foregroundStyle(message.isError ? PiPalette.warning : PiPalette.accent)
-                if expanded || expandTools {
-                    ScrollView(.horizontal) { Text(message.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                } else if message.isError {
-                    Text(DisplayLimit.text(message.text.components(separatedBy: "\n").dropFirst().joined(separator: "\n"), bytes: 512))
-                        .foregroundStyle(PiPalette.warning).textSelection(.enabled)
-                } else {
-                    let lines = message.text.components(separatedBy: "\n")
-                    if lines.first == "bash" {
-                        Text(lines.dropFirst().suffix(5).joined(separator: "\n")).foregroundStyle(PiPalette.muted).textSelection(.enabled)
-                        if lines.count > 6 { Text("Earlier output hidden · expand to read").foregroundStyle(PiPalette.muted) }
-                    } else if lines.first != "read", lines.count > 1 {
-                        Text(lines.dropFirst().prefix(10).joined(separator: "\n")).foregroundStyle(PiPalette.muted).textSelection(.enabled)
-                        if lines.count > 11 { Text("More output hidden · expand to read").foregroundStyle(PiPalette.muted) }
-                    }
-                }
+                PiToolRow(message: message, expandTools: expandTools, onDisclosure: onDisclosure, runtimePhase: runtimePhase)
             } else if message.role == "bash" {
                 Rectangle().fill(PiPalette.bash).frame(height: 1)
                 let lines = message.text.components(separatedBy: "\n")
@@ -514,18 +521,19 @@ private struct PiTranscriptRow: View {
             }
             if let images = message.images { OutputImageList(images: images, request: request) }
             if message.truncated { Text("Display limit reached. Full saved content is available through History.").foregroundStyle(PiPalette.warning) }
-            if message.streaming { Text("…").foregroundStyle(PiPalette.muted).accessibilityLabel("Streaming") }
+            if message.streaming, message.role != "tool" { Text("…").foregroundStyle(PiPalette.muted).accessibilityLabel("Streaming") }
         }
-        .padding(message.role == "user" || message.role == "tool" ? 10 : 0)
+        .padding(message.role == "user" ? 10 : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(message.role == "tool" ? (message.isError ? PiPalette.toolError : (message.streaming ? PiPalette.toolPending : PiPalette.toolSuccess)) : (message.role == "user" ? PiPalette.panel : Color.clear))
+        .background(message.role == "user" ? PiPalette.panel : Color.clear)
         .foregroundStyle(message.isError ? PiPalette.warning : PiPalette.text)
         .accessibilityIdentifier("pi-message-" + message.id.uuidString)
     }
 }
 
-private struct PiMarkdown: View {
+struct PiMarkdown: View {
     let text: String
+    var copyCode: (String) throws -> Void = { try LocalClipboard.copy($0) }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(MarkdownDocument(text).blocks) { block in
@@ -533,9 +541,7 @@ private struct PiMarkdown: View {
                     if let marker = block.marker { Text(marker).foregroundStyle(PiPalette.muted) }
                     switch block.kind {
                     case .code:
-                        ScrollView(.horizontal) {
-                            Text(String(block.text.characters)).textSelection(.enabled).padding(8)
-                        }.background(PiPalette.panel)
+                        PiCodeBlock(code: String(block.text.characters), language: block.language, copy: copyCode)
                     case .rule: Rectangle().fill(PiPalette.muted).frame(height: 1)
                     case .heading:
                         Text(block.text).bold().foregroundStyle(PiPalette.heading).textSelection(.enabled)

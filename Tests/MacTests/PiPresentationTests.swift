@@ -127,6 +127,45 @@ private final class PiFixtureSecrets: SecretStore, @unchecked Sendable {
         await model.shutdown()
     }
 
+    func testReferenceRefinementSurfaceCaptures() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "PiRemote.ReferenceRefinements." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: root) }
+        let model = CompanionModel(support: root, secrets: PiFixtureSecrets(), defaults: defaults)
+        let id = UUID()
+        model.state.sessions = [SessionInfo(id: id, title: "Reference refinement fixture", directory: "/tmp/fixture-project")]
+        model.state.selected = id; model.state.phase = "working"; model.state.model = "fixture/model"
+        model.state.messages = [
+            TranscriptMessage(role: "assistant", text: "## Focused parser update\n```swift\n// Preserve the original input.\nlet value = \"fixture 文\"\nif value.isEmpty { return }\n```"),
+            TranscriptMessage(role: "tool", text: "read\nFixture file contents", tool: TranscriptTool(name: "read", target: "Sources/Parser.swift", status: .completed)),
+            TranscriptMessage(role: "tool", text: "edit\n- old value\n+ new value", tool: TranscriptTool(name: "edit", target: "Sources/Parser.swift", status: .completed)),
+            TranscriptMessage(role: "tool", text: "bash\nfixture test passed", tool: TranscriptTool(name: "bash", target: "swift test --filter Parser", status: .completed)),
+            TranscriptMessage(role: "tool", text: "read\nPermission denied for fixture file", isError: true, tool: TranscriptTool(name: "read", target: "Private/Fixture.swift", status: .failed)),
+            TranscriptMessage(role: "tool", text: "write\nFinal result was not received", tool: TranscriptTool(name: "write", target: "Sources/Result.swift", status: .interrupted)),
+            TranscriptMessage(role: "tool", text: "read — Running", streaming: true, tool: TranscriptTool(name: "read", target: "Tests/VeryLongDirectoryName/Unicode文/ParserTests.swift", status: .running))
+        ]
+        do {
+            for width in [900, 1300] {
+                try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "reference-refinements-\(width)", size: NSSize(width: width, height: 760))
+            }
+        } catch { await model.shutdown(); throw error }
+        await model.shutdown()
+    }
+
+    func testMarkdownCopyUsesDisplayedCodeWithoutCopyingOnRender() async throws {
+        let markdown = "Before\n```swift\nlet value = \"文\"\r\nprint(value)\r\n```\nAfter"
+        let block = try XCTUnwrap(MarkdownDocument(markdown).blocks.first { $0.kind == .code })
+        let displayed = String(block.text.characters)
+        var copies: [String] = []
+        try await capture(PiMarkdown(text: markdown, copyCode: { copies.append($0) }), name: "reference-markdown-code-copy", size: NSSize(width: 900, height: 600)) { host, _ in
+            XCTAssertTrue(copies.isEmpty)
+            let button = try XCTUnwrap(self.subviews(host).compactMap { $0 as? NSButton }.first { $0.accessibilityIdentifier() == "pi-code-copy" })
+            button.performClick(nil)
+            XCTAssertEqual(copies, [displayed], "Copy preserves the displayed code. Markdown parsing can normalize line endings.")
+        }
+    }
+
     func testNativeSelectorsAndStandardDialogsNeverDispatchOnPresentation() async throws {
         var state = HostSnapshot(host: UUID(), epoch: UUID())
         state.selected = UUID()

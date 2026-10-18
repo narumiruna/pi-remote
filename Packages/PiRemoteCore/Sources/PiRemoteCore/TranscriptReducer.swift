@@ -28,7 +28,31 @@ public struct TranscriptReducer: Sendable {
     public init() {}
 
     public mutating func replaceHistory(_ values: [JSONValue]) {
-        messages = values.compactMap(Self.message)
+        let projected = values.compactMap { value in Self.message(value).map { (value, $0) } }
+        // Only the last 100 display rows can survive bound(). Keep no raw argument cache.
+        let needed = Set(projected.suffix(100).compactMap { value, _ in
+            value["role"]?.string == "toolResult" ? value["toolCallId"]?.string : nil
+        })
+        var calls: [String: TranscriptTool] = [:]
+        var truncatedCalls: Set<String> = []
+        messages = projected.map { value, message in
+            if value["role"]?.string == "assistant" {
+                for call in value["content"]?.array ?? [] where call["type"]?.string == "toolCall" {
+                    guard let id = call["id"]?.string, needed.contains(id) else { continue }
+                    let presentation = TranscriptTool.presentation(name: call["name"]?.string, arguments: call["arguments"], status: .completed)
+                    calls[id] = presentation.tool
+                    if presentation.truncated { truncatedCalls.insert(id) } else { truncatedCalls.remove(id) }
+                }
+            }
+            var message = message
+            if value["role"]?.string == "toolResult", let id = value["toolCallId"]?.string,
+               var tool = calls[id] {
+                tool.status = message.isError ? .failed : .completed
+                message.tool = tool
+                message.truncated = message.truncated || truncatedCalls.contains(id)
+            }
+            return message
+        }
         assistant = nil; blocks.removeAll()
         tools.removeAll()
         omitted = false
@@ -43,6 +67,7 @@ public struct TranscriptReducer: Sendable {
             phase = "idle"
             for i in messages.indices where messages[i].streaming {
                 messages[i].streaming = false
+                if messages[i].tool?.status == .running { messages[i].tool?.status = .interrupted }
             }
         case "compaction_start":
             // Automatic compaction can precede agent_start, but only settlement ends that operation.
@@ -89,12 +114,20 @@ public struct TranscriptReducer: Sendable {
                       let index = messages.firstIndex(where: { $0.id == id }) {
                 if var complete = Self.message(raw) {
                     complete.id = id
+                    // The final result usually has no arguments. Keep the start target.
+                    if var presentation = messages[index].tool {
+                        presentation.status = complete.isError ? .failed : .completed
+                        complete.tool = presentation
+                    }
+                    complete.truncated = complete.truncated || messages[index].truncated
                     messages[index] = complete
                 } else { messages.remove(at: index); tools.removeValue(forKey: tool) }
             } else if let item = Self.message(raw) { messages.append(item) }
         case "tool_execution_start":
             if let id = event["toolCallId"]?.string {
-                let item = TranscriptMessage(role: "tool", text: (event["toolName"]?.string ?? "Tool") + " — Running", streaming: true)
+                let presentation = TranscriptTool.presentation(name: event["toolName"]?.string, arguments: event["args"], status: .running)
+                let item = TranscriptMessage(role: "tool", text: (event["toolName"]?.string ?? "Tool") + " — Running",
+                                             streaming: true, truncated: presentation.truncated, tool: presentation.tool)
                 tools[id] = item.id
                 messages.append(item)
             }
@@ -105,8 +138,13 @@ public struct TranscriptReducer: Sendable {
                 messages[index].text = (event["toolName"]?.string ?? "Tool") + "\n" + Self.content(result?["content"])
                 messages[index].images = Self.imageReferences(result?["content"])
                 if (result?["content"]?.array ?? []).filter({ $0["type"]?.string == "image" }).count > 16 { messages[index].truncated = true }
-                messages[index].streaming = event["type"]?.string != "tool_execution_end"
-                messages[index].isError = event["isError"]?.bool == true
+                let final = event["type"]?.string == "tool_execution_end"
+                messages[index].streaming = !final
+                // The explicit final flag includes tool-hook overrides. Partial
+                // errors and a result's own flag cannot override that outcome.
+                let isError = event["isError"]?.bool ?? result?["isError"]?.bool ?? false
+                messages[index].isError = isError
+                messages[index].tool?.status = final ? (isError ? .failed : .completed) : .running
             }
         default: break
         }
@@ -136,19 +174,26 @@ public struct TranscriptReducer: Sendable {
         let fallback = value["summary"]?.string ?? value["output"]?.string ?? value["errorMessage"]?.string ?? ""
         let toolPrefix = role == "toolResult" ? value["toolName"]?.string.flatMap { $0.isEmpty ? nil : $0 + "\n" } ?? "" : ""
         let body = toolPrefix + (text.isEmpty ? fallback : text)
+        let isError = value["isError"]?.bool == true || value["stopReason"]?.string == "error"
+        let presentation = role == "toolResult"
+            ? TranscriptTool.presentation(name: value["toolName"]?.string, arguments: nil, status: isError ? .failed : .completed)
+            : nil
         let thinking = (value["content"]?.array ?? []).compactMap { block -> String? in
             guard block["type"]?.string == "thinking", block["redacted"]?.bool != true else { return nil }
             return block["thinking"]?.string
         }.joined(separator: "\n")
-        guard !body.isEmpty || !thinking.isEmpty else { return nil }
-        return TranscriptMessage(
+        guard !body.isEmpty || !thinking.isEmpty || presentation != nil else { return nil }
+        var message = TranscriptMessage(
             role: role == "toolResult" ? "tool" : role,
-            text: DisplayLimit.text(body, bytes: 16_384),
-            thinking: thinking.isEmpty ? nil : DisplayLimit.text(thinking, bytes: max(0, 16_384 - min(body.utf8.count, 16_384))),
-            isError: value["isError"]?.bool == true || value["stopReason"]?.string == "error",
-            truncated: body.utf8.count + thinking.utf8.count > 16_384 || (value["content"]?.array ?? []).filter({ $0["type"]?.string == "image" }).count > 16,
-            images: imageReferences(value["content"])
+            text: body,
+            thinking: thinking.isEmpty ? nil : thinking,
+            isError: isError,
+            truncated: presentation?.truncated == true || (value["content"]?.array ?? []).filter({ $0["type"]?.string == "image" }).count > 16,
+            images: imageReferences(value["content"]),
+            tool: presentation?.tool
         )
+        _ = Self.boundMessage(&message, bytes: 16_384)
+        return message
     }
 
     public static func imageReferences(_ content: JSONValue?) -> [OutputImageReference]? {
@@ -222,6 +267,22 @@ public struct TranscriptReducer: Sendable {
         return name + "\n" + String(decoding: data, as: UTF8.self)
     }
 
+    private static func boundMessage(_ message: inout TranscriptMessage, bytes: Int) -> Bool {
+        let metadataBytes = message.tool?.displayBytes ?? 0
+        // Do not retain a tool row without its outcome, or a shell row without its footer.
+        guard metadataBytes <= bytes else { return false }
+        let textLimit = bytes - metadataBytes
+        if message.text.utf8.count > textLimit {
+            if message.role == "bash" { return false }
+            message.text = DisplayLimit.text(message.text, bytes: textLimit); message.truncated = true
+        }
+        let thoughtLimit = max(0, textLimit - message.text.utf8.count)
+        if let thinking = message.thinking, thinking.utf8.count > thoughtLimit {
+            message.thinking = DisplayLimit.text(thinking, bytes: thoughtLimit); message.truncated = true
+        }
+        return true
+    }
+
     private mutating func bound() {
         // Keep even maximally escaped UTF-8 display text below the wire-frame budget.
         var remaining = 256 * 1_024
@@ -230,16 +291,8 @@ public struct TranscriptReducer: Sendable {
             guard remaining > 0 else { omitted = true; break }
             let limit = min(16_384, remaining)
             guard limit > 0 else { omitted = true; break }
-            if message.text.utf8.count > limit {
-                // Omit a shell row rather than remove its command or final outcome.
-                if message.role == "bash" { omitted = true; break }
-                message.text = DisplayLimit.text(message.text, bytes: limit); message.truncated = true
-            }
-            let thoughtLimit = max(0, limit - message.text.utf8.count)
-            if let thinking = message.thinking, thinking.utf8.count > thoughtLimit {
-                message.thinking = DisplayLimit.text(thinking, bytes: thoughtLimit); message.truncated = true
-            }
-            remaining -= message.text.utf8.count + (message.thinking?.utf8.count ?? 0)
+            guard Self.boundMessage(&message, bytes: limit) else { omitted = true; break }
+            remaining -= message.text.utf8.count + (message.thinking?.utf8.count ?? 0) + (message.tool?.displayBytes ?? 0)
             retained.append(message)
         }
         if retained.count < messages.count { omitted = true }
