@@ -40,6 +40,7 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
     }
 }
 
+// Shared phone presentation regression fixture. The Mac root uses PiConversationView.
 @MainActor private struct ComposerFixture: View {
     let state: HostSnapshot
     let send: () -> Void
@@ -203,6 +204,7 @@ done
             XCTAssertTrue(sessions.allSatisfy { $0.title == "pi-remote" })
             XCTAssertNil(model.state.selected, "Reading saved labels must not activate Pi")
             model.destination = .session(ids[0]); model.expandedWorkspaces = [project.path]
+            model.sidebarVisible = true
             for (width, height) in [(900, 600), (1300, 800)] {
                 try await capture(CompanionWindow(model: model), name: "usability-saved-instruction-names-\(width)", width: CGFloat(width), height: CGFloat(height))
             }
@@ -220,7 +222,7 @@ done
     private func accessibilityElements(in root: NSView) -> [PresentationAccessibility] {
         var hitElements: [NSObject] = []
         if let window = root.window {
-            for y in stride(from: CGFloat(20), to: root.bounds.height, by: 30) {
+            for y in stride(from: CGFloat(20), to: root.bounds.height, by: 15) {
                 for x in stride(from: CGFloat(20), to: root.bounds.width, by: 120) {
                     if let hit = root.accessibilityHitTest(window.convertPoint(toScreen: root.convert(NSPoint(x: x, y: y), to: nil))) as? NSObject {
                         hitElements.append(hit)
@@ -230,9 +232,12 @@ done
         }
         for scroll in descendants(root).compactMap({ $0 as? NSScrollView }) {
             guard let window = scroll.window else { continue }
-            for y in stride(from: CGFloat(15), to: scroll.bounds.height, by: 30) {
-                let point = window.convertPoint(toScreen: scroll.convert(NSPoint(x: min(30, scroll.bounds.width / 2), y: y), to: nil))
-                if let hit = scroll.accessibilityHitTest(point) as? NSObject { hitElements.append(hit) }
+            // Compact terminal rows can be shorter than the old 30-point scan step.
+            for y in stride(from: CGFloat(6), to: scroll.bounds.height, by: 12) {
+                for x in [min(30, scroll.bounds.width / 2), max(0, scroll.bounds.width - 20)] {
+                    let point = window.convertPoint(toScreen: scroll.convert(NSPoint(x: x, y: y), to: nil))
+                    if let hit = scroll.accessibilityHitTest(point) as? NSObject { hitElements.append(hit) }
+                }
             }
         }
         var visited = Set<ObjectIdentifier>()
@@ -311,6 +316,29 @@ done
         }
         try await Task.sleep(for: .milliseconds(150))
         root.layoutSubtreeIfNeeded()
+    }
+
+    private func showSidebar(_ model: CompanionModel, in host: NSView) async throws {
+        if !model.sidebarVisible { try await press("sidebar.left", in: host, title: "Sidebar") }
+        XCTAssertTrue(model.sidebarVisible)
+        XCTAssertFalse(descendants(host).compactMap { $0 as? NSOutlineView }.isEmpty)
+    }
+
+    private func assertPiFooter(_ model: CompanionModel, in host: NSView) throws {
+        // SwiftUI exports footer children with the coding-surface identifier.
+        let value = PiFooterValue(state: model.state, statistics: nil)
+        let directory = try labelled(value.directory, in: host)
+        _ = try labelled(value.phase, in: host)
+        _ = try labelled(value.model, in: host)
+        let frame = try XCTUnwrap(directory.frame())
+        let editor = try nativeEditor(in: host)
+        let window = try XCTUnwrap(editor.window)
+        let input = window.convertToScreen(editor.convert(editor.bounds, to: nil))
+        XCTAssertLessThan(frame.maxY, input.minY, "The Pi footer belongs below the editor")
+    }
+
+    private func chooseSecondaryAction(_ title: String, in host: NSView) async throws {
+        try await press(title == "Files" ? "mac-files" : "mac-commands", in: host)
     }
 
     private func enter(_ text: String, placeholder: String, in root: NSView) throws {
@@ -395,6 +423,7 @@ done
                 model.text = "Retain this unsent instruction"
                 let context = model.state.context
                 try await capture(CompanionWindow(model: model), name: "management-row-close-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
+                    try await self.showSidebar(model, in: host)
                     try await self.press("mac-session-close-" + session.id.uuidString, in: host)
                     XCTAssertTrue(model.closedSessionIDs.contains(session.id))
                     XCTAssertEqual(model.destination, .workspace(session.directory), "Close must not select another session")
@@ -417,6 +446,7 @@ done
             model.state.sessions = [active, saved]; model.state.selected = active.id; model.state.phase = "working"
             model.destination = .session(active.id); model.expandedWorkspaces = [active.directory]
             try await capture(CompanionWindow(model: model), name: "management-native-pointer-1300", width: 1300, height: 800) { host, window in
+                try await self.showSidebar(model, in: host)
                 let activeClose = try self.element("mac-session-close-" + active.id.uuidString, in: host)
                 let activeFrame = try XCTUnwrap(activeClose.frame())
                 let savedRow = try self.element("mac-session-" + saved.id.uuidString, in: host)
@@ -448,6 +478,7 @@ done
             model.destination = .session(session.id); model.expandedWorkspaces = [session.directory]
             model.text = "Keep draft after cancellation"
             try await capture(CompanionWindow(model: model), name: "management-working-cancel-900", width: 900, height: 600) { host, window in
+                try await self.showSidebar(model, in: host)
                 try await self.press("mac-session-close-" + session.id.uuidString, in: host)
                 let dialog = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
                 try self.managementDump(dialog, name: "working-confirmation")
@@ -512,7 +543,7 @@ done
     }
 
     func testReviewAllIdleCloseRoutesKeepHistoryAndFlushDraftBeforeHiding() async throws {
-        for route in ["row", "header", "inspector"] {
+        for route in ["row", "toolbar", "inspector"] {
             try await withWorkingCloseModel { model, _, defaults in
                 _ = try await model.request(.stop)
                 try await self.waitForPresentationState { model.state.phase == "idle" }
@@ -524,11 +555,12 @@ done
                 let history = try Dictionary(uniqueKeysWithValues: files.map { ($0, try Data(contentsOf: $0)) })
                 XCTAssertFalse(history.isEmpty)
                 try await self.capture(CompanionWindow(model: model), name: "review-idle-close-" + route, width: 1300, height: 800, hostingController: true) { host, _ in
+                    if route == "row" { try await self.showSidebar(model, in: host) }
                     if route == "inspector" { try await self.showSessionInspector(in: host) }
                     model.text = "Flush this latest " + route + " draft"
                     let draft = model.text
                     let identifier = route == "inspector" ? "mac-inspector-close-session"
-                        : (route == "header" ? "mac-close-focused-session" : "mac-session-close-" + session.id.uuidString)
+                        : (route == "toolbar" ? "mac-close-focused-session" : "mac-session-close-" + session.id.uuidString)
                     try await self.press(identifier, in: host)
                     try await self.waitForPresentationState { model.closedSessionIDs.contains(session.id) }
                     XCTAssertNil(model.state.selected)
@@ -571,6 +603,9 @@ done
 
                 model.text = String(repeating: "x", count: 256 * 1_024 + 1)
                 try await self.press("mac-inspector-close-session", in: host)
+                try await self.waitForPresentationState {
+                    self.managementDialogRoots(window).contains { self.hasLabel("Stop and Close", in: $0) }
+                }
                 let oversized = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
                 try await self.press("mac-session-stop-and-close", in: oversized, title: "Stop and Close")
                 XCTAssertNotNil(model.draftSaveError)
@@ -582,6 +617,9 @@ done
 
                 model.text = "Retain confirmed inspector draft"
                 try await self.press("mac-inspector-close-session", in: host)
+                try await self.waitForPresentationState {
+                    self.managementDialogRoots(window).contains { self.hasLabel("Stop and Close", in: $0) }
+                }
                 let confirmed = try XCTUnwrap(self.managementDialogRoots(window).first { self.hasLabel("Stop and Close", in: $0) })
                 try await self.press("mac-session-stop-and-close", in: confirmed, title: "Stop and Close")
                 try await self.waitForPresentationState { model.closedSessionIDs.contains(session.id) }
@@ -736,8 +774,9 @@ done
                     try self.managementDump(host, name: "switcher-\(width)")
                     _ = try self.element("mac-session-search", in: host)
                     _ = try self.element("mac-resume-session-" + first.id.uuidString, in: host)
-                    _ = try self.element("mac-resume-session-" + second.id.uuidString, in: host)
-                    XCTAssertTrue(self.hasLabel("Saved · Closed", in: host))
+                    let closedRow = try self.element("mac-resume-session-" + second.id.uuidString, in: host)
+                    XCTAssertTrue((closedRow.value("accessibilityLabel") as? String ?? "").contains("Saved · Closed"),
+                                  "The closed session row must show its saved status")
                     try self.enter(second.id.uuidString, placeholder: "Search sessions, workspaces, paths or IDs", in: host)
                     try await Task.sleep(for: .milliseconds(180))
                     XCTAssertFalse(self.accessibilityElements(in: host).contains { $0.accessibilityIdentifier() == "mac-resume-session-" + first.id.uuidString })
@@ -902,7 +941,7 @@ done
                 XCTAssertEqual(model.destination, .session(session.id))
                 XCTAssertEqual(model.text, "Keep close-transition draft")
                 let closed = await close.value
-                XCTAssertTrue(closed)
+                XCTAssertTrue(closed, "Close failure: \(String(describing: model.fault))")
                 XCTAssertEqual(model.destination, .workspace(session.directory), "A stale palette selection must not navigate to Settings after close")
                 model.panel = nil
             }
@@ -915,7 +954,8 @@ done
                 try await withModel { model in
                     let session = SessionInfo(id: UUID(), title: "Palette current session", directory: "/tmp/review-palette")
                     model.state.sessions = [session]; model.state.selected = session.id
-                    model.destination = .session(session.id); model.text = "Keep added-action draft"
+                    model.destination = pointer ? .session(session.id) : .conversation
+                    model.text = "Keep added-action draft"
                     model.panel = "palette"
                     let state = model.state
                     try await self.capture(CompanionWindow(model: model), name: "review-palette-" + action.replacingOccurrences(of: " ", with: "-") + (pointer ? "-pointer" : "-return"), width: pointer ? 1300 : 900, height: pointer ? 800 : 600) { _, window in
@@ -1017,7 +1057,7 @@ done
                     let sheet = try self.focusPaletteSearch(in: content)
                     try await self.managementKey("\r", code: 36, in: sheet)
                     XCTAssertEqual(model.panel, "palette")
-                    XCTAssertEqual(model.destination, .overview)
+                    XCTAssertEqual(model.destination, .conversation)
                     XCTAssertEqual(model.state.dialogs.count, 1, "Navigation must not approve a dialog")
                     XCTAssertEqual(model.text, "Keep pending navigation draft")
                     XCTAssertNil(model.state.selected)
@@ -1111,7 +1151,70 @@ done
         }
     }
 
-    func testCommandsButtonOpensDedicatedCommandsSheet() async throws {
+    func testTerminalReferenceStartupFlowsDirectlyIntoCompactEditorAndFooter() async throws {
+        try await withModel { model in
+            let id = UUID()
+            model.state.selected = id; model.state.piVersion = "1.3.0"
+            model.state.model = "fixture/model"; model.state.thinking = "high"
+            model.state.sessions = [SessionInfo(id: id, title: "Reference fixture", directory: "/tmp/reference")]
+            model.state.commands = [CommandOption(name: "skill:fixture-skill", detail: "", source: "skill"),
+                                    CommandOption(name: "review-fixture", detail: "", source: "prompt")]
+            model.text = ""
+            try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "terminal-reference-startup", width: 1100, height: 593) { host, window in
+                _ = try self.labelled("[Context]", in: host)
+                _ = try self.labelled("fixture-skill", in: host)
+                let prompts = try self.labelled("/review-fixture", in: host)
+                let promptsFrame = try XCTUnwrap(prompts.frame())
+                let editor = try self.nativeEditor(in: host)
+                let scroll = try XCTUnwrap(editor.enclosingScrollView)
+                let input = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+                XCTAssertLessThanOrEqual(input.height, 40, "An empty editor is one text row, not a fixed blank band")
+                XCTAssertGreaterThanOrEqual(promptsFrame.minY - input.maxY, 0)
+                XCTAssertLessThan(promptsFrame.minY - input.maxY, 70, "No viewport-sized gap may separate startup resources and input")
+                let usage = try self.labelled("Usage unavailable", in: host)
+                let usageFrame = try XCTUnwrap(usage.frame())
+                XCTAssertLessThan(input.minY - usageFrame.maxY, 80, "The two-line footer follows the editor")
+                let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
+                XCTAssertGreaterThan(usageFrame.minY - viewport.minY, 100, "Unused window space belongs after the footer, not before input")
+            }
+        }
+    }
+
+    func testStandardExtensionSlotsKeepProgressAboveInputAndStatusInFooter() async throws {
+        try await withModel { model in
+            let id = UUID()
+            model.state.selected = id; model.state.piVersion = "1.3.0"
+            model.state.model = "fixture/model"; model.state.thinking = "high"; model.state.phase = "working"
+            model.state.sessions = [SessionInfo(id: id, title: "Extension fixture", directory: "/tmp/reference")]
+            model.state.extensionDisplay = ExtensionDisplayState(
+                statuses: [ExtensionStatus(id: "fixture-status", text: "Native status fixture")],
+                widgets: [ExtensionWidget(id: "fixture-progress", text: "Progress · 0/2 complete\n▶ First fixture task\n○ Second fixture task"),
+                          ExtensionWidget(id: "fixture-below", text: "Below-editor fixture", placement: .belowEditor)],
+                notices: [ExtensionNotice(id: "fixture-info", text: "Background diagnostic fixture"),
+                          ExtensionNotice(id: "fixture-error", text: "Fixture resource is unavailable", severity: .error)])
+            model.state.notices = ["Background diagnostic fixture", "Native status fixture", "Legacy flattened widget"]
+            try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "terminal-reference-extension-slots", width: 1200, height: 760) { host, window in
+                let above = try self.labelled("Progress · 0/2 complete\n▶ First fixture task\n○ Second fixture task", in: host)
+                let aboveFrame = try XCTUnwrap(above.frame())
+                let editor = try self.nativeEditor(in: host)
+                let scroll = try XCTUnwrap(editor.enclosingScrollView)
+                let input = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
+                XCTAssertGreaterThan(aboveFrame.minY, input.maxY)
+                XCTAssertLessThan(aboveFrame.minY - input.maxY, 45)
+                let below = try self.labelled("Below-editor fixture", in: host)
+                let belowFrame = try XCTUnwrap(below.frame())
+                XCTAssertLessThan(belowFrame.maxY, input.minY)
+                let status = try self.labelled("Native status fixture", in: host)
+                XCTAssertLessThan(try XCTUnwrap(status.frame()).maxY, belowFrame.minY)
+                _ = try self.labelled("Activity · 2 notices", in: host)
+                _ = try self.labelled("Error: Fixture resource is unavailable", in: host)
+                XCTAssertFalse(self.hasLabel("Background diagnostic fixture", in: host))
+                XCTAssertFalse(self.hasLabel("Legacy flattened widget", in: host))
+            }
+        }
+    }
+
+    func testSecondaryToolbarOpensDedicatedCommandsSheet() async throws {
         try await withModel { model in
             let id = UUID()
             model.state.selected = id
@@ -1119,11 +1222,16 @@ done
             model.state.commands = [CommandOption(name: "fixture", detail: "Fixture command", source: "extension")]
             model.destination = .session(id)
             model.inspectorVisible = false
-            try await capture(CompanionWindow(model: model), name: "uiux-commands-minimum", width: 900, height: 600, sheet: true) { host, window in
-                try await self.press("mac-composer-commands", in: host, title: "Commands", help: "Open Pi commands")
+            try await capture(CompanionWindow(model: model), name: "uiux-commands-minimum", width: 900, height: 600, sheet: true, hostingController: true) { host, window in
+                try await self.chooseSecondaryAction("Commands", in: host)
                 XCTAssertEqual(model.panel, "commands")
                 XCTAssertFalse(model.inspectorVisible, "Commands must not route to the Session inspector")
-                let content = try XCTUnwrap(window.sheets.first?.contentView)
+                for _ in 0..<100 {
+                    if window.sheets.first?.contentView != nil { break }
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                let content = try XCTUnwrap(window.sheets.first?.contentView,
+                    "Commands panel: \(String(describing: model.panel)); windows: \(NSApp.windows.map { candidate in "\(type(of: candidate)):fixture=\(candidate === window),key=\(candidate.isKeyWindow),visible=\(candidate.isVisible),sheets=\(candidate.sheets.count),children=\(candidate.childWindows?.count ?? 0),commands=\(candidate.contentView.map { self.hasLabel("Commands", in: $0) } ?? false)" })")
                 XCTAssertTrue(self.accessibilityElements(in: content).contains { ($0.value("accessibilityValue") as? String) == "Commands" },
                               "The sheet must show the dedicated Commands title")
                 let arguments = try XCTUnwrap(self.descendants(content).compactMap { $0 as? NSTextField }.first(where: \.isEditable),
@@ -1197,7 +1305,7 @@ done
         }
     }
 
-    func testFilesShortcutKeepsChatAndOpensSingleInspectorDestination() async throws {
+    func testSecondaryToolbarKeepsChatAndOpensSingleFilesInspectorDestination() async throws {
         try await withModel { model in
             let id = UUID()
             model.state.selected = id
@@ -1205,11 +1313,12 @@ done
             model.state.messages = [TranscriptMessage(role: "assistant", text: "Conversation remains visible.")]
             model.destination = .session(id); model.inspectorVisible = false
             try await capture(CompanionWindow(model: model), name: "uiux-files-routing-minimum", width: 900, height: 600) { host, _ in
-                try await self.press("mac-composer-files", in: host, title: "Files", help: "Show files in the inspector")
+                try await self.chooseSecondaryAction("Files", in: host)
                 XCTAssertTrue(model.inspectorVisible)
                 XCTAssertEqual(model.destination, .session(id))
                 XCTAssertNil(model.panel)
-                _ = try self.element("mac-composer-commands", in: host)
+                try self.assertPiFooter(model, in: host)
+                XCTAssertTrue(try self.nativeEditor(in: host) is PiEditorTextView)
                 let pickers = self.descendants(host).compactMap { $0 as? NSSegmentedControl }
                 let inspectorPicker = try XCTUnwrap(pickers.first { control in
                     (0..<control.segmentCount).contains { control.label(forSegment: $0) == "Files" }
@@ -1232,8 +1341,9 @@ done
                 model.connectedDevices = model.listening ? [UUID()] : []
                 try await capture(CompanionWindow(model: model), name: "uiux-remote-inspector-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, window in
                     XCTAssertTrue(model.showingLoadedSession)
-                    XCTAssertEqual(self.accessibilityElements(in: host).filter { $0.accessibilityIdentifier() == "mac-session-status" }.count, 1,
-                                   "Only the session header must show the displayed session status")
+                    try self.assertPiFooter(model, in: host)
+                    XCTAssertFalse(self.accessibilityElements(in: host).contains { $0.accessibilityIdentifier() == "mac-session-heading" },
+                                   "The loaded session uses the Pi footer, not the old session header")
                     try await self.press("mac-remote-access", in: host, help: "Show listener and authenticated device status")
                     let roots = [host] + (window.childWindows ?? []).compactMap(\.contentView)
                         + NSApp.windows.filter { $0 !== window }.compactMap(\.contentView)
@@ -1254,7 +1364,14 @@ done
         let previousApplication = NSWorkspace.shared.frontmostApplication
         let previousPolicy = NSApp.activationPolicy()
         NSApp.setActivationPolicy(.regular)
+        NSApp.unhide(nil)
         defer {
+            for sheet in window.sheets {
+                window.endSheet(sheet)
+                sheet.orderOut(nil)
+            }
+            window.contentViewController = nil
+            window.contentView = nil
             window.close()
             NSApp.setActivationPolicy(previousPolicy)
             previousApplication?.activate()
@@ -1375,6 +1492,9 @@ done
                                     TranscriptMessage(role: "assistant", text: "The source is ready.\n\n```swift\nlet answer = 42\n```")]
             try await capture(CompanionWindow(model: model), name: "active-workspace-session", width: 1300, height: 800) { host, window in
                 @MainActor func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap { descendants($0) } }
+                try self.assertPiFooter(model, in: host)
+                XCTAssertTrue(try self.nativeEditor(in: host) is PiEditorTextView)
+                try await self.showSidebar(model, in: host)
                 let outline = try XCTUnwrap(descendants(host).compactMap { $0 as? NSOutlineView }.first { $0.selectedRow >= 0 && $0.parent(forItem: $0.item(atRow: $0.selectedRow)) != nil })
                 let selected = outline.selectedRow
                 XCTAssertGreaterThanOrEqual(selected, 0)
@@ -1388,13 +1508,9 @@ done
                 try await Task.sleep(for: .milliseconds(150))
                 XCTAssertEqual(model.destination, .session(id))
                 XCTAssertFalse(model.openingSession, "Selecting an already loaded session must not start another process")
-                let click = host.convert(NSPoint(x: host.bounds.width - 32, y: 24), to: nil)
-                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                    let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: click, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                               windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
-                    window.sendEvent(event)
-                }
-                try await Task.sleep(for: .milliseconds(150))
+                let toggle = try self.element("mac-inspector-toggle", in: host)
+                let frame = try XCTUnwrap(toggle.frame())
+                try await self.managementClick(window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY)), in: window)
                 XCTAssertFalse(model.inspectorVisible, "The visible Inspector button must collapse its panel")
                 model.inspectorVisible = true
                 try await Task.sleep(for: .milliseconds(150))
@@ -1555,7 +1671,7 @@ done
         }, "Missing visible label: \(label)")
     }
 
-    func testUsabilityDuplicateTitlesHeaderAndPinnedNavigation() async throws {
+    func testUsabilityDuplicateTitlesPiFooterAndOptionalPinnedNavigation() async throws {
         try await withModel { model in
             let first = SessionInfo(id: UUID(), title: "project", directory: "/tmp/project")
             let second = SessionInfo(id: UUID(), title: "project", directory: "/tmp/project")
@@ -1563,19 +1679,23 @@ done
             model.destination = .session(first.id); model.expandedWorkspaces = [first.directory]
             XCTAssertNotEqual(model.displayName(for: first), model.displayName(for: second))
             for (width, height) in [(900, 600), (1300, 800)] {
+                model.sidebarVisible = false
                 try await capture(CompanionWindow(model: model), name: "usability-duplicate-header-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
-                    _ = try self.element("mac-session-heading", in: host)
-                    _ = try self.element("mac-session-metadata", in: host)
+                    try self.assertPiFooter(model, in: host)
+                    XCTAssertTrue(try self.nativeEditor(in: host) is PiEditorTextView)
                     self.assertNoConversationTabs(in: host)
-                    let actions = try self.element("mac-session-actions", in: host)
-                    let heading = try self.element("mac-session-heading", in: host)
-                    let actionFrame = try XCTUnwrap(actions.frame())
-                    let headingFrame = try XCTUnwrap(heading.frame())
-                    XCTAssertLessThan(abs(actionFrame.midY - headingFrame.midY), 36, "Session actions belong in the headline")
+                    XCTAssertTrue(self.descendants(host).compactMap { $0 as? NSOutlineView }.isEmpty,
+                                  "The workspace sidebar is hidden by default")
+                    XCTAssertFalse(self.hasLabel("Send", in: host))
+                    XCTAssertFalse(self.hasLabel("Run", in: host))
                     let nodes = self.accessibilityElements(in: host)
+                    XCTAssertFalse(nodes.contains { $0.accessibilityIdentifier() == "mac-session-heading" })
+                    XCTAssertFalse(nodes.contains { $0.accessibilityIdentifier() == "mac-session-metadata" })
+                    try await self.showSidebar(model, in: host)
                     XCTAssertEqual(nodes.filter { ($0.value("accessibilityLabel") as? String) == "New session" }.count, 1,
                                    "Only the global New session button must appear outside menus")
-                    XCTAssertEqual(nodes.filter { $0.accessibilityIdentifier() == "mac-session-status" }.count, 1)
+                    XCTAssertEqual(nodes.filter { $0.accessibilityIdentifier() == "mac-session-status" }.count, 0,
+                                   "Loaded-session state belongs in the Pi footer")
                     XCTAssertFalse(nodes.contains { ($0.value("accessibilityValue") as? String) == "Session view" })
                     XCTAssertGreaterThanOrEqual(self.descendants(host).compactMap { $0 as? NSOutlineView }.count, 2,
                                                "Devices and Settings must use a separate pinned List")
@@ -1781,11 +1901,7 @@ done
                     try await self.key("\t", code: 48, in: editor)
                     XCTAssertEqual(model.text, "/" + command + " ")
                     XCTAssertNil(model.panel, "Completion cannot open navigation")
-                    if command == "tree" {
-                        try await self.key("\r", code: 36, modifiers: .command, in: editor)
-                    } else {
-                        try await self.press("slash-run", in: host, title: "Run")
-                    }
+                    try await self.key("\r", code: 36, in: editor)
                     XCTAssertEqual(model.panel, command)
                     let sheet = try XCTUnwrap(window.sheets.first)
                     let content = try XCTUnwrap(sheet.contentView)
@@ -1810,29 +1926,25 @@ done
                     let editor = try self.nativeEditor(in: host)
                     try await self.key("/", in: editor)
                     self.assertNoConversationTabs(in: host)
-                    // The root's transcript can hide overflow AX rows. Use the native popup viewport for layout and mouse events.
                     let suggestions = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSScrollView }.first {
-                        abs($0.bounds.height - 200) < 1 && ($0.documentView?.bounds.height ?? 0) > 200
+                        $0.accessibilityIdentifier() == "pi-editor-suggestions"
                     })
+                    XCTAssertFalse(suggestions.isHidden)
                     let popup = window.convertToScreen(suggestions.convert(suggestions.bounds, to: nil))
                     let viewport = window.convertToScreen(host.convert(host.bounds, to: nil))
                     let scroll = try XCTUnwrap(editor.enclosingScrollView)
                     let input = window.convertToScreen(scroll.convert(scroll.bounds, to: nil))
                     XCTAssertTrue(viewport.contains(popup))
-                    XCTAssertGreaterThanOrEqual(popup.minY, input.maxY)
-                    XCTAssertLessThanOrEqual(popup.height, 200)
+                    XCTAssertLessThanOrEqual(popup.maxY, input.minY, "Pi completion appears below the editor")
+                    XCTAssertLessThanOrEqual(popup.height, 140)
                     XCTAssertNil(model.panel)
                     XCTAssertEqual(model.text, "/")
-                    let rowY: CGFloat = suggestions.isFlipped ? 75 : suggestions.bounds.height - 75
-                    let point = suggestions.convert(NSPoint(x: suggestions.bounds.midX, y: rowY), to: nil)
-                    for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                        let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
-                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
-                            context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
-                        window.sendEvent(event)
-                    }
-                    try await Task.sleep(for: .milliseconds(150))
-                    XCTAssertEqual(editor.string, "/tree ", "Native mouse events complete the visible row")
+                    let row = try XCTUnwrap(self.descendants(suggestions).compactMap { $0 as? NSButton }.first {
+                        $0.accessibilityIdentifier() == "pi-completion-model"
+                    })
+                    let point = row.convert(NSPoint(x: 20, y: row.bounds.midY), to: nil)
+                    try await self.managementClick(point, in: window)
+                    XCTAssertEqual(editor.string, "/model ", "Native mouse events complete the first visible row")
                     XCTAssertNil(model.panel, "A mouse completion cannot execute")
                     try self.enter("/", placeholder: "Message Pi", in: host)
                     try await Task.sleep(for: .milliseconds(150))
@@ -1997,7 +2109,7 @@ done
         }
     }
 
-    func testUsabilityDiagnosticsOnlyInActivity() async throws {
+    func testUsabilityDiagnosticsSummaryAndInActivity() async throws {
         try await withModel { model in
             let id = UUID(); model.state.selected = id
             let path = FileManager.default.temporaryDirectory.appendingPathComponent("pi-diagnostics-" + UUID().uuidString)
@@ -2006,8 +2118,11 @@ done
             model.state.sessions = [SessionInfo(id: id, title: "Diagnostics fixture", directory: path.path)]
             model.state.notices = ["Synthetic extension diagnostic"]
             model.destination = .session(id); model.inspectorVisible = true
-            try await capture(CompanionWindow(model: model), name: "usability-diagnostics-activity", width: 1300, height: 800) { host, _ in
-                XCTAssertFalse(self.accessibilityElements(in: host).contains { ($0.value("accessibilityValue") as? String) == "Synthetic extension diagnostic" })
+            try await capture(CompanionWindow(model: model), name: "reference-diagnostics-collapsed", width: 1300, height: 800)
+            try await capture(CompanionWindow(model: model), name: "usability-diagnostics-activity", width: 1300, height: 800, hostingController: true) { host, _ in
+                _ = try self.labelled("Activity · 1 notices", in: host)
+                XCTAssertFalse(self.hasLabel("Synthetic extension diagnostic", in: host), "Informational diagnostics start collapsed")
+                try self.assertPiFooter(model, in: host)
                 let picker = try XCTUnwrap(self.descendants(host).compactMap { $0 as? NSSegmentedControl }.first { control in
                     (0..<control.segmentCount).contains { control.label(forSegment: $0) == "Activity" }
                 })
@@ -2037,7 +2152,16 @@ done
                 for (width, height) in [(900, 600), (1300, 800)] {
                     try await capture(CompanionWindow(model: model), name: "usability-\(mode)-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
                         if mode == "opening" { _ = try self.element("mac-session-loading", in: host) }
-                        if mode == "unavailable" { XCTAssertFalse(try self.labelled("Send", in: host).isAccessibilityEnabled()) }
+                        if mode == "unavailable" {
+                            let editor = try self.nativeEditor(in: host)
+                            XCTAssertTrue(editor is PiEditorTextView)
+                            try self.enter("Retain unavailable draft", placeholder: "Prompt", in: host)
+                            try await self.key("\r", code: 36, in: editor)
+                            XCTAssertEqual(model.text, "Retain unavailable draft", "Unavailable submission must keep the draft")
+                            XCTAssertTrue(model.state.messages.isEmpty)
+                            XCTAssertFalse(self.hasLabel("Send", in: host))
+                            XCTAssertFalse(self.hasLabel("Run", in: host))
+                        }
                         if mode == "failure" { _ = try self.labelled(RemoteFault.permissionDenied.explanation, in: host) }
                     }
                 }

@@ -404,7 +404,7 @@ private func waitForHost(_ host: HostCoordinator, _ matches: (HostSnapshot) -> B
     } catch { await host.shutdown(); throw error }
 }
 
-private func fakePi(at root: URL, hold: Bool = false, image: Data? = nil) throws -> URL {
+func fakePi(at root: URL, hold: Bool = false, image: Data? = nil) throws -> URL {
     let url = root.appendingPathComponent("fake-pi")
     let script = #"""
 #!/bin/sh

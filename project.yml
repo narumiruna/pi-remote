@@ -60,6 +60,12 @@ targets:
       - Apps/macOS/CompanionModel.swift
       - Apps/macOS/CompanionTermination.swift
       - Apps/macOS/CompanionWindow.swift
+      - Apps/macOS/PiConversationView.swift
+      - Apps/macOS/PiConfigurationPicker.swift
+      - Apps/macOS/PiPresentation.swift
+      - Apps/macOS/PiStartupView.swift
+      - Apps/macOS/PiEditor.swift
+      - Apps/macOS/PiExtensionDialog.swift
       - Apps/macOS/CompanionConnectionViews.swift
       - Apps/macOS/PairingQRView.swift
       - Apps/Shared

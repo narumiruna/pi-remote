@@ -65,7 +65,7 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var epoch: UUID
     public var sequence: UInt64 = 0
     public var piVersion = "Not running"
-    public var capabilities = ["directories", "directory-path", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics", "output-images", "last-assistant", "runtime-settings", "close-session", "session-export", "session-import", "session-jsonl-export", "session-import-directory", "pi-release-notes", "model-cycling", "retry-controls", "session-tree", "session-lifecycle"]
+    public var capabilities = ["directories", "directory-path", "sessions", "prompt", "steering", "follow-up", "stop", "models", "thinking", "extension-dialogs", "history", "history-pages", "thinking-display", "fork", "clone", "compaction", "file-preview", "git-diff", "images", "session-statistics", "output-images", "last-assistant", "runtime-settings", "close-session", "session-export", "session-import", "session-jsonl-export", "session-import-directory", "pi-release-notes", "model-cycling", "retry-controls", "session-tree", "session-lifecycle", "bash", "queue-recovery", "extension-display"]
     public var sessions: [SessionInfo] = []
     public var selected: UUID?
     public var phase = "idle"
@@ -77,16 +77,18 @@ public struct HostSnapshot: Codable, Sendable, Equatable {
     public var commands: [CommandOption] = []
     public var dialogs: [ExtensionDialog] = []
     public var notices: [String] = []
+    public var extensionDisplay: ExtensionDisplayState?
     public var draft: String?
     public var draftID: UUID?
     public var error: RemoteFault?
     public var hasOlderMessages = false
     public var runtime: RuntimeSettings?
     public var pendingMessages: Int?
+    public var bash: BashExecution?
 
     public init(host: UUID, epoch: UUID) { self.host = host; self.epoch = epoch }
 
-    public var working: Bool { !["idle", "interrupted", "unavailable"].contains(phase) }
+    public var working: Bool { bash?.working == true || !["idle", "interrupted", "unavailable"].contains(phase) }
     public var context: SessionContext { SessionContext(host: host, epoch: epoch, session: selected) }
 }
 

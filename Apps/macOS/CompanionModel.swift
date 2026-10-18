@@ -157,8 +157,11 @@ final class CompanionModel {
     private var presentationMetadata: [UUID: SessionDisplayMetadata] = [:]
     var text = "" { didSet { composerError = nil; scheduleDraftSave() } }
     var composerError: String?
-    var destination: MacDestination? = .overview { didSet { saveWorkspacePreferences() } }
+    private var inputHistory: [UUID: [String]] = [:]
+    var promptHistory: [String] { state.selected.flatMap { inputHistory[$0] } ?? [] }
+    var destination: MacDestination? = .conversation { didSet { saveWorkspacePreferences() } }
     var inspectorVisible = false { didSet { saveWorkspacePreferences() } }
+    var sidebarVisible = false { didSet { defaults.set(sidebarVisible, forKey: "piSidebarVisible") } }
     var addedWorkspaces: [String] = []
     var hiddenWorkspaces = Set<String>()
     var expandedWorkspaces = Set<String>()
@@ -179,6 +182,7 @@ final class CompanionModel {
     var selectedWorkspace: String? {
         switch destination {
         case .workspace(let path): return path
+        case .conversation: return state.sessions.first(where: { $0.id == state.selected })?.directory
         case .session(let id): return state.sessions.first(where: { $0.id == id })?.directory
         default: return nil
         }
@@ -191,7 +195,7 @@ final class CompanionModel {
     }
     var showingLoadedSession: Bool {
         guard let selected = state.selected else { return false }
-        return destination == .session(selected) && state.sessions.contains { $0.id == selected }
+        return (destination == .session(selected) || destination == .conversation) && state.sessions.contains { $0.id == selected }
     }
     var delivery = Delivery.prompt
     var sending = false
@@ -264,6 +268,7 @@ final class CompanionModel {
         defaults: UserDefaults = .standard
     ) {
         self.support = support; self.secrets = secrets; self.defaults = defaults
+        sidebarVisible = defaults.bool(forKey: "piSidebarVisible")
         let candidates = [
             FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".bun/bin/pi").path,
             "/opt/homebrew/bin/pi", "/usr/local/bin/pi"
@@ -274,7 +279,7 @@ final class CompanionModel {
             addedWorkspaces = saved.added; hiddenWorkspaces = saved.hidden; expandedWorkspaces = saved.expanded
             inspectorVisible = saved.inspectorVisible
             rememberedWorkspace = saved.workspace; rememberedSession = saved.session
-            destination = saved.session.map(MacDestination.session) ?? saved.workspace.map(MacDestination.workspace) ?? .overview
+            destination = saved.session.map(MacDestination.session) ?? saved.workspace.map(MacDestination.workspace) ?? .conversation
         }
         if let value = defaults.object(forKey: "closedSessionIDs") {
             if let data = value as? Data, data.count <= 1_048_576,
@@ -283,7 +288,7 @@ final class CompanionModel {
                 closedSessionIDs = saved.closed
                 if case .session(let id) = destination, saved.closed.contains(id) {
                     rememberedSession = nil
-                    destination = rememberedWorkspace.map(MacDestination.workspace) ?? .overview
+                    destination = rememberedWorkspace.map(MacDestination.workspace) ?? .conversation
                 }
             } else {
                 // Keep unreadable preference bytes intact, independently of workspace preferences.
@@ -391,6 +396,15 @@ final class CompanionModel {
             return result
         }
     }
+    /// Background footer reads do not publish recoverable read failures as action faults.
+    func readStatistics(for displayed: HostSnapshot) async throws -> SessionStatistics {
+        guard state.context == displayed.context, !sending, !openingSession, closingSession == nil,
+              let coordinator else { throw RemoteFault.conflict }
+        let value = try await coordinator.displayStatistics(context: displayed.context)
+        guard state.context == displayed.context else { throw RemoteFault.conflict }
+        return value
+    }
+
     func request(_ action: SessionAction) async throws -> AppResult {
         try await request(action, expectedSession: state.selected)
     }
@@ -444,6 +458,9 @@ final class CompanionModel {
             defer { sending = false }
             do {
                 _ = try await request(action, expectedSession: submittedSession)
+                if let submittedSession {
+                    inputHistory[submittedSession] = Array(((inputHistory[submittedSession] ?? []) + [message]).suffix(100))
+                }
                 if let submittedSession, drafts[submittedSession] == message { drafts[submittedSession] = "" }
                 if draftSession == submittedSession && text == message { text = "" }
             } catch { fault = error as? RemoteFault ?? .unavailable }
@@ -713,7 +730,7 @@ final class CompanionModel {
     }
 
     func closeSessionRequiresConfirmation(_ id: UUID) -> Bool {
-        state.selected == id && ["working", "streaming", "tool", "retrying", "compacting", "queued"].contains(state.phase)
+        state.selected == id && ["working", "streaming", "tool", "retrying", "compacting", "queued", "bash"].contains(state.phase)
     }
 
     func prepareSessionClose(_ id: UUID) async -> LocalCloseConfirmation? {
@@ -922,7 +939,7 @@ final class CompanionModel {
     }
 }
 
-enum MacDestination: Hashable { case overview, workspace(String), session(UUID), devices, settings }
+enum MacDestination: Hashable { case conversation, overview, workspace(String), session(UUID), devices, settings }
 
 struct MacWorkspace: Identifiable, Equatable {
     let directory: String

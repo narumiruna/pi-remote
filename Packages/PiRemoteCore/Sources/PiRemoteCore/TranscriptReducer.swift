@@ -116,6 +116,22 @@ public struct TranscriptReducer: Sendable {
     public static func message(_ value: JSONValue) -> TranscriptMessage? {
         guard let role = value["role"]?.string, role != "system",
               !(role == "custom" && value["display"]?.bool == false) else { return nil }
+        if role == "bashExecution" {
+            let command = value["command"]?.string ?? "Command unavailable"
+            let output = value["output"]?.string ?? ""
+            let excluded = value["excludeFromContext"]?.bool == true
+            let cancelled = value["cancelled"]?.bool == true
+            let exit: Double?
+            if case .number(let code) = value["exitCode"], code.isFinite,
+               code.rounded() == code, code >= -2_147_483_648, code <= 2_147_483_647 { exit = code }
+            else { exit = nil }
+            let status = cancelled ? "cancelled" : exit.map { "exit " + String(format: "%.0f", $0) } ?? "exit unavailable"
+            let outcome = "\n[" + status + (excluded ? " · excluded from model context" : "") + "]"
+            let body = (excluded ? "!! " : "! ") + command + "\n" + output
+            return TranscriptMessage(role: "bash", text: DisplayLimit.text(body, bytes: 16_384 - outcome.utf8.count) + outcome,
+                                     isError: !cancelled && exit.map { $0 != 0 } == true,
+                                     truncated: value["truncated"]?.bool == true || body.utf8.count + outcome.utf8.count > 16_384)
+        }
         let text = content(value["content"])
         let fallback = value["summary"]?.string ?? value["output"]?.string ?? value["errorMessage"]?.string ?? ""
         let toolPrefix = role == "toolResult" ? value["toolName"]?.string.flatMap { $0.isEmpty ? nil : $0 + "\n" } ?? "" : ""
@@ -215,6 +231,8 @@ public struct TranscriptReducer: Sendable {
             let limit = min(16_384, remaining)
             guard limit > 0 else { omitted = true; break }
             if message.text.utf8.count > limit {
+                // Omit a shell row rather than remove its command or final outcome.
+                if message.role == "bash" { omitted = true; break }
                 message.text = DisplayLimit.text(message.text, bytes: limit); message.truncated = true
             }
             let thoughtLimit = max(0, limit - message.text.utf8.count)
