@@ -1029,8 +1029,16 @@ done
             XCTAssertTrue(finalReopen)
             try await waitUntil { model.state.selected == second && model.state.phase == "idle" }
             model.text = "Unsent second-session draft"
+            _ = try await model.request(.prompt(text: "Private revocation fixture", delivery: .prompt, image: nil))
+            try await waitUntil { model.state.working }
             try await server.revoke(phoneID)
             try await waitUntil { connected.isEmpty }
+            let afterRevocation = await host.state()
+            XCTAssertEqual(afterRevocation.selected, second)
+            XCTAssertEqual(afterRevocation.phase, "working", "Device revocation must not stop the managed Pi child")
+            XCTAssertEqual(model.text, "Unsent second-session draft")
+            _ = try await model.request(.stop)
+            try await waitUntil { model.state.phase == "idle" }
         } catch {
             await client.disconnect(); await server.stop(); await model.shutdown(); throw error
         }

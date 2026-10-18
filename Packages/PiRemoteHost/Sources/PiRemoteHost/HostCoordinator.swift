@@ -23,6 +23,14 @@ public struct LocalQuitConfirmation: Sendable, Equatable {
     fileprivate let transition: UUID?
 }
 
+/// Local-only executable admission. Saved-session selection does not imply a child exists.
+public enum ExecutableChangeReadiness: Sendable, Equatable {
+    case ready
+    case sessionLoaded
+    case busy
+    case closing
+}
+
 public actor HostCoordinator {
     private struct ManagedSession: Codable {
         var info: SessionInfo
@@ -67,7 +75,7 @@ public actor HostCoordinator {
     }
     private var inspections: [UUID: CachedInspection] = [:]
     private var inspectionCursors: [UUID: InspectionCursor] = [:]
-    private var rpc: RPCProcess?
+    private var rpc: RPCProcess? { didSet { publishExecutableChangeReadiness() } }
     private var observer: Task<Void, Never>?
     private var generation = UUID()
     private var runRevision: UInt64 = 0
@@ -78,13 +86,14 @@ public actor HostCoordinator {
     private var observers: [UUID: AsyncStream<HostSnapshot>.Continuation] = [:]
     private var journal: RequestJournal
     private var replay = StateReplay()
-    private var mutations: Set<UUID> = []
+    private var mutations: Set<UUID> = [] { didSet { publishExecutableChangeReadiness() } }
     private var mutationRevision: UInt64 = 0
     private var pendingQuitMutations: Set<UUID> = []
     // Displayed read errors must not hide an unresolved state-changing outcome.
     private var unresolvedQuitOutcome = false
-    private var closing = false
-    private var utility: Task<(Data, Bool), any Error>?
+    private var closing = false { didSet { publishExecutableChangeReadiness() } }
+    private var utility: Task<(Data, Bool), any Error>? { didSet { publishExecutableChangeReadiness() } }
+    private var executableObservers: [UUID: AsyncStream<ExecutableChangeReadiness>.Continuation] = [:]
     private var dialogDeadlines: [String: TimeInterval] = [:]
     private var extensionMetadata = ExtensionDisplayMetadata()
     private var recoveringEvents = false
@@ -168,8 +177,41 @@ public actor HostCoordinator {
         } catch { snapshot.piVersion = "Unavailable"; snapshot.error = error as? RemoteFault ?? .piLaunchFailed }
         publish()
     }
+    public func executableChangeReadiness() -> ExecutableChangeReadiness {
+        if closing { return .closing }
+        if !mutations.isEmpty || utility != nil { return .busy }
+        if rpc != nil { return .sessionLoaded }
+        return .ready
+    }
+
+    /// Also reports admission changes that do not publish a remote snapshot.
+    public func executableChangeUpdates() -> AsyncStream<ExecutableChangeReadiness> {
+        let id = UUID()
+        let stream = AsyncStream<ExecutableChangeReadiness>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        stream.continuation.yield(executableChangeReadiness())
+        guard !closing else { stream.continuation.finish(); return stream.stream }
+        executableObservers[id] = stream.continuation
+        stream.continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeExecutableObserver(id) }
+        }
+        return stream.stream
+    }
+
+    private func removeExecutableObserver(_ id: UUID) { executableObservers.removeValue(forKey: id) }
+
+    private func publishExecutableChangeReadiness() {
+        let readiness = executableChangeReadiness()
+        for continuation in executableObservers.values { continuation.yield(readiness) }
+        if closing {
+            for continuation in executableObservers.values { continuation.finish() }
+            executableObservers.removeAll()
+        }
+    }
+
     public func setExecutable(_ url: URL) throws {
-        guard rpc == nil, mutations.isEmpty, utility == nil, !closing else { throw RemoteFault.busy }
+        // Recheck in this actor turn. A picker can remain open across lifecycle changes.
+        try Task.checkCancellation()
+        guard executableChangeReadiness() == .ready else { throw RemoteFault.busy }
         executable = url
     }
 

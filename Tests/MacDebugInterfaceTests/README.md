@@ -1,6 +1,12 @@
 # Focused Mac debug UI check
 
-Status: **build verified; UI acceptance blocked before test entry**. This is not a passing normal-launch check.
+Status: **the separate-process native-click script passes; the XCTest UI-runner consent/restart flow remains blocked before test entry**. These are separate checks.
+
+## Native-click script
+
+`check-desktop-controls.py` launches the dedicated app directly with unchanged product sources, a private home and process-local debug-consent arguments. It uses the actual registered extension, not a hosted accessibility override. It verifies native Sidebar/Pi commands clicks, protected-panel rejection, ordinary-panel Close and unchanged empty-runtime status. Only its own child process is stopped; no image files are saved. It rejects the production bundle identity.
+
+Use the [verified build and script command](../../docs/desktop-uiux-follow-up.md#normally-launched-native-click-check). This passed without the UI runner or a global Accessibility grant. It is not an attended Enable-dialog, restart-persistence, provider, loaded-editor or physical-input check. The UI-runner blockers below remain open.
 
 ## Scope
 

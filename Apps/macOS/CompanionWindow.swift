@@ -15,6 +15,7 @@ import SwiftUI
 struct CompanionWindow: View {
     @Bindable var model: CompanionModel
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.accessibilityEnabled) private var systemAccessibilityEnabled
     @SceneStorage("macWorkspaceSidebarWidth") private var sidebarWidth = 240.0
     @SceneStorage("macWorkspaceInspectorWidth") private var inspectorWidth = 320.0
     @State private var presentation = MacWindowPresentation()
@@ -33,9 +34,7 @@ struct CompanionWindow: View {
                 HSplitView {
                     if model.sidebarVisible {
                         sidebar.frame(minWidth: 210, idealWidth: sidebarWidth, maxWidth: 320)
-                            .onGeometryChange(for: Double.self) { Double($0.size.width) } action: { value in
-                                if value >= 210, value <= 320, abs(sidebarWidth - value) > 1 { sidebarWidth = value }
-                            }
+                            .background(MacSidebarWidthKeeper(preferredWidth: $sidebarWidth))
                     }
                     VStack(spacing: 0) {
                         notices
@@ -81,6 +80,9 @@ struct CompanionWindow: View {
         }
         .environment(\.colorScheme, model.interfaceMode == .pi ? .dark : systemColorScheme)
         .environment(\.macInterfaceMode, model.interfaceMode)
+        // Expose SwiftUI's in-process tree for opted-in debug clicks. Preserve
+        // system accessibility when debug is off; no global permission changes.
+        .environment(\.accessibilityEnabled, systemAccessibilityEnabled || model.debug.enabled)
         .tint(theme.accent)
         .modifier(EditorOfferPrompt(offer: $model.editorOffer, replace: model.acceptEditorOffer))
         .confirmationDialog("Send this prompt again?", isPresented: $model.confirmResend) {
@@ -356,7 +358,7 @@ struct CompanionWindow: View {
                 Text(model.displayName(for: session)).lineLimit(1).truncationMode(.middle)
                 Spacer(minLength: 0)
                 MacSessionCloseButton(id: session.id, visible: hoveredSession == session.id || model.destination == .session(session.id),
-                                      disabledReason: model.closeSessionDisabledReason(session.id)) { beginClose(session.id) }
+                                      disabledReason: macCloseSessionDisabledReason(session.id, model: model)) { beginClose(session.id) }
             }
             HStack {
                 Text(sessionStatus(session))
@@ -374,7 +376,7 @@ struct CompanionWindow: View {
             Button("Rename…") { beginRename(session.id) }
                 .disabled(!canRename(session.id))
             Button("Close Session") { beginClose(session.id) }
-                .disabled(model.closeSessionDisabledReason(session.id) != nil)
+                .disabled(macCloseSessionDisabledReason(session.id, model: model) != nil)
             Button("Copy session ID") { model.copy(session.id.uuidString) }
             if session.id == model.state.selected {
                 Button("Session controls") { model.destination = .session(session.id); showInspector("Session") }
@@ -396,11 +398,11 @@ struct CompanionWindow: View {
 
     private var focusedCloseDisabled: Bool {
         guard let id = focusedSession else { return true }
-        return model.closeSessionDisabledReason(id) != nil
+        return macCloseSessionDisabledReason(id, model: model) != nil
     }
 
     private func beginClose(_ id: UUID, confirmation: Binding<LocalCloseConfirmation?>? = nil) {
-        guard model.closeSessionDisabledReason(id) == nil else { return }
+        guard macCloseSessionDisabledReason(id, model: model) == nil else { return }
         if model.closeSessionRequiresConfirmation(id) {
             Task {
                 if let value = await model.prepareSessionClose(id) {
@@ -515,7 +517,12 @@ struct CompanionWindow: View {
         } else {
             switch model.destination {
             case .devices: CompanionDevicesView(model: model)
-            case .settings: CompanionConnectionSettings(model: model)
+            case .settings:
+                CompanionConnectionSettings(model: model) {
+                    guard let id = model.state.selected else { return }
+                    model.destination = .session(id)
+                    showInspector("Session")
+                }
             case .workspace(let path): workspaceDetail(path)
             case .session(let id): sessionDetail(id)
             default: overview
@@ -577,15 +584,16 @@ struct CompanionWindow: View {
                                 }.font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button(session.id == model.state.selected ? "View conversation" : "Open") {
+                            Button(macOpenSessionLabel(session.id, model: model)) {
                                 if session.id == model.state.selected { model.destination = .session(session.id) }
                                 else if !model.openingSession, !model.state.working { Task { await model.openSession(session.id) } }
                             }
                                 .disabled(session.id != model.state.selected && (model.openingSession || model.state.working))
                                 .accessibilityIdentifier("mac-overview-open-" + session.id.uuidString)
                             Button("Close") { beginClose(session.id) }
-                                .disabled(model.closeSessionDisabledReason(session.id) != nil)
-                                .help(model.closeSessionDisabledReason(session.id) ?? "Close Session; keep history and draft")
+                                .disabled(macCloseSessionDisabledReason(session.id, model: model) != nil)
+                                .help(macCloseSessionDisabledReason(session.id, model: model) ?? "Close Session; keep history and draft")
+                                .accessibilityIdentifier("mac-overview-close-" + session.id.uuidString)
                         }.padding(.vertical, 2)
                     }
                 } header: { Text(URL(fileURLWithPath: path).lastPathComponent.isEmpty ? path : URL(fileURLWithPath: path).lastPathComponent) }
@@ -715,7 +723,7 @@ struct CompanionWindow: View {
                 if let id = focusedSession, id == model.state.selected {
                     NavigationStack {
                         SessionControls(state: model.state, request: model.scopedRequest(for: model.state), closed: { model.destination = .overview },
-                                        closeSession: { beginClose(id) }, closeSessionDisabledReason: model.closeSessionDisabledReason(id)) {
+                                        closeSession: { beginClose(id) }, closeSessionDisabledReason: macCloseSessionDisabledReason(id, model: model)) {
                             model.preview = $0; model.panel = "preview"
                         }
                             .formStyle(.grouped)
@@ -1119,6 +1127,17 @@ struct MacResumeSessionView: View {
             } else { error = (model.fault ?? .unavailable).explanation }
         }
     }
+}
+
+@MainActor func macOpenSessionLabel(_ id: UUID, model: CompanionModel) -> String {
+    if model.state.selected == id { return "View conversation" }
+    return model.closedSessionIDs.contains(id) ? "Reopen" : "Open"
+}
+
+/// Presentation availability must not change the coordinator's idempotent Close.
+@MainActor func macCloseSessionDisabledReason(_ id: UUID, model: CompanionModel) -> String? {
+    if model.state.selected != id, model.closedSessionIDs.contains(id) { return "This session is already closed. Use Reopen to load it." }
+    return model.closeSessionDisabledReason(id)
 }
 
 @MainActor func macRenameSessionDisabledReason(_ id: UUID?, model: CompanionModel) -> String? {

@@ -250,6 +250,23 @@ final class CompanionModel {
     var panel: String?
     var preview: FilePreview?
     var piPath = ""
+    private(set) var executableChangeReadiness: ExecutableChangeReadiness? {
+        didSet { if oldValue != executableChangeReadiness { executableSelectionError = nil } }
+    }
+    private(set) var selectingExecutable = false
+    private(set) var executableSelectionError: String?
+    var canChooseExecutable: Bool { executableChangeReadiness == .ready && !selectingExecutable && !shuttingDown }
+    var executableSessionLoaded: Bool { executableChangeReadiness == .sessionLoaded && !shuttingDown }
+    var executableChangeGuidance: String {
+        switch executableChangeReadiness {
+        case .ready: return "Choose the installed Pi executable. Saved sessions and drafts stay unchanged."
+        case .sessionLoaded: return "Close the loaded Pi session before changing the executable. Stop alone does not close the session."
+        case .busy: return "Wait for the current Pi operation to finish, then try again."
+        case .closing: return "Pi Remote is shutting down. Reopen the app to change the executable."
+        case nil: return coordinator == nil ? "Pi host storage is unavailable. Restore storage access before changing the executable." : "Checking whether the Pi executable can be changed…"
+        }
+    }
+    @ObservationIgnored private var executableObservation: Task<Void, Never>?
     @ObservationIgnored private(set) var coordinator: HostCoordinator?
     @ObservationIgnored private var registry: DeviceRegistry?
     @ObservationIgnored private let support: URL
@@ -371,6 +388,13 @@ final class CompanionModel {
 
     func observe() {
         guard observation == nil, let coordinator else { return }
+        executableObservation = Task { [weak self] in
+            let stream = await coordinator.executableChangeUpdates()
+            for await readiness in stream {
+                guard let self, !Task.isCancelled else { return }
+                self.executableChangeReadiness = readiness
+            }
+        }
         observation = Task { [weak self] in
             let stream = await coordinator.updates()
             for await state in stream {
@@ -624,15 +648,44 @@ final class CompanionModel {
         }
     }
     func chooseExecutable() {
-        let picker = NSOpenPanel()
-        picker.canChooseDirectories = false; picker.canChooseFiles = true; picker.showsHiddenFiles = true
-        picker.message = "Select the installed Pi executable."
-        if picker.runModal() == .OK, let url = picker.url {
-            Task {
-                do { try await coordinator?.setExecutable(url); piPath = url.path; defaults.set(url.path, forKey: "piExecutable") }
-                catch { fault = error as? RemoteFault ?? .busy }
+        Task {
+            await chooseExecutable {
+                let picker = NSOpenPanel()
+                picker.canChooseDirectories = false; picker.canChooseFiles = true; picker.showsHiddenFiles = true
+                picker.message = "Select the installed Pi executable."
+                return picker.runModal() == .OK ? picker.url : nil
             }
         }
+    }
+
+    // The selection seam permits cancellation and picker-open races without a native panel in tests.
+    func chooseExecutable(selection: @MainActor () async -> URL?) async {
+        guard !selectingExecutable, !shuttingDown, let coordinator else { return }
+        selectingExecutable = true
+        defer { selectingExecutable = false }
+        executableChangeReadiness = await coordinator.executableChangeReadiness()
+        guard executableChangeReadiness == .ready, !shuttingDown, !Task.isCancelled else { return }
+        executableSelectionError = nil
+        guard let url = await selection() else {
+            executableChangeReadiness = await coordinator.executableChangeReadiness()
+            return
+        }
+        do {
+            try Task.checkCancellation()
+            guard !shuttingDown else { return }
+            // Admission remains authoritative if a session starts while the picker is open.
+            try await coordinator.setExecutable(url)
+            // A successful actor reply is an accepted change. Keep preferences
+            // consistent even if cancellation arrives after that commit.
+            piPath = url.path
+            defaults.set(url.path, forKey: "piExecutable")
+        } catch is CancellationError {
+            // Cancellation before host admission leaves the selection unchanged.
+        } catch {
+            executableChangeReadiness = await coordinator.executableChangeReadiness()
+            executableSelectionError = "The executable was not changed. " + executableChangeGuidance
+        }
+        executableChangeReadiness = await coordinator.executableChangeReadiness()
     }
     func grantFolderAccess() {
         let picker = NSOpenPanel()
@@ -700,7 +753,7 @@ final class CompanionModel {
         debug.stop()
         startup?.cancel()
         if let startup { await startup.value }
-        observation?.cancel(); pairingObservation?.cancel(); connectionObservation?.cancel(); codeExpiry?.cancel()
+        observation?.cancel(); executableObservation?.cancel(); pairingObservation?.cancel(); connectionObservation?.cancel(); codeExpiry?.cancel()
         for task in metadataRefresh.values { task.cancel() }
         metadataRefresh.removeAll()
         draftSave?.cancel(); persistDrafts()
