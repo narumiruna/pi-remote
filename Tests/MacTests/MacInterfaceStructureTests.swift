@@ -348,15 +348,21 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
                     model.destination = .settings
                     try await self.settle(root)
                     try await self.choose("Session controls", from: "mac-session-menu", in: root)
-                    let picker = try XCTUnwrap(self.descendants(root).compactMap { $0 as? NSSegmentedControl }.first { $0.label(forSegment: 0) == "Files" })
+                    let picker = try XCTUnwrap(self.descendants(root).compactMap { $0 as? NSSegmentedControl }.first {
+                        $0.label(forSegment: 0) == "Files" && $0.window === window
+                            && !$0.isHiddenOrHasHiddenAncestor && !$0.visibleRect.isEmpty
+                    })
+                    XCTAssertEqual(picker.selectedSegment, 1, "Session controls must select the visible Session tab before pointer input")
                     let point = picker.convert(NSPoint(x: picker.bounds.width * (CGFloat(index) + 0.5) / 3, y: picker.bounds.midY), to: nil)
                     let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
                     let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime + 0.01, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+                    // Exercise native segment tracking, not first-click window activation.
+                    // Earlier fixtures can restore another app's focus. The visible target
+                    // consumes the queued mouse-up in its own AppKit tracking loop.
                     NSApp.postEvent(up, atStart: true)
-                    window.sendEvent(down)
-                    window.sendEvent(up)
+                    picker.mouseDown(with: down)
                     try await self.settle(root)
-                    XCTAssertEqual(model.destination, .session(session.id))
+                    XCTAssertEqual(model.destination, .session(session.id), "Pointer tab=\(index), selected=\(picker.selectedSegment), frame=\(picker.frame)")
                     XCTAssertTrue(self.hasInspectorControls(root))
                     XCTAssertEqual(model.state, before)
                     XCTAssertEqual(model.text, "Keep inspector tab draft")

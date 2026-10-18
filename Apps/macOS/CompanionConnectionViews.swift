@@ -29,6 +29,7 @@ struct CompanionServerControls: View {
 
 struct CompanionConnectionSettings: View {
     @Bindable var model: CompanionModel
+    let openSessionControls: () -> Void
     @State private var advanced = false
     @State private var resetIdentity = false
 
@@ -40,8 +41,18 @@ struct CompanionConnectionSettings: View {
                 LabeledContent("Pi executable") {
                     Text(model.piPath).font(.caption.monospaced()).textSelection(.enabled)
                 }
-                Button("Choose Pi executable") { model.chooseExecutable() }.disabled(model.state.working)
+                Button("Choose Pi executable") { model.chooseExecutable() }.disabled(!model.canChooseExecutable)
                     .accessibilityIdentifier("mac-choose-pi-executable")
+                Text(model.executableChangeGuidance).font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("mac-executable-guidance")
+                if let error = model.executableSelectionError {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                        .accessibilityIdentifier("mac-executable-selection-error")
+                }
+                if model.executableSessionLoaded, model.state.selected != nil {
+                    Button("Loaded session controls", action: openSessionControls)
+                        .accessibilityIdentifier("mac-executable-session-controls")
+                }
                 Button("Folder access") { model.grantFolderAccess() }
                 Text("Pi runs with your Mac permissions. Workspaces organize sessions; they are not a sandbox for Pi tools.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -85,9 +96,35 @@ struct CompanionConnectionSettings: View {
     }
 }
 
+enum MacDeviceIdentity {
+    static func label(for device: PairedDevice, in devices: [PairedDevice]) -> String {
+        guard devices.contains(where: { $0.id != device.id && $0.name == device.name }) else { return device.name }
+        return device.name + " · " + device.id.uuidString
+    }
+}
+
+struct MacDeviceRevocationConsent {
+    private(set) var device: PairedDevice?
+
+    init(_ device: PairedDevice? = nil) { self.device = device }
+
+    mutating func cancel() { device = nil }
+
+    static func message(for device: PairedDevice) -> String {
+        "Revoke access for \(device.name) (Device ID: \(device.id.uuidString))? This device will be disconnected and must pair again before it can control Pi. Pi work will continue on this Mac."
+    }
+
+    @MainActor mutating func confirm(in model: CompanionModel) {
+        let captured = device
+        cancel()
+        guard let captured, model.devices.contains(captured) else { return }
+        model.revoke(captured.id)
+    }
+}
+
 struct CompanionDevicesView: View {
     @Bindable var model: CompanionModel
-    @State private var revokeID: UUID?
+    @State private var revocation = MacDeviceRevocationConsent()
 
     var body: some View {
         Form {
@@ -113,10 +150,10 @@ struct CompanionDevicesView: View {
                 ForEach(model.devices) { device in
                     DisclosureGroup {
                         Text("Device ID: " + device.id.uuidString).font(.caption.monospaced()).textSelection(.enabled)
-                        Button("Revoke access", role: .destructive) { revokeID = device.id }
+                        Button("Revoke access", role: .destructive) { revocation = MacDeviceRevocationConsent(device) }
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(device.name)
+                            Text(MacDeviceIdentity.label(for: device, in: model.devices))
                             Text(model.connectedDevices.contains(device.id) ? "Connected" : "Paired · not connected")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -124,13 +161,16 @@ struct CompanionDevicesView: View {
                 }
             }
         }.formStyle(.grouped).navigationTitle("Devices")
-        .confirmationDialog("Revoke this device's access?", isPresented: Binding(
-            get: { revokeID != nil }, set: { if !$0 { revokeID = nil } }
-        )) {
+        .confirmationDialog("Revoke device access?", isPresented: Binding(
+            get: { revocation.device != nil }, set: { if !$0 { revocation.cancel() } }
+        ), titleVisibility: .visible, presenting: revocation.device) { device in
             Button("Revoke access", role: .destructive) {
-                if let id = revokeID { model.revoke(id) }
-                revokeID = nil
-            }
-        } message: { Text("This device will be disconnected and must pair again before it can control Pi. Pi work will continue on this Mac.") }
+                // Use the displayed snapshot even if dismissal clears the pending state first.
+                var captured = MacDeviceRevocationConsent(device)
+                captured.confirm(in: model)
+                revocation.cancel()
+            }.disabled(!model.devices.contains(device))
+            Button("Cancel", role: .cancel) { revocation.cancel() }
+        } message: { device in Text(MacDeviceRevocationConsent.message(for: device)) }
     }
 }

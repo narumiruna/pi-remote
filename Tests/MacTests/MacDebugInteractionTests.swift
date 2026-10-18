@@ -222,7 +222,8 @@ private final class InteractionSecrets: SecretStore, @unchecked Sendable {
     func testHostedProductNativeToolbarClicksAndSemanticPanelsDoNotStartPi() async throws {
         try await fixture { model, window, _ in
             model.interfaceMode = .desktop
-            window.contentView = NSHostingView(rootView: CompanionWindow(model: model).environment(\.accessibilityEnabled, true))
+            // Use the product environment, not a test-only AX override.
+            window.contentView = NSHostingView(rootView: CompanionWindow(model: model))
             window.contentView!.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(250))
             @MainActor func click(_ identifier: String) throws {
