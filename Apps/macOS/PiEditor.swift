@@ -209,11 +209,12 @@ struct PiEditor: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> PiEditorNativeView {
         let view = PiEditorNativeView()
+        view.editor.isEditable = context.environment.isEnabled
         context.coordinator.attach(view)
         return view
     }
     func updateNSView(_ view: PiEditorNativeView, context: Context) {
-        context.coordinator.update(self)
+        context.coordinator.update(self, isEnabled: context.environment.isEnabled)
     }
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: PiEditorNativeView, context: Context) -> CGSize? {
         nsView.fittingSize(for: proposal.width ?? max(1, nsView.bounds.width))
@@ -265,10 +266,12 @@ struct PiEditor: NSViewRepresentable {
             view = nil
         }
 
-        func update(_ parent: PiEditor) {
+        func update(_ parent: PiEditor, isEnabled: Bool = true) {
             let contextChanged = self.parent.contextID != parent.contextID
             self.parent = parent
             guard let editor = view?.editor else { return }
+            let becameEnabled = !editor.isEditable && isEnabled
+            editor.isEditable = isEnabled
             applyStyle()
             let desiredText = parent.text
             if contextChanged {
@@ -288,6 +291,10 @@ struct PiEditor: NSViewRepresentable {
                 requestCompletion()
             }
             refreshCompletions()
+            if becameEnabled {
+                requestCompletion()
+                DispatchQueue.main.async { [weak self] in self?.view?.focusInitiallyIfAvailable() }
+            }
         }
 
         private func applyStyle() {
@@ -303,7 +310,9 @@ struct PiEditor: NSViewRepresentable {
         }
 
         func handle(_ key: PiEditorKey) -> Bool {
-            guard let editor = view?.editor, !editor.hasMarkedText() else { return false }
+            guard let editor = view?.editor else { return false }
+            guard editor.isEditable else { return true }
+            guard !editor.hasMarkedText() else { return false }
             let lines = editor.visualLineBoundaries()
             var state = PiEditorRouting.State()
             state.isComposing = editor.hasMarkedText()
@@ -361,7 +370,8 @@ struct PiEditor: NSViewRepresentable {
         }
 
         private func complete(_ option: PiEditorCompletions.Option) {
-            guard let batch = activeCompletions, batch.options.contains(option), let editor = view?.editor else { return }
+            guard let batch = activeCompletions, batch.options.contains(option), let editor = view?.editor,
+                  editor.isEditable else { return }
             dismissed = input
             history.reset()
             replace(batch.replacementRange, with: option.replacement,
@@ -377,10 +387,14 @@ struct PiEditor: NSViewRepresentable {
         private func replace(_ range: NSRange, with text: String, selection: NSRange) {
             guard let editor = view?.editor else { return }
             changingText = true
+            // Parent restoration is synchronous; user input stays disabled outside this edit.
+            let wasEditable = editor.isEditable
+            editor.isEditable = true
             editor.breakUndoCoalescing()
             editor.insertText(text, replacementRange: range)
             editor.setSelectedRange(selection)
             editor.breakUndoCoalescing()
+            editor.isEditable = wasEditable
             changingText = false
             view?.invalidateTextSize()
         }
@@ -399,7 +413,7 @@ struct PiEditor: NSViewRepresentable {
             // SwiftUI updates must not synchronously change parent state.
             requestTask = Task { @MainActor [weak self] in
                 guard let self, !Task.isCancelled, self.input == requested,
-                      self.view?.editor.hasMarkedText() == false else { return }
+                      self.view?.editor.isEditable == true, self.view?.editor.hasMarkedText() == false else { return }
                 self.parent.onCompletionRequest(requested, explicit)
             }
         }
@@ -410,6 +424,10 @@ struct PiEditor: NSViewRepresentable {
             view?.showCompletions(options, selectedID: selection.id) { [weak self] option in
                 self?.complete(option)
             }
+        }
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            changingText || textView.isEditable
         }
 
         func textDidChange(_ notification: Notification) {
@@ -457,7 +475,11 @@ struct PiEditor: NSViewRepresentable {
         onTextChange?()
         super.didChangeText()
     }
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        isEditable && super.validateUserInterfaceItem(item)
+    }
     override func keyDown(with event: NSEvent) {
+        guard isEditable else { return }
         // Let the input context consume Return, arrows, Tab and Escape during composition.
         if hasMarkedText() || routeKey?(event) != true { super.keyDown(with: event) }
     }
@@ -614,7 +636,7 @@ struct PiEditor: NSViewRepresentable {
 
     /// Retry after window attachment/key activation, but never reclaim focus from another control.
     func focusInitiallyIfAvailable() {
-        guard !hasInitialFocus, let window, window.attachedSheet == nil,
+        guard editor.isEditable, !hasInitialFocus, let window, window.attachedSheet == nil,
               window.sheetParent == nil, NSApplication.shared.modalWindow == nil else { return }
         if window.firstResponder === editor { hasInitialFocus = true; return }
         if let responder = window.firstResponder, responder !== window {
@@ -705,6 +727,7 @@ struct PiEditor: NSViewRepresentable {
             invalidateTextSize()
         }
         for (option, button) in zip(options, suggestions.subviews) {
+            (button as? NSControl)?.isEnabled = editor.isEditable
             (button as? PiEditorCompletionButton)?.choose = { choose(option) }
         }
         guard changed else { return }

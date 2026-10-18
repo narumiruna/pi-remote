@@ -1,19 +1,25 @@
 import AppKit
+import Observation
 import PiRemoteCore
 import PiRemoteHost
 import SwiftUI
+
+/// Window-owned state stays current in lazy menu and sheet closures.
+@Observable @MainActor private final class MacWindowPresentation {
+    var inspectorSection = "Files"
+    var remoteDetailsVisible = false
+    var renamingSession: UUID?
+    var closingSession: LocalCloseConfirmation?
+}
 
 struct CompanionWindow: View {
     @Bindable var model: CompanionModel
     @Environment(\.colorScheme) private var systemColorScheme
     @SceneStorage("macWorkspaceSidebarWidth") private var sidebarWidth = 240.0
     @SceneStorage("macWorkspaceInspectorWidth") private var inspectorWidth = 320.0
-    @State private var inspectorSection = "Files"
+    @State private var presentation = MacWindowPresentation()
     @State private var toolbarHeight: CGFloat = 44
     @State private var removingWorkspace: String?
-    @State private var remoteDetailsVisible = false
-    @State private var renamingSession: UUID?
-    @State private var closingSession: LocalCloseConfirmation?
     @State private var hoveredSession: UUID?
     @State private var sheetFocusTarget: NSView?
     private var theme: MacInterfaceTheme { MacInterfaceTheme(mode: model.interfaceMode) }
@@ -71,13 +77,13 @@ struct CompanionWindow: View {
             }
         } message: { Text("This only removes the sidebar entry. Files and saved sessions are not deleted, and Pi work is not stopped.") }
         .confirmationDialog("Stop and close this session?", isPresented: Binding(
-            get: { closingSession != nil }, set: { if !$0 { closingSession = nil } }
+            get: { presentation.closingSession != nil }, set: { if !$0 { presentation.closingSession = nil } }
         )) {
             Button("Stop and Close", role: .destructive) {
-                if let target = closingSession, let id = target.context.session {
+                if let target = presentation.closingSession, let id = target.context.session {
                     Task { await model.closeSession(id, confirmation: target) }
                 }
-                closingSession = nil
+                presentation.closingSession = nil
             }.accessibilityIdentifier("mac-session-stop-and-close")
         } message: {
             Text("Stop clears queued messages and waits for Pi to become idle before closing this session. File changes cannot be undone. Saved history and the draft are kept.")
@@ -89,104 +95,154 @@ struct CompanionWindow: View {
             // A sheet must never silently retarget an action to a different loaded session.
             if let panel = model.panel, !["pairingQR", "hotkeys"].contains(panel) { model.panel = nil }
             if !model.state.dialogs.isEmpty { model.panel = "dialog" }
-            renamingSession = nil
+            presentation.renamingSession = nil
         }
     }
 
     private func toolbar(compact: Bool) -> some View {
         HStack(spacing: compact ? 8 : 12) {
-                Button("Sidebar", systemImage: "sidebar.left") { model.sidebarVisible.toggle() }
-                    .labelStyle(.iconOnly).keyboardShortcut("s", modifiers: [.command, .option])
-                if !compact { Button("Pi") { model.destination = .conversation }.buttonStyle(.plain).font(.system(.body, design: .monospaced)).foregroundStyle(theme.accent) }
-                MacInterfaceModePicker(selection: $model.interfaceMode)
-                    .frame(width: 136, height: 24)
-                    .help("Interface appearance: Pi or Desktop")
-                Menu("Actions") {
-                    Button("Files") { showInspector("Files") }
-                    Button("Session controls") { showInspector("Session") }
-                    Button("Commands") { model.panel = "commands" }
-                    Button("Keyboard shortcuts") { model.panel = "hotkeys" }
-                    Divider()
-                    Button("Overview") { model.destination = .overview }
-                    Button("Add workspace") { model.panel = "workspace" }
-                    Button("Import session") { model.panel = "import" }
-                    Button("Settings") { model.destination = .settings }
-                    Button("Devices") { model.destination = .devices }
-                }.menuStyle(.borderlessButton).fixedSize()
-                Button { showInspector("Files") } label: {
-                    if compact { Image(systemName: "folder") } else { Text("Files") }
-                }.buttonStyle(.plain).accessibilityLabel("Files").help("Files")
-                    .accessibilityIdentifier("mac-files")
-                Button { model.panel = "commands" } label: {
-                    if compact { Image(systemName: "slash.circle") } else { Text("Commands") }
-                }.buttonStyle(.plain).accessibilityLabel("Commands").help("Commands")
-                    .accessibilityIdentifier("mac-commands")
-                Spacer(minLength: 8)
-                status
-                if let active = model.state.selected, !model.showingLoadedSession {
-                    Button { model.destination = .session(active) } label: {
-                        if compact { Image(systemName: "bubble.left.and.text.bubble.right") } else { Text("Active session") }
-                    }.accessibilityLabel("Active session").help("View active session")
-                }
-                if model.state.working { Button("Stop", role: .destructive) { model.stopWork() }.help("Stop active Pi work and clear queued messages. File changes are not undone.") }
-                Button("New session", systemImage: "plus") {
-                    if let path = model.selectedWorkspace { Task { await model.createSession(in: path) } }
-                    else { model.panel = "directory" }
-                }
-                .disabled(model.state.working || model.openingSession || model.startupError != nil)
-                .keyboardShortcut("n", modifiers: .command)
-                Button("Switch session", systemImage: "magnifyingglass") { model.openNativeWorkflow(.resume) }
-                    .labelStyle(.iconOnly).disabled(!canBrowseSessions)
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
-                    .accessibilityIdentifier("mac-session-switcher-toggle")
-                    .help("Switch session (Command-Shift-O)")
-                Button("Command palette", systemImage: "command") {
-                    if model.state.dialogs.isEmpty { model.panel = "palette" }
-                }
-                    .labelStyle(.iconOnly).disabled(!model.state.dialogs.isEmpty || model.closingSession != nil)
-                    .keyboardShortcut("p", modifiers: [.command, .shift])
-                    .accessibilityIdentifier("mac-command-palette-toggle")
-                    .help("Command palette (Command-Shift-P)")
-                Button("Close Session", systemImage: "xmark") {
-                    if let id = focusedSession { beginClose(id) }
-                }
-                    .labelStyle(.iconOnly).disabled(focusedCloseDisabled)
-                    .keyboardShortcut("w", modifiers: [.command, .shift])
-                    .accessibilityIdentifier("mac-close-focused-session")
-                    .help("Close the selected session; keep history and draft (Command-Shift-W)")
-                Button("Inspector", systemImage: "sidebar.right") { model.inspectorVisible.toggle() }
-                    .accessibilityIdentifier("mac-inspector-toggle")
-                    .labelStyle(.iconOnly).keyboardShortcut("i", modifiers: [.command, .option])
-                    .help("Show or hide Files, Session and Activity")
+            Button("Sidebar", systemImage: "sidebar.left") { model.sidebarVisible.toggle() }
+                .labelStyle(.iconOnly).keyboardShortcut("s", modifiers: [.command, .option])
+                .accessibilityIdentifier("mac-sidebar-toggle")
+            MacInterfaceModePicker(selection: $model.interfaceMode)
+                .frame(width: 136, height: 24)
+                .help("Interface appearance: Pi or Desktop")
+            Button("New session", systemImage: "plus") {
+                if let path = model.selectedWorkspace { Task { await model.createSession(in: path) } }
+                else { model.panel = "directory" }
+            }
+            .disabled(model.state.working || model.openingSession || model.startupError != nil)
+            .keyboardShortcut("n", modifiers: .command)
+            .accessibilityIdentifier("mac-new-session")
+            if model.state.working {
+                Button("Stop", role: .destructive) { model.stopWork() }
+                    .help("Stop active Pi work and clear queued messages. File changes are not undone.")
+                    .accessibilityIdentifier("mac-stop")
+            }
+            Spacer(minLength: 8)
+            if !model.showingLoadedSession {
+                Text(model.piStatus).font(.caption).lineLimit(1)
+                    .accessibilityIdentifier("mac-session-status")
+            }
+            Button { showInspector("Files") } label: {
+                if compact { Image(systemName: "folder") } else { Label("Files", systemImage: "folder") }
+            }
+            .buttonStyle(.plain).accessibilityLabel("Files").help("Files").accessibilityIdentifier("mac-files")
+            Button { model.panel = "commands" } label: {
+                if compact { Image(systemName: "slash.circle") } else { Label("Pi commands", systemImage: "slash.circle") }
+            }
+            .buttonStyle(.plain).accessibilityLabel("Pi commands").help("Pi commands").accessibilityIdentifier("mac-commands")
+            sessionMenu
+            globalActions
+            Button("Inspector", systemImage: "sidebar.right") { model.inspectorVisible.toggle() }
+                .accessibilityIdentifier("mac-inspector-toggle")
+                .labelStyle(.iconOnly).keyboardShortcut("i", modifiers: [.command, .option])
+                .help("Show or hide Files, Session and Activity")
         }
         .padding(.horizontal, compact ? 12 : 16).padding(.vertical, 10)
+        .background {
+            // Menu content is lazy. Keep global shortcuts mounted outside closed menus.
+            HStack(spacing: 0) {
+                Button("Switch session") { switchSession() }
+                    .disabled(!canBrowseSessions).keyboardShortcut("o", modifiers: [.command, .shift])
+                Button("Command palette") { openCommandPalette() }
+                    .disabled(!model.state.dialogs.isEmpty || model.closingSession != nil)
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
+                Button("Close Session") { closeFocusedSession(focusedSession) }
+                    .disabled(focusedCloseDisabled).keyboardShortcut("w", modifiers: [.command, .shift])
+            }
+            .frame(width: 0, height: 0).clipped().opacity(0).allowsHitTesting(false).accessibilityHidden(true)
+        }
     }
 
-    private var status: some View {
-        HStack(spacing: 16) {
-            Button { remoteDetailsVisible.toggle() } label: {
-                Label(model.listening ? "iPhone access on" : (model.starting ? "iPhone access updating" : "iPhone access off"), systemImage: "iphone")
+    private func switchSession() {
+        guard canBrowseSessions else { return }
+        model.openNativeWorkflow(.resume)
+    }
+
+    private func openCommandPalette() {
+        guard model.state.dialogs.isEmpty, model.closingSession == nil else { return }
+        model.panel = "palette"
+    }
+
+    private func closeFocusedSession(_ id: UUID?, confirmation: Binding<LocalCloseConfirmation?>? = nil) {
+        guard let id, id == focusedSession else { return }
+        beginClose(id, confirmation: confirmation)
+    }
+
+    private var sessionMenu: some View {
+        let closeTarget = focusedSession
+        let inspectorSelection = $presentation.inspectorSection
+        let renameSelection = $presentation.renamingSession
+        let closeConfirmation = $presentation.closingSession
+        return Menu("Session") {
+            if let session = model.state.sessions.first(where: { $0.id == focusedSession }) {
+                Text((session.id == model.state.selected ? "Loaded session: " : "Saved session: ") + model.displayName(for: session))
+            } else if let session = model.state.sessions.first(where: { $0.id == model.state.selected }) {
+                Text("Active session: " + model.displayName(for: session))
             }
-            .labelStyle(.iconOnly)
-            .accessibilityIdentifier("mac-remote-access")
-            .help("Show listener and authenticated device status")
-            .popover(isPresented: $remoteDetailsVisible) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("iPhone access").font(.headline)
-                    Text(model.serverStatus).accessibilityIdentifier("mac-remote-server-status")
-                    if model.listening { Text(model.serverEndpoint).font(.caption.monospaced()).textSelection(.enabled) }
-                    Text(model.connectionStatus).accessibilityIdentifier("mac-remote-device-status")
-                    Text("Remote access is optional. It only controls iPhone connections; local Pi sessions work without it.").font(.caption)
-                    HStack {
-                        Button("Network settings") { remoteDetailsVisible = false; model.destination = .settings }
-                        Button("Devices") { remoteDetailsVisible = false; model.destination = .devices }
-                    }
-                }.padding(16).frame(width: 310)
+            Button("View conversation") { model.destination = .conversation }
+            if let id = model.state.selected, !model.showingLoadedSession {
+                Button("View active session") { model.destination = .session(id) }
             }
-            if !model.showingLoadedSession {
-                Text(model.piStatus).accessibilityIdentifier("mac-session-status")
+            Button("Switch session…") { switchSession() }
+                .disabled(!canBrowseSessions)
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+                .accessibilityIdentifier("mac-session-switcher-toggle")
+            Button("Session controls") {
+                inspectorSelection.wrappedValue = "Session"
+                model.inspectorVisible = true
             }
-        }.font(.caption)
+            if let session = model.state.sessions.first(where: { $0.id == focusedSession }), session.id == model.state.selected {
+                Divider()
+                contextualSessionActions(session, inspectorSelection: inspectorSelection, renameSelection: renameSelection)
+            }
+            Divider()
+            Button("Close Session") { closeFocusedSession(closeTarget, confirmation: closeConfirmation) }
+                .disabled(focusedCloseDisabled)
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+                .accessibilityIdentifier("mac-close-focused-session")
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .accessibilityIdentifier("mac-session-menu")
+        .help("Conversation, session switching, controls and contextual session actions")
+    }
+
+    private var globalActions: some View {
+        let remoteDetails = $presentation.remoteDetailsVisible
+        return Menu("Actions") {
+            Button("Command palette…") { openCommandPalette() }
+            .disabled(!model.state.dialogs.isEmpty || model.closingSession != nil)
+            .keyboardShortcut("p", modifiers: [.command, .shift])
+            .accessibilityIdentifier("mac-command-palette-toggle")
+            Button("Keyboard shortcuts") { model.panel = "hotkeys" }
+            Divider()
+            Button("Overview") { model.destination = .overview }
+            Button("Add workspace…") { model.panel = "workspace" }
+            Button("Import session…") { model.panel = "import" }
+                .disabled(model.state.working || model.openingSession)
+            Divider()
+            Button("Settings") { model.destination = .settings }
+            Button("Devices") { model.destination = .devices }
+            Button("iPhone access…") { remoteDetails.wrappedValue = true }
+                .accessibilityIdentifier("mac-remote-access")
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+        .accessibilityIdentifier("mac-global-actions")
+        .help("App navigation, command palette, settings, devices and remote access")
+        .popover(isPresented: $presentation.remoteDetailsVisible) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("iPhone access").font(.headline)
+                Text(model.serverStatus).accessibilityIdentifier("mac-remote-server-status")
+                if model.listening { Text(model.serverEndpoint).font(.caption.monospaced()).textSelection(.enabled) }
+                Text(model.connectionStatus).accessibilityIdentifier("mac-remote-device-status")
+                Text("Remote access is optional. It only controls iPhone connections; local Pi sessions work without it.").font(.caption)
+                HStack {
+                    Button("Network settings") { presentation.remoteDetailsVisible = false; model.destination = .settings }
+                    Button("Devices") { presentation.remoteDetailsVisible = false; model.destination = .devices }
+                }
+            }.padding(16).frame(width: 310)
+        }
     }
 
     private var sidebarSelection: Binding<MacDestination?> {
@@ -319,11 +375,14 @@ struct CompanionWindow: View {
         return model.closeSessionDisabledReason(id) != nil
     }
 
-    private func beginClose(_ id: UUID) {
+    private func beginClose(_ id: UUID, confirmation: Binding<LocalCloseConfirmation?>? = nil) {
         guard model.closeSessionDisabledReason(id) == nil else { return }
         if model.closeSessionRequiresConfirmation(id) {
             Task {
-                if let confirmation = await model.prepareSessionClose(id) { closingSession = confirmation }
+                if let value = await model.prepareSessionClose(id) {
+                    if let confirmation { confirmation.wrappedValue = value }
+                    else { presentation.closingSession = value }
+                }
             }
         } else {
             Task { await model.closeSession(id) }
@@ -340,7 +399,7 @@ struct CompanionWindow: View {
 
     private func beginRename(_ id: UUID) {
         guard canRename(id) else { return }
-        renamingSession = id
+        presentation.renamingSession = id
         model.panel = "rename"
     }
 
@@ -363,7 +422,7 @@ struct CompanionWindow: View {
     }
 
     private func showInspector(_ tab: String) {
-        inspectorSection = tab
+        presentation.inspectorSection = tab
         model.inspectorVisible = true
     }
 
@@ -402,14 +461,39 @@ struct CompanionWindow: View {
     }
 
     @ViewBuilder private var detail: some View {
-        switch model.destination {
-        case .conversation:
-            PiConversationView(model: model, openControls: openPiControl)
-        case .devices: CompanionDevicesView(model: model)
-        case .settings: CompanionConnectionSettings(model: model)
-        case .workspace(let path): workspaceDetail(path)
-        case .session(let id): sessionDetail(id)
-        default: overview
+        if model.destination == .conversation || model.showingLoadedSession {
+            liveConversation
+        } else {
+            switch model.destination {
+            case .devices: CompanionDevicesView(model: model)
+            case .settings: CompanionConnectionSettings(model: model)
+            case .workspace(let path): workspaceDetail(path)
+            case .session(let id): sessionDetail(id)
+            default: overview
+            }
+        }
+    }
+
+    private var liveConversation: some View {
+        VStack(spacing: 0) {
+            if let id = model.state.selected, ["unavailable", "interrupted"].contains(model.state.phase) {
+                HStack {
+                    Text("Pi is not running. Use /resume to choose a session, or open this one. No prompt will be resent.").font(.caption)
+                    Button("Open session") { Task { await model.openSession(id) } }.disabled(model.openingSession)
+                        .accessibilityIdentifier("mac-reopen-loaded-session")
+                }.padding(12)
+            }
+            ZStack {
+                // Both live navigation aliases keep the same native editor and transcript state.
+                PiConversationView(model: model, openControls: openPiControl)
+                    .disabled(model.closingSession != nil || model.openingSession)
+                    .opacity(model.openingSession ? 0 : 1)
+                    .accessibilityHidden(model.openingSession)
+                if model.openingSession {
+                    ProgressView("Opening session…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityIdentifier("mac-session-loading")
+                }
+            }
         }
     }
 
@@ -497,32 +581,17 @@ struct CompanionWindow: View {
     @ViewBuilder private func sessionDetail(_ id: UUID) -> some View {
         if let session = model.state.sessions.first(where: { $0.id == id }) {
             VStack(spacing: 0) {
-                if id != model.state.selected { sessionHeader(session); Divider() }
-                if id == model.state.selected {
-                    if ["unavailable", "interrupted"].contains(model.state.phase) {
-                        HStack {
-                            Text("Pi is not running. Use /resume to choose a session, or open this one. No prompt will be resent.").font(.caption)
-                            Button("Open session") { Task { await model.openSession(id) } }.disabled(model.openingSession)
-                        }.padding(12)
-                    }
-                    if model.openingSession {
-                        ProgressView("Opening session…").frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .accessibilityIdentifier("mac-session-loading")
-                    } else {
-                        PiConversationView(model: model, openControls: openPiControl)
-                            .disabled(model.closingSession != nil)
-                    }
-                } else {
-                    VStack(spacing: 16) {
-                        Image(systemName: "bubble.left.and.text.bubble.right").font(.largeTitle)
-                        Text(model.openingSession ? "Opening session…" : "Open the saved session").font(.title3)
-                        Text(model.state.working ? "Another session is working. Its process will not be interrupted. Stop it before activating this session." : "Pi restores this session from its saved file. Previous messages are not sent again.")
-                            .multilineTextAlignment(.center).foregroundStyle(.secondary)
-                        Button("Open session") { Task { await model.openSession(id) } }
-                            .buttonStyle(.borderedProminent).disabled(model.state.working || model.openingSession)
-                        if model.openingSession { ProgressView() }
-                    }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                sessionHeader(session)
+                Divider()
+                VStack(spacing: 16) {
+                    Image(systemName: "bubble.left.and.text.bubble.right").font(.largeTitle)
+                    Text(model.openingSession ? "Opening session…" : "Open the saved session").font(.title3)
+                    Text(model.state.working ? "Another session is working. Its process will not be interrupted. Stop it before activating this session." : "Pi restores this session from its saved file. Previous messages are not sent again.")
+                        .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                    Button("Open session") { Task { await model.openSession(id) } }
+                        .buttonStyle(.borderedProminent).disabled(model.state.working || model.openingSession)
+                    if model.openingSession { ProgressView() }
+                }.padding(32).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } else {
             ContentUnavailableView("Session not found", systemImage: "bubble.left", description: Text("Select another saved session or add a workspace."))
@@ -537,14 +606,8 @@ struct CompanionWindow: View {
                     .help(model.fullDisplayName(for: session))
                     .accessibilityIdentifier("mac-session-heading")
                 Spacer(minLength: 0)
-                if session.id == model.state.selected {
-                    Text(model.openingSession ? "Opening Pi session…" : model.piStatus).font(.caption).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("mac-session-status")
-                    sessionActions(session)
-                } else {
-                    Text(model.openingSession ? "Opening…" : "Saved · not loaded")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+                Text(model.openingSession ? "Opening…" : "Saved · not loaded")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             let workspace = URL(fileURLWithPath: session.directory).lastPathComponent
             let configuration = session.id == model.state.selected && !model.state.model.isEmpty
@@ -564,39 +627,40 @@ struct CompanionWindow: View {
         _ = model.openNativeWorkflow(command, context: context)
     }
 
-    private func sessionActions(_ session: SessionInfo) -> some View {
+    @ViewBuilder private func contextualSessionActions(_ session: SessionInfo, inspectorSelection: Binding<String>,
+                                                      renameSelection: Binding<UUID?>) -> some View {
         let context = model.state.context
         let commands = MacSlashCommands.options(in: model.state)
-        return Menu {
-            Button("Session controls") { showInspector("Session") }
-            Button("Rename…") { beginRename(session.id) }.disabled(!canRename(session.id))
-            Button("Close Session") { beginClose(session.id) }
-                .disabled(model.closeSessionDisabledReason(session.id) != nil)
-            Button("Resume session…") { showSessionWorkflow(.resume, session: session, context: context) }
-                .disabled(commands.first { $0.native == .resume }?.isEnabled(in: model.state) != true)
-            Button("Session tree") { showSessionWorkflow(.tree, session: session, context: context) }
-                .disabled(commands.first { $0.native == .tree }?.isEnabled(in: model.state) != true)
-            Button("History") { showSessionWorkflow(.history, session: session, context: context) }
-                .disabled(commands.first { $0.native == .history }?.isEnabled(in: model.state) != true)
-            Divider()
-            Button("Commands") { model.panel = "commands" }
-            Button("Files") { showInspector("Files") }
-            Button("Extension diagnostics") { showInspector("Activity") }
-            Button("Copy working directory") { model.copy(session.directory) }
-        } label: { Image(systemName: "ellipsis") }
-        .menuStyle(.borderlessButton).fixedSize()
-        .accessibilityLabel("Session actions").accessibilityIdentifier("mac-session-actions")
-        .help("Session controls, resume, tree, history and diagnostics")
+        Button("Rename…") {
+            guard focusedSession == session.id, model.state.context == context, canRename(session.id) else { return }
+            renameSelection.wrappedValue = session.id
+            model.panel = "rename"
+        }.disabled(!canRename(session.id))
+        Button("Session tree") {
+            guard focusedSession == session.id else { return }
+            showSessionWorkflow(.tree, session: session, context: context)
+        }
+            .disabled(commands.first { $0.native == .tree }?.isEnabled(in: model.state) != true)
+        Button("History") {
+            guard focusedSession == session.id else { return }
+            showSessionWorkflow(.history, session: session, context: context)
+        }
+            .disabled(commands.first { $0.native == .history }?.isEnabled(in: model.state) != true)
+        Button("Extension diagnostics") {
+            inspectorSelection.wrappedValue = "Activity"
+            model.inspectorVisible = true
+        }
+        Button("Copy working directory") { model.copy(session.directory) }
     }
 
     @ViewBuilder private var inspector: some View {
         VStack(spacing: 0) {
-            Picker("Inspector", selection: $inspectorSection) {
+            Picker("Inspector", selection: $presentation.inspectorSection) {
                 Text("Files").tag("Files"); Text("Session").tag("Session"); Text("Activity").tag("Activity")
             }.pickerStyle(.segmented).labelsHidden().padding(12)
                 .accessibilityLabel("Inspector").accessibilityIdentifier("mac-inspector-sections")
             Divider()
-            switch inspectorSection {
+            switch presentation.inspectorSection {
             case "Session":
                 if let id = focusedSession, id == model.state.selected {
                     NavigationStack {
@@ -606,18 +670,40 @@ struct CompanionWindow: View {
                         }
                             .formStyle(.grouped)
                     }.id(model.state.context)
-                } else { ContentUnavailableView("No loaded session", systemImage: "slider.horizontal.3", description: Text("Open a session to use its Pi controls.")) }
+                } else if let session = model.state.sessions.first(where: { $0.id == model.state.selected }) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Active session", systemImage: "bubble.left.and.text.bubble.right").font(.headline)
+                        Text(model.displayName(for: session)).textSelection(.enabled)
+                            .accessibilityIdentifier("mac-inspector-active-session")
+                        Text(session.directory).font(.caption).textSelection(.enabled)
+                        Text(model.piStatus).font(.caption)
+                        Text("View the active session to use its Pi controls. The current destination stays separate from the loaded session.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("View active session") { model.destination = .session(session.id) }
+                            .accessibilityIdentifier("mac-inspector-view-active-session")
+                    }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ContentUnavailableView("No loaded session", systemImage: "slider.horizontal.3", description: Text("Open a session to use its Pi controls."))
+                }
             case "Activity":
                 List {
                     Text(model.piStatus).font(.headline)
                     if model.showingLoadedSession {
                         ForEach(model.state.messages.filter { $0.role == "tool" }) { message in
+                            let value = PiToolRowValue(message, runtimePhase: model.state.phase)
                             DisclosureGroup {
-                                Text(message.text).font(.caption.monospaced()).textSelection(.enabled)
+                                Text(value.expandedOutput).font(.caption.monospaced()).textSelection(.enabled)
                             } label: {
-                                Label(DisplayLimit.text(message.text.components(separatedBy: "\n").first ?? "Tool", bytes: 128),
-                                      systemImage: message.isError ? "exclamationmark.triangle" : (message.streaming ? "clock" : "checkmark.circle"))
+                                HStack(alignment: .firstTextBaseline) {
+                                    Label(value.action, systemImage: value.systemImage)
+                                    if let target = value.target { Text(target).lineLimit(1).truncationMode(.middle) }
+                                    Spacer(minLength: 4)
+                                    Text(value.statusLabel).font(.caption)
+                                }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(value.accessibilityHeading)
                             }
+                            .accessibilityIdentifier("mac-activity-tool-" + message.id.uuidString)
                         }
                         if let error = model.state.error { Text(error.explanation) }
                         Section("Extension diagnostics") {
@@ -673,13 +759,13 @@ struct CompanionWindow: View {
                     PiExtensionDialog(dialog: dialog, request: model.scopedRequest(for: state)).id(dialog.id)
                 }
             case "rename":
-                if let id = renamingSession, id == state.selected,
+                if let id = presentation.renamingSession, id == state.selected,
                    let session = state.sessions.first(where: { $0.id == id }) {
                     MacRenameSessionView(initialName: session.title, state: state, request: { action in
                         guard canRename(id) else { throw RemoteFault.conflict }
                         return try await model.scopedRequest(for: state)(action)
                     }) {
-                        model.panel = nil; renamingSession = nil
+                        model.panel = nil; presentation.renamingSession = nil
                     }
                 }
             case "resume": MacResumeSessionView(model: model)

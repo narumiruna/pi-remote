@@ -18,6 +18,10 @@ struct PiConversationView: View {
     @State private var completionGeneration = UUID()
     @State private var completionError: String?
     @State private var viewportHeight: CGFloat = 1
+    @State private var historyHeight: CGFloat = 1
+    @State private var naturalDockHeight: CGFloat = 1
+    @State private var flowDockY: CGFloat = 0
+    @State private var scrollTargets = PiConversationScrollTargets()
     @State private var showResources = false
     @State private var disclosure: ToolDisclosureRequest?
 
@@ -78,8 +82,66 @@ struct PiConversationView: View {
         }
     }
 
+    private var layout: PiConversationLayout {
+        PiConversationLayout(isDesktop: isDesktop, viewportHeight: viewportHeight,
+                             naturalDockHeight: naturalDockHeight, flowDockY: flowDockY)
+    }
+
     private var surface: some View {
         ScrollViewReader { proxy in
+            ZStack(alignment: .top) {
+                history(proxy: proxy)
+                    .frame(height: isDesktop ? max(1, viewportHeight - layout.dockHeight) : viewportHeight)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { historyHeight = max(1, $0) }
+                // This owner never changes. Only its frame and offset change between modes.
+                composerDock
+                    .offset(y: layout.dockY)
+                    .allowsHitTesting(layout.dockIntersectsViewport)
+                    .accessibilityHidden(!layout.dockIntersectsViewport)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .coordinateSpace(name: "pi-conversation-root")
+            .background(PiConversationWheelBridge(isDesktop: isDesktop, targets: scrollTargets))
+            .contentShape(Rectangle())
+            .clipped()
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = max(1, $0) }
+            .overlay(alignment: .bottomTrailing) {
+                if !scrollFollowing.isFollowing {
+                    Button("↓ Latest") { scrollFollowing.resume(); proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                        .buttonStyle(.bordered).padding(12)
+                        .padding(.bottom, isDesktop ? layout.dockHeight : 0)
+                        .accessibilityIdentifier("pi-follow-latest")
+                }
+            }
+            .onChange(of: layout.dockHeight) { _, _ in
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+            }
+        }
+    }
+
+    private var composerDock: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                widgets(at: .aboveEditor)
+                editor.padding(.top, 16)
+                widgets(at: .belowEditor)
+                footer
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { naturalDockHeight = max(1, $0) }
+            .background(PiConversationScrollProbe(targets: scrollTargets, isHistory: false))
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: layout.dockHeight)
+        .background(theme.background)
+        .frame(maxWidth: isDesktop ? 880 : .infinity)
+        .padding(.horizontal, isDesktop ? 20 : 0)
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("pi-composer-dock")
+    }
+
+    private func history(proxy: ScrollViewProxy) -> some View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     transcript { message, viewportY in
@@ -105,23 +167,26 @@ struct PiConversationView: View {
                             .foregroundStyle(theme.warning).help(notice.text)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 8)
                     }
-                    widgets(at: .aboveEditor)
-                    editor.padding(.top, 16)
-                    widgets(at: .belowEditor)
-                    footer
+                    // Measure the placeholder, not the offset dock, to avoid geometry feedback.
+                    Color.clear.frame(height: isDesktop ? 0 : layout.dockHeight)
+                        .onGeometryChange(for: CGFloat.self) {
+                            $0.frame(in: .named("pi-conversation-root")).minY
+                        } action: { flowDockY = $0 }
                     Color.clear.frame(height: 1).id("pi-surface-end")
                 }.frame(maxWidth: isDesktop ? 880 : .infinity, alignment: .leading)
                     .padding(.horizontal, isDesktop ? 20 : 0)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, isDesktop ? 16 : 0).padding(.bottom, 8)
+                    .padding(.vertical, isDesktop ? 16 : 0)
+                    .padding(.bottom, 8)
+                    .background(PiConversationScrollProbe(targets: scrollTargets, isHistory: true))
             }
+            .accessibilityIdentifier("pi-history-scroll")
             .coordinateSpace(name: "pi-surface-viewport")
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewportHeight = max(1, $0) }
             .task(id: disclosure?.id) {
                 guard let request = disclosure else { return }
                 await Task.yield()
                 guard !Task.isCancelled, request.context == contextID else { return }
-                let anchor = UnitPoint(x: 0, y: min(1, max(0, request.viewportY / viewportHeight)))
+                let anchor = UnitPoint(x: 0, y: min(1, max(0, request.viewportY / historyHeight)))
                 proxy.scrollTo("pi-tool-anchor-" + request.message.uuidString, anchor: anchor)
             }
             .onChange(of: model.interfaceMode) { _, _ in
@@ -160,13 +225,6 @@ struct PiConversationView: View {
             .onChange(of: completions?.options.count) { _, _ in
                 if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
-            .overlay(alignment: .bottomTrailing) {
-                if !scrollFollowing.isFollowing {
-                    Button("↓ Latest") { scrollFollowing.resume(); proxy.scrollTo("pi-surface-end", anchor: .bottom) }
-                        .buttonStyle(.bordered).padding(12).accessibilityIdentifier("pi-follow-latest")
-                }
-            }
-        }
     }
 
     private func transcript(onDisclosure: @escaping (UUID, CGFloat) -> Void) -> some View {
@@ -546,6 +604,129 @@ struct PiConversationView: View {
     private func complete(_ option: PiEditorCompletions.Option) {
         // PiEditor applies a validated edit; this callback invalidates the asynchronous batch.
         completions = nil; completionGeneration = UUID()
+    }
+}
+
+/// Dock geometry is independent of history content and native editor ownership.
+struct PiConversationLayout {
+    let isDesktop: Bool
+    let viewportHeight: CGFloat
+    let naturalDockHeight: CGFloat
+    let flowDockY: CGFloat
+
+    // Leave history space and make oversized extension/editor content scrollable in the dock.
+    var dockHeight: CGFloat { min(max(1, naturalDockHeight), max(1, viewportHeight * 0.75)) }
+    var dockY: CGFloat { isDesktop ? max(0, viewportHeight - dockHeight) : flowDockY }
+    var dockIntersectsViewport: Bool { dockY < viewportHeight && dockY + dockHeight > 0 }
+}
+
+@MainActor final class PiConversationScrollTargets {
+    weak var history: NSScrollView?
+    weak var dock: NSScrollView?
+}
+
+/// Each probe is inside its scroll content, so no window-wide scroll-view search is needed.
+private struct PiConversationScrollProbe: NSViewRepresentable {
+    let targets: PiConversationScrollTargets
+    let isHistory: Bool
+
+    func makeNSView(context: Context) -> Probe { Probe(targets: targets, isHistory: isHistory) }
+    func updateNSView(_ view: Probe, context: Context) { view.register() }
+
+    final class Probe: NSView {
+        let targets: PiConversationScrollTargets
+        let isHistory: Bool
+        init(targets: PiConversationScrollTargets, isHistory: Bool) {
+            self.targets = targets; self.isHistory = isHistory
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { nil }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); register() }
+        override func layout() { super.layout(); register() }
+        func register() {
+            guard let scroll = enclosingScrollView else { return }
+            if isHistory { targets.history = scroll } else { targets.dock = scroll }
+        }
+    }
+}
+
+private struct PiConversationWheelBridge: NSViewRepresentable {
+    let isDesktop: Bool
+    let targets: PiConversationScrollTargets
+    func makeNSView(context: Context) -> PiConversationWheelView { PiConversationWheelView(targets: targets) }
+    func updateNSView(_ view: PiConversationWheelView, context: Context) {
+        view.isDesktop = isDesktop
+        view.isEnabled = context.environment.isEnabled
+    }
+    static func dismantleNSView(_ view: PiConversationWheelView, coordinator: Void) { view.stopMonitoring() }
+}
+
+/// Restore Pi's wheel bubbling across the layout-only sibling seam. Desktop never uses this route.
+@MainActor final class PiConversationWheelView: NSView {
+    var isDesktop = false
+    var isEnabled = true
+    let targets: PiConversationScrollTargets
+    private var monitor: Any?
+    var isMonitoring: Bool { monitor != nil }
+
+    init(targets: PiConversationScrollTargets) {
+        self.targets = targets
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { nil }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        stopMonitoring()
+        guard window != nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            let forwarded = MainActor.assumeIsolated {
+                guard let self, let window = event.window else { return false }
+                return self.forwardWheel(event, from: window, at: event.locationInWindow)
+            }
+            return forwarded ? nil : event
+        }
+    }
+    func stopMonitoring() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+    }
+    isolated deinit { stopMonitoring() }
+
+    @discardableResult func forwardWheel(_ event: NSEvent, from eventWindow: NSWindow, at location: NSPoint) -> Bool {
+        // SwiftUI's root hit test can return its graphics container. Resolve native children inside the visible dock.
+        guard !isDesktop, isEnabled, !isHiddenOrHasHiddenAncestor,
+              event.type == .scrollWheel, eventWindow === window,
+              event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+              NSApp.modalWindow == nil || NSApp.modalWindow === eventWindow,
+              eventWindow.sheets.isEmpty, eventWindow.sheetParent == nil,
+              abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
+              visibleRect.contains(convert(location, from: nil)),
+              let history = targets.history, let dock = targets.dock,
+              history.window === eventWindow, dock.window === eventWindow, !dock.isHiddenOrHasHiddenAncestor,
+              dock.visibleRect.contains(dock.convert(location, from: nil)),
+              let parent = dock.superview,
+              let hit = dock.hitTest(parent.convert(location, from: nil)),
+              hit === dock || hit.isDescendant(of: dock) else { return false }
+        var current: NSView? = hit
+        while let view = current {
+            if let scroll = view as? NSScrollView, Self.canScroll(scroll, deltaY: event.scrollingDeltaY) { return false }
+            if view === dock {
+                history.scrollWheel(with: event)
+                return true
+            }
+            current = view.superview
+        }
+        return false
+    }
+
+    static func canScroll(_ scroll: NSScrollView, deltaY: CGFloat) -> Bool {
+        guard let document = scroll.documentView else { return false }
+        let end = max(document.bounds.minY, document.bounds.maxY - scroll.contentView.bounds.height)
+        let origin = scroll.contentView.bounds.minY
+        let towardEnd = document.isFlipped ? deltaY < 0 : deltaY > 0
+        return towardEnd ? origin < end - 0.5 : origin > document.bounds.minY + 0.5
     }
 }
 

@@ -245,6 +245,59 @@ final class PiEditorCompletionTests: XCTestCase {
         XCTAssertEqual(draft.text, "keep this")
     }
 
+    func testDisabledNativeInputBlocksKeysCompletionsAndCallbacksAndAllowsParentUpdates() async throws {
+        let draft = Draft("/mo")
+        var (parent, coordinator, view, window) = fixture(draft)
+        defer { coordinator.detach(); window.close() }
+        let editor = view.editor
+        editor.insertText("x", replacementRange: editor.selectedRange())
+        parent.completions = PiEditorCompletions(input: coordinator.input,
+            replacementRange: NSRange(location: 0, length: 4),
+            options: [.init(id: "model", label: "/model", replacement: "/model ")])
+        coordinator.update(parent)
+        for _ in 0..<10 { await Task.yield() }
+        let input = coordinator.input
+        let undo = editor.undoManager
+        let canUndo = undo?.canUndo
+        let requests = draft.completionRequests.count
+        coordinator.update(parent, isEnabled: false)
+        XCTAssertFalse(editor.isEditable)
+        let keys: [(String, UInt16, NSEvent.ModifierFlags)] = [("z", 6, []), ("\r", 36, []),
+            ("\t", 48, []), ("\u{1b}", 53, []), ("t", 17, .control)]
+        for (text, code, modifiers) in keys {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: code))
+            editor.keyDown(with: event)
+        }
+        for key in [PiEditorKey(.enter), .init(.tab), .init(.escape), .init(.up),
+                    .init(.letter("p"), modifiers: .control), .init(.tab, modifiers: .shift)] {
+            XCTAssertTrue(coordinator.handle(key))
+        }
+        editor.insertText("hidden", replacementRange: editor.selectedRange())
+        func buttons(_ root: NSView) -> [NSButton] {
+            (root as? NSButton).map { [$0] } ?? root.subviews.flatMap { buttons($0) }
+        }
+        let completion = try XCTUnwrap(buttons(view).first)
+        XCTAssertFalse(completion.isEnabled)
+        completion.performClick(nil)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(editor.string, "/mox"); XCTAssertEqual(draft.text, "/mox")
+        XCTAssertEqual(coordinator.input, input)
+        XCTAssertTrue(editor.undoManager === undo); XCTAssertEqual(undo?.canUndo, canUndo)
+        XCTAssertTrue(draft.deliveries.isEmpty); XCTAssertTrue(draft.completed.isEmpty)
+        XCTAssertTrue(draft.models.isEmpty); XCTAssertEqual(draft.stops, 0)
+        XCTAssertEqual(draft.tools, 0); XCTAssertEqual(draft.thinking, 0); XCTAssertEqual(draft.thinkingCycles, 0)
+        XCTAssertEqual(draft.completionRequests.count, requests)
+        draft.text = "Restored while loading"
+        coordinator.update(parent, isEnabled: false)
+        XCTAssertEqual(editor.string, draft.text, "Parent restoration must still reach the read-only native editor")
+        coordinator.update(parent, isEnabled: true)
+        XCTAssertTrue(view.editor === editor); XCTAssertTrue(editor.isEditable)
+        XCTAssertTrue(coordinator.handle(PiEditorKey(.enter)))
+        XCTAssertEqual(draft.deliveries, [.prompt])
+    }
+
     func testUndoAndRedoAfterRunLoopSynchronizeDraftAndInput() async throws {
         let draft = Draft("Unsent 文 draft")
         let (_, coordinator, view, window) = fixture(draft)

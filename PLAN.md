@@ -309,6 +309,11 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - [x] Verify the final Mac implementation: 207 configured Mac tests and the unsigned Mac build pass. Review 12 paired 900/1300-point hosted captures for Pi dark and Desktop light/dark. Native tests preserve editor state and dialog input across mode changes. See [evidence and limits](docs/mac-interface-modes.md).
 - [ ] Complete live normal-launch/provider, VoiceOver, streaming scroll and user visual acceptance. These remain separate from hosted fixtures; no host/shared/iPhone or protocol change is included.
 
+### Mac interface structure review
+
+- [x] Resolve all six [structure findings](docs/mac-interface-structure.md): expose scoped Session actions, identify active work truthfully in the inspector, reuse typed Activity outcomes, unify live conversation aliases, group secondary toolbar controls, and keep Desktop input visible below independent history.
+- [x] Verify native menu/keyboard routes, editor/IME/undo/completion retention, loading input guards, dock/history wheel ownership, oversized extension access and narrow/wide captures. All 231 configured Mac tests pass in three isolated batches, and the unsigned build passes. Independent source review found the loading-input defect; its correction passes focused checks and follow-up review. The combined legacy capture/menu host remains order-dependent; this is not a single-process full-suite pass. Keep live normal-launch/provider, VoiceOver, real trackpad-monitor delivery and user acceptance separate.
+
 ### Herdr-inspired Mac session management
 
 - [ ] Complete the [session-management implementation plan](docs/plans/2026-10-17_mac-session-management-plan.md). Non-destructive Close Session, grouped Overview, searchable saved-session switching and a native action palette are implemented on the feature branch; verification and limits are recorded in [Mac interface checks](docs/mac-interface.md#session-management-verification). The full plan is not complete.

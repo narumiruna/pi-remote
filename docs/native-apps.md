@@ -110,6 +110,8 @@ xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemote \
   -derivedDataPath /tmp/pi-remote-apps-ios CODE_SIGNING_ALLOWED=NO test
 ```
 
+For current Mac test coverage, use the [complementary isolated batches](mac-interface-structure.md#repeat-the-complete-mac-checks). They run every configured Mac test. The legacy combined capture/menu host remains order-dependent; its failed runs and the clean-host constraint are recorded there.
+
 Do not run the `PiRemoteInterface` compact iPhone SE suite as a current development gate. The user removed that device from the active matrix. Its [commands and results](interface-verification.md#repeat-the-review) are historical records only. During early development, prioritize normal Mac launch and focused checks; use the primary iPhone 17 Pro simulator for relevant phone smoke checks, not broad UI/E2E runs.
 
 The simulator ID is local to this Mac. Use `xcrun simctl list devices available` to select an available simulator elsewhere. These commands do not install a signed personal build on an iPhone. An additional unsigned device-SDK build passed with destination `generic/platform=iOS` and derived-data path `/tmp/pi-remote-native-device`.

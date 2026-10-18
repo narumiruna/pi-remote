@@ -10,11 +10,11 @@ Use the **Pi / Desktop** switch in the Mac toolbar. Pi is the default. The choic
 | Startup | Pi logo, help and resource sections | Centered welcome with explicit Files/Commands or New session/Resume actions |
 | Conversation | Full-width continuous output | Centered column, up to 880 points, with role labels and rounded message cards |
 | Session information | Directory and phase in the footer | Fixed title/path/phase header; resources behind a disclosure |
-| Input | Compact ruled editor | Rounded composer with Commands and Send/Steering controls |
+| Input | Compact ruled editor that follows content | Persistent rounded composer below history, with Commands and Send/Steering controls |
 | Tools | Compact dark rows | Native panel colors and rounded rows; paths stay monospace |
 | Code | Dark code surface | The same dark code surface with rounded corners |
 
-Both modes use the same conversation flow, native editor and session. The composer remains in that flow; Desktop does not add a second, pinned editor. Switching does not change the session context, submit text, recover queues, answer dialogs or stop work. Existing keyboard, shell review, draft-replacement consent and no-replay rules remain in effect.
+Both modes use the same native editor and session. Pi places the dock at its content anchor. Desktop pins that same dock below an independent history viewport; it does not add a second editor. Oversized dock content has internal scroll access. See [structure corrections and current verification](mac-interface-structure.md). Switching does not change the session context, submit text, recover queues, answer dialogs or stop work. Existing keyboard, shell review, draft-replacement consent and no-replay rules remain in effect.
 
 Tool disclosure choices, code-copy feedback and model/thinking picker input remain mounted across mode changes. Extension widgets keep their above/below-editor positions. Status entries stay in the footer. Standard extension dialogs use the active mode's text and surface colors. Arbitrary extension components remain outside the RPC contract.
 
@@ -24,16 +24,16 @@ Tool disclosure choices, code-copy feedback and model/thinking picker input rema
 - `CompanionModel.swift` stores only the local preference in the injected `UserDefaults`.
 - `CompanionWindow.swift` supplies the native segmented switch and local SwiftUI color scheme. It does not change the app-wide appearance. Desktop restores the inherited scheme after Pi mode.
 - `MacDesktopChrome.swift` contains callback-only header and welcome views.
-- `PiConversationView.swift` changes presentation without changing editor/message identity or moving the editor between branches.
+- `PiConversationView.swift` keeps one dock subtree in a stable overlay. Pi follows a measured content placeholder; Desktop reserves the dock's height outside the history viewport. The editor does not move between view branches.
 - `PiEditor.swift` changes native attributes in place. It restores marked-text attributes without replacing characters or ending composition. Native undo/redo completion reconciles the binding when AppKit restores storage without a text-change callback.
 
 Host, shared packages, iPhone, authentication, catalog and RPC formats are unchanged. No preference migration is needed. A rollback can remove these presentation changes without deleting session data or resending input.
 
-## Verification
+## Initial mode checkpoint
 
-The final configured Mac test run passed **207 tests, 0 failures**, after the last source change. The unsigned Mac build passed. Logs are `/tmp/pi-mac-interface-modes/mac-final-all.log` and `/tmp/pi-mac-interface-modes/mac-final-build.log`. All 30 Mac source/test/project hashes before and after validation match. `git diff --check` passes.
+The initial two-mode implementation passed **207 Mac tests, 0 failures**, before the later structure corrections. The unsigned Mac build passed. Logs are `/tmp/pi-mac-interface-modes/mac-final-all.log` and `/tmp/pi-mac-interface-modes/mac-final-build.log`. All 30 Mac source/test/project hashes before and after validation match. `git diff --check` passes.
 
-The test log contains hosted `SceneStorage` lifecycle messages, AppKit CA-commit warnings, `linkd.autoShortcut` connection diagnostics, and an AppIntents metadata warning. There are no compilation errors or failed tests. The final build has no compiler warnings or errors. These results do not establish live accessibility or normal-launch acceptance.
+The test log contains hosted `SceneStorage` lifecycle messages, AppKit CA-commit warnings, `linkd.autoShortcut` connection diagnostics, and an AppIntents metadata warning. There are no compilation errors or failed tests. That build had no compiler warnings or errors. These results do not establish live accessibility or normal-launch acceptance.
 
 Focused checks cover:
 
@@ -51,7 +51,7 @@ Initial focused runs found and corrected preference-load rewrites, low muted-tex
 
 ### Commands
 
-The configured Mac scheme and source lists come from `project.yml`. Generate the ignored Xcode project with `xcodegen generate`. Use command-local Xcode selection:
+The configured Mac scheme and source lists come from `project.yml`. Generate the ignored Xcode project with `xcodegen generate`. The commands below belong to the initial mode checkpoint. Use the [isolated test batches](mac-interface-structure.md#repeat-the-complete-mac-checks) for the current structure implementation; its legacy combined capture/menu host is order-dependent. Use command-local Xcode selection:
 
 ```sh
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild test \
