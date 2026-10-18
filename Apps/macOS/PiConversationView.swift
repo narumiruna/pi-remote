@@ -5,11 +5,11 @@ import SwiftUI
 /// A native transcript, editor and footer. Pi still owns execution through RPC.
 struct PiConversationView: View {
     @Bindable var model: CompanionModel
-    var openControls: (String) -> Void
+    var openControls: (String) -> Bool
     @State private var showThinking = false
     @State private var expandTools = false
     @State private var showActivity = false
-    @State private var following = true
+    @State private var scrollFollowing = PiScrollFollowing()
     @State private var statistics: SessionStatistics?
     @State private var statisticsSequence: UInt64?
     @State private var shellOffer: PiShellOffer?
@@ -35,7 +35,7 @@ struct PiConversationView: View {
         .task(id: model.state.phase + contextID) { await refreshStatistics() }
         .onChange(of: model.state.context) { _, _ in
             shellOffer = nil; completions = nil; completionError = nil
-            completionGeneration = UUID(); statistics = nil; statisticsSequence = nil; following = true; showActivity = false
+            completionGeneration = UUID(); statistics = nil; statisticsSequence = nil; scrollFollowing.reset(); showActivity = false
         }
         .sheet(item: $shellOffer) { offer in
             VStack(alignment: .leading, spacing: 16) {
@@ -89,29 +89,32 @@ struct PiConversationView: View {
             }
             .task(id: contextID) {
                 await Task.yield()
-                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
-            .onScrollPhaseChange { _, phase in
-                if phase == .interacting { following = false }
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                geometry.contentOffset.y + geometry.containerSize.height >= geometry.contentSize.height - 48
+            } action: { _, atBottom in
+                scrollFollowing.geometryChanged(atBottom: atBottom)
             }
+            .onScrollPhaseChange { _, phase in scrollFollowing.phaseChanged(phase) }
             .onChange(of: model.state.messages) { _, _ in
-                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
             .onChange(of: model.text) { _, _ in
-                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
             .onChange(of: model.state.extensionDisplay) { _, _ in
-                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
             .onChange(of: model.state.commands) { _, _ in
-                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
             .onChange(of: completions?.options.count) { _, _ in
-                if following { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                if scrollFollowing.isFollowing { proxy.scrollTo("pi-surface-end", anchor: .bottom) }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !following {
-                    Button("↓ Latest") { following = true; proxy.scrollTo("pi-surface-end", anchor: .bottom) }
+                if !scrollFollowing.isFollowing {
+                    Button("↓ Latest") { scrollFollowing.resume(); proxy.scrollTo("pi-surface-end", anchor: .bottom) }
                         .buttonStyle(.bordered).padding(12).accessibilityIdentifier("pi-follow-latest")
                 }
             }
@@ -210,9 +213,9 @@ struct PiConversationView: View {
                      onRecoverQueue: { recoverQueue(stop: $0) },
                      onCompletion: complete, onCompletionRequest: requestCompletions,
                      onDismissCompletion: { completions = nil; completionGeneration = UUID() },
-                     onSelectModel: { openControls("model") }, onCycleModel: { direction in
+                     onSelectModel: { _ = openControls("model") }, onCycleModel: { direction in
                          if direction > 0 { perform(.cycleModel) }
-                         else { openControls("model") }
+                         else { _ = openControls("model") }
                      },
                      onToggleTools: { expandTools.toggle() }, onToggleThinking: { showThinking.toggle() },
                      onCycleThinking: { perform(.cycleThinking) }, separatorColor: NSColor(editorRule))
@@ -254,11 +257,11 @@ struct PiConversationView: View {
 
     private func configuration(_ value: PiFooterValue) -> some View {
         HStack(spacing: 8) {
-            PiFooterAction(title: value.model, color: NSColor(PiPalette.muted), identifier: "pi-model-selector") { openControls("model") }
+            PiFooterAction(title: value.model, color: NSColor(PiPalette.muted), identifier: "pi-model-selector") { _ = openControls("model") }
                 .help("Select model (Control-L): " + value.model)
             Text("·")
             PiFooterAction(title: model.state.thinking.isEmpty ? "thinking unavailable" : model.state.thinking,
-                           color: NSColor(PiPalette.thinking(model.state.thinking)), identifier: "pi-thinking-selector") { openControls("thinking") }
+                           color: NSColor(PiPalette.thinking(model.state.thinking)), identifier: "pi-thinking-selector") { _ = openControls("thinking") }
         }
     }
 
@@ -292,7 +295,11 @@ struct PiConversationView: View {
         if let command = PiBuiltinCommand.parse(draft), PiBuiltinCommand.all.contains(where: { $0.name == command.name }) {
             guard command.arguments.isEmpty else { model.composerError = "Use the native picker for this command; inline arguments are not supported."; return }
             guard model.state.dialogs.isEmpty else { model.composerError = "Answer or cancel the open request first."; return }
-            openControls(command.name)
+            let context = model.state.context
+            if openControls(command.name), model.state.context == context, model.text == draft {
+                model.text = ""
+                model.composerError = nil
+            }
             return
         }
         if let command = PiBuiltinCommand.parse(draft), ["login", "logout", "trust", "reload", "llama", "share", "bug", "debug", "quit", "scoped-models"].contains(command.name) {

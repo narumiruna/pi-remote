@@ -94,13 +94,13 @@ private final class PiFixtureSecrets: SecretStore, @unchecked Sendable {
         let model = CompanionModel(support: root, secrets: PiFixtureSecrets(), defaults: defaults)
         do {
             XCTAssertEqual(model.destination, .conversation)
-            try await capture(PiConversationView(model: model, openControls: { _ in }), name: "startup", size: NSSize(width: 900, height: 600))
+            try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "startup", size: NSSize(width: 900, height: 600))
             let id = UUID()
             model.state.sessions = [SessionInfo(id: id, title: "Synthetic fixture", directory: "/tmp/pi-native-fixture")]
             model.state.selected = id
             for (name, phase) in [("retry", "retrying"), ("compaction", "compacting"), ("interrupted", "interrupted"), ("unavailable", "unavailable"), ("uncertain", "recovering")] {
                 model.state.phase = phase
-                try await capture(PiConversationView(model: model, openControls: { _ in }), name: name, size: NSSize(width: 900, height: 600))
+                try await capture(PiConversationView(model: model, openControls: { _ in true }), name: name, size: NSSize(width: 900, height: 600))
             }
             model.state.phase = "working"; model.state.model = "fixture/model"; model.state.thinking = "medium"
             model.state.messages = [
@@ -110,12 +110,12 @@ private final class PiFixtureSecrets: SecretStore, @unchecked Sendable {
                 TranscriptMessage(role: "assistant", text: "The focused check is running…", streaming: true)
             ]
             for width in [900, 1300] {
-                try await capture(PiConversationView(model: model, openControls: { _ in }), name: "active-\(width)", size: NSSize(width: width, height: 700))
+                try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "active-\(width)", size: NSSize(width: width, height: 700))
             }
             model.state.phase = "idle"
             try await capture(CompanionWindow(model: model), name: "root-idle", size: NSSize(width: 1100, height: 720))
             model.text = "/login"
-            try await capture(PiConversationView(model: model, openControls: { _ in }), name: "unsupported-command", size: NSSize(width: 900, height: 600)) { host, window in
+            try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "unsupported-command", size: NSSize(width: 900, height: 600)) { host, window in
                 let editor = try XCTUnwrap(self.subviews(host).compactMap { $0 as? PiEditorTextView }.first)
                 window.makeFirstResponder(editor)
                 let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))

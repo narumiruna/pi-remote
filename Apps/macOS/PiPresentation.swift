@@ -161,3 +161,37 @@ struct PiFooterValue: Equatable {
         value >= 1_000 && value % 1_000 == 0 ? "\(value / 1_000)k" : String(value)
     }
 }
+
+/// Resume live output only after a user scroll ends at the bottom or Latest is selected.
+struct PiScrollFollowing {
+    private(set) var isFollowing = true
+    private(set) var atBottom = true
+    private var userScrolling = false
+
+    mutating func phaseChanged(_ phase: ScrollPhase) {
+        switch phase {
+        case .tracking, .interacting, .decelerating:
+            userScrolling = true
+            isFollowing = false
+        case .idle:
+            if userScrolling {
+                userScrolling = false
+                isFollowing = atBottom
+            }
+        default: break
+        }
+    }
+
+    mutating func geometryChanged(atBottom: Bool) {
+        self.atBottom = atBottom
+    }
+
+    mutating func resume() {
+        userScrolling = false
+        isFollowing = true
+    }
+
+    mutating func reset() {
+        self = Self()
+    }
+}

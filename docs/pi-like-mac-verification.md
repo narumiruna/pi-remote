@@ -14,16 +14,17 @@ The Mac app now has a SwiftUI/AppKit coding surface based on installed Pi 1.3.0:
 - Enter sends a prompt while idle or steering while busy. Option-Enter sends follow-up while busy and a prompt while idle. Shift-Enter, Control-Enter and Control-J insert a newline. IME composition owns these keys before application shortcuts.
 - Return/Tab with suggestions completes only. Up/Down first navigates suggestions, then local prompt history at the visual text boundaries. History restores the unsent draft. Selection and Command-based native editing remain AppKit behavior.
 - Control-L opens model selection; Control-P cycles forward. Reverse cycling opens the selector because upstream RPC has no reverse-cycle operation. Shift-Tab cycles thinking, Control-O expands tools and Control-T shows thinking. Shortcuts apply only while the editor owns focus.
-- Slash suggestions combine native controls and discovered Pi commands. Known unsupported terminal workflows produce an error and retain the draft rather than becoming a model prompt. Native commands open reviewed controls; inline arguments are not accepted by those controls.
+- Slash suggestions combine native controls and discovered Pi commands. Known unsupported terminal workflows produce an error and retain the draft rather than becoming a model prompt. Native commands open reviewed controls; inline arguments are not accepted by those controls. Successful opening clears only the submitted command in the same context. Rejection or a changed draft/context does not clear text.
 - Path completion reads bounded directory pages through the existing scoped directory API. It inserts paths only, not file contents. Files still previews and explicitly attaches text. Results bind exact text, caret, revision and session context. Names with quotes, backslashes or control characters are omitted. Mid-token path completion is not offered. Shell drafts disable path completion to avoid interpreting file names as executable syntax.
 - Native standard extension select/confirm/input/editor dialogs retain scoped responses, explicit decisions and cancellation. Unknown methods offer cancellation only. Existing host timeout and stale-answer checks remain authoritative. Session-bound sheets close instead of silently changing targets when the loaded context changes.
+- Loaded conversations open at the latest content, including after return from Overview. User scrolling pauses live following. Following resumes when the gesture ends near the bottom or Latest is selected; layout changes alone do not resume it.
 - The footer uses authoritative session/model/thinking state and idle `get_session_stats` reads. Missing values stay unavailable, not zero. Busy values are identified as last-settled usage. Background read failures do not become foreground action faults. Loaded-resource inventory, git branch and subscription state are not invented.
 
 ## Shell execution and queued-input recovery
 
 `!command` and `!!command` open a session-bound execution review. `!!` sets `excludeFromContext`; Pi still stores the shell entry in history. Commands run through upstream `bash`, not an app-owned shell or PTY. Confirmation cannot undo changes or prevent arbitrary effects of a reviewed command.
 
-- Commands are limited to 16 KiB; streamed/final shell output is limited to 64 KiB. Saved transcript rows use the existing 16 KiB per-message/256 KiB aggregate display limits and retain truncation notices.
+- Commands are limited to 16 KiB; streamed/final shell output is limited to 64 KiB. Saved transcript rows use the existing 16 KiB per-message/256 KiB aggregate display limits and retain truncation notices. The per-row budget reserves the final exit/cancellation/context-exclusion marker before clipping output. Aggregate clipping omits a shell row instead of removing its outcome. Invalid exit codes stay unavailable, not successful.
 - Shell admission returns acknowledgement, not completion. `HostSnapshot.bash` carries running/cancelling/final/unknown state. Updates require the matching wire ID. Ordinary agent settlement cannot settle a running shell or clear its persisted interruption marker.
 - Cancellation repeats after early acknowledgement because upstream can delay execution admission in `user_bash` hooks. Requests have one-second attempt limits and a five-second cancellation deadline. New work waits for the cancellation barrier. Unconfirmed cancellation becomes uncertain, not successful.
 - A failed shell RPC response can follow side effects or a persistence failure. It stays an unknown outcome. Stop rechecks state after suspension and shuts down an uncertain child. Final shell requests have a 300-second deadline; expiry does not trigger redispatch.
@@ -31,7 +32,7 @@ The Mac app now has a SwiftUI/AppKit coding surface based on installed Pi 1.3.0:
 - Known-final shells schedule fenced history refresh. Saved `bashExecution` entries preserve command, context exclusion, cancellation, exit status and output in native shell rows. Two sequential shells and seeded-session resume are checked against installed Pi.
 - The isolated runtime does not persist a shell-only empty session. The persistence test explicitly imports a synthetic user-message seed; it does not send that seed to a provider. Do not infer shell-only persistence from that test.
 
-Option-Up uses the destructive `clear_queue` result without aborting. Escape, after dismissing completion, recovers queued input and stops work. The explicit Stop button retains queue-clearing behavior.
+Option-Up uses the destructive `clear_queue` result without aborting. Escape, after dismissing completion, recovers queued input and stops work. Stop recovery has priority over pending compaction or extension-command RPCs; recovery without Stop retains ordinary admission. The explicit Stop button retains queue-clearing behavior.
 
 Recovery returns at most 256 KiB directly to the initiating request. It never broadcasts prompt text in snapshots, writes it to routine diagnostics or resends it. A nonempty draft requires replacement consent. Steering text precedes follow-up text, separated by blank lines; mixed arrival order is not reconstructed. Lost, malformed or oversized responses are explicit. If recovery succeeds but Stop fails, recovered text is still returned and uncertain work is stopped or marked interrupted for explicit reopen. Other controllers do not receive a draft offer.
 
@@ -75,6 +76,18 @@ Static [extension research](pi-extension-native-display.md) confirms that the in
 - A broader 69-test sanitizer batch failed with 47 issues beginning at fixture startup/session creation (`/tmp/pi-shell-final-tsan.log`). This run did not pass. Smaller focused sanitizer batches passed; do not describe them as a passing broad run or assume a specific cause without evidence.
 - Recovery hardening initially revealed that the shell fixture lacked persisted headers/resume argument handling. The fixture now models these inputs. Stop-rejection and child-exit recovery both pass, including explicit reopen; an unrelated agent-settlement event cannot clear active-shell interruption. A footer-read race with Close was also found and fixed: local footer reads no longer reserve foreground admission, and crossed results are discarded without publishing action faults. Focused log: `/tmp/pi-like-final-concurrency.log`; final root and sanitizer checks include these regressions.
 - An existing normally launched Mac app instance was left unchanged. No live terminal inspection, product coding interaction or full VoiceOver review was performed. Hosted views and unsigned builds do not close these gates.
+
+### Pull request review checkpoint
+
+The [PR #8 review ledger](reviews/2026-10-18_pr-8-review.md) records each submitted item and its disposition. The review fixes cover priority Escape recovery during pending RPCs, native-command draft acknowledgement, bounded saved-shell outcomes, and scroll-follow resume. A 60-message hosted regression confirms that the existing initial-scroll task opens loaded conversations at the end, including after Overview return.
+
+- Root: 201 tests pass (`/tmp/pi-pr8-review/root-final.log`).
+- Mac: 141 tests pass with no failures or skips (`/tmp/pi-pr8-review/mac-all-final.log`).
+- Core: 61 tests pass normally and with Thread Sanitizer (`/tmp/pi-remote-r4-core.log`, `/tmp/pi-pr8-review/core-tsan.log`).
+- Focused host recovery/shell/correlation: 25 tests pass with Thread Sanitizer (`/tmp/pi-pr8-review/host-tsan.log`). Selections overlap other counts. No race diagnostics are reported.
+- Three iPhone 17 Pro iOS 26.5 smoke tests pass (`/tmp/pi-pr8-review/phone-smoke.log`).
+
+These checks use controlled fixtures and private test storage. They do not execute installed extensions or a provider, or establish normal-launch/user visual acceptance. The ledger retains failed reproduction and fixture attempts separately from passing final checks.
 
 ### Repeat the checks
 

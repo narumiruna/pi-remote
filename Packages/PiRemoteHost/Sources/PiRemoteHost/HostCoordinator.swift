@@ -73,6 +73,8 @@ public actor HostCoordinator {
     private var runRevision: UInt64 = 0
     // Confirmation follows work boundaries, not streaming message completion.
     private var workGeneration = UUID()
+    // Dialog answers continue compaction, but an explicit Stop invalidates its result.
+    private var stopGeneration = UUID()
     private var observers: [UUID: AsyncStream<HostSnapshot>.Continuation] = [:]
     private var journal: RequestJournal
     private var replay = StateReplay()
@@ -314,10 +316,11 @@ public actor HostCoordinator {
         // Validate in the same actor turn as mutation reservation and Stop dispatch.
         try validateCloseConfirmation(closeConfirmation, for: request)
         let action = request.action
-        if recoveringEvents, action.mutates, action != .stop { throw RemoteFault.busy }
+        let stopsWork = action == .stop || action == .recoverQueue(stop: true)
+        if recoveringEvents, action.mutates, !stopsWork { throw RemoteFault.busy }
         if action.mutates || action.needsSession {
             let priority: Bool
-            switch action { case .stop, .answer, .abortRetry, .abortBash: priority = true; default: priority = false }
+            switch action { case .stop, .recoverQueue(stop: true), .answer, .abortRetry, .abortBash: priority = true; default: priority = false }
             guard priority || mutations.isEmpty else { throw RemoteFault.busy }
             mutations.insert(request.id)
         }
@@ -519,10 +522,28 @@ public actor HostCoordinator {
             guard snapshot.bash?.id == id, snapshot.bash?.working == true else { throw RemoteFault.conflict }
             try await abortBash(id: id)
         case .recoverQueue(let stop):
-            guard !["starting", "stopping", "recovering"].contains(snapshot.phase), snapshot.dialogs.isEmpty else { throw RemoteFault.busy }
+            if stop {
+                guard snapshot.phase != "starting" || lifecycleTransition != nil else { throw RemoteFault.busy }
+                guard snapshot.phase != "stopping" else { throw RemoteFault.busy }
+            } else {
+                guard !["starting", "stopping", "recovering"].contains(snapshot.phase), snapshot.dialogs.isEmpty else { throw RemoteFault.busy }
+            }
             let child = try requireRPC(), token = generation
+            // A pending extension or lifecycle hook need not respond to abort.
+            // Recover its queue first, then terminate that child and fence its replies.
+            let interruptPending = pendingQuitMutations.contains { $0 != request.id }
             workGeneration = UUID()
-            let result = try await child.request("clear_queue")
+            if stop { stopGeneration = UUID(); snapshot.phase = "stopping"; publish() }
+            let result: JSONValue
+            do { result = try await child.request("clear_queue") }
+            catch {
+                if stop, generation == token, snapshot.selected == request.session {
+                    _ = await interruptEventStream(child, generation: token)
+                    recoveryNotice = "Queued input could not be recovered. Pi was asked to stop; inspect saved history before sending more input. No text was restored."
+                    refreshNotices()
+                }
+                throw error
+            }
             guard generation == token, snapshot.selected == request.session else { throw RemoteFault.conflict }
             snapshot.pendingMessages = 0
             let text: String
@@ -535,13 +556,13 @@ public actor HostCoordinator {
             } catch {
                 // clear_queue already removed these messages. Do not pretend a
                 // truncated draft is complete or automatically queue anything again.
+                if stop { try? await stopWork(interruptPending: interruptPending) }
                 recoveryNotice = "Pi cleared queued instructions, but their text could not be recovered within the display limit. Do not assume the draft contains them."
                 refreshNotices()
-                if stop { try await stopWork() }
                 throw error
             }
             if stop {
-                do { try await stopWork() }
+                do { try await stopWork(interruptPending: interruptPending) }
                 catch {
                     // Queue recovery succeeded. Do not lose that text because
                     // the separate abort or settlement check failed afterwards.
@@ -559,7 +580,8 @@ public actor HostCoordinator {
             }
             return .recoveredQueue(text: text)
         case .stop:
-            try await stopWork()
+            // A second Stop must not wait for an unconfirmed queue-recovery RPC.
+            try await stopWork(interruptPending: snapshot.phase == "stopping")
         case .model(let provider, let id):
             guard !snapshot.working, snapshot.models.contains(where: { $0.provider == provider && $0.model == id }) else { throw RemoteFault.busy }
             try await requireIdle()
@@ -578,13 +600,23 @@ public actor HostCoordinator {
             try await refreshConfiguration()
         case .compact(let instructions):
             guard !snapshot.working, instructions.utf8.count <= 16_384 else { throw RemoteFault.busy }
+            let token = generation, admission = workGeneration
             try await requireIdle()
+            guard generation == token, workGeneration == admission, !closing, !snapshot.working else { throw RemoteFault.conflict }
             let child = try requireRPC()
             workGeneration = UUID()
+            let stop = stopGeneration
             snapshot.phase = "compacting"; publish()
             _ = try await child.request("compact", fields: ["customInstructions": .string(instructions)], timeout: 300)
+            guard generation == token, stopGeneration == stop, rpc === child, !closing else { throw RemoteFault.conflict }
             snapshot.phase = "idle"
-            try await refreshHistory()
+            let data = try await child.request("get_messages")
+            guard generation == token, stopGeneration == stop, rpc === child, !closing else { throw RemoteFault.conflict }
+            let messages = (data["messages"]?.array ?? []).map { outputImages.message($0) }
+            if !messages.isEmpty { try retainHistoryPresence() }
+            reducer.replaceHistory(messages)
+            snapshot.messages = reducer.messages; snapshot.hasOlderMessages = reducer.omitted
+            historyNeedsRefresh = false
         case .rename(let name):
             guard !snapshot.working, !name.isEmpty, name.utf8.count <= 256 else { throw RemoteFault.invalidRequest }
             try await requireIdle()
@@ -664,8 +696,11 @@ public actor HostCoordinator {
                 throw RemoteFault.unsupportedFeature
             }
             guard snapshot.phase != "starting", snapshot.phase != "stopping" else { throw RemoteFault.busy }
+            let token = generation, work = workGeneration
             if snapshot.working { guard command.source == "extension" else { throw RemoteFault.busy } }
             else { try await requireIdle() }
+            guard generation == token, workGeneration == work, !closing,
+                  snapshot.phase != "starting", snapshot.phase != "stopping" else { throw RemoteFault.conflict }
             let child = try requireRPC()
             workGeneration = UUID()
             _ = try await child.request("prompt", fields: ["message": .string("/" + name + (arguments.isEmpty ? "" : " " + arguments))])
@@ -839,9 +874,10 @@ public actor HostCoordinator {
         return try await withTaskCancellationHandler { try await operation.value } onCancel: { operation.cancel() }
     }
 
-    private func stopWork() async throws {
+    private func stopWork(interruptPending: Bool = false) async throws {
         guard snapshot.phase != "starting" || lifecycleTransition != nil else { throw RemoteFault.busy }
         let child = try requireRPC()
+        stopGeneration = UUID()
         workGeneration = UUID()
         if lifecycleTransition != nil {
             lifecycleTransition = nil; lifecycleUI = []; lifecycleUIOverflow = false
@@ -852,12 +888,19 @@ public actor HostCoordinator {
             guard await interruptEventStream(child, generation: stopping) else { throw RemoteFault.unavailable }
             return
         }
-        if recoveringEvents {
+        if recoveringEvents || interruptPending {
             guard await interruptEventStream(child, generation: generation) else { throw RemoteFault.unavailable }
             return
         }
+        let stopping = generation
         snapshot.phase = "stopping"; publish()
-        _ = try await child.request("clear_queue")
+        do { _ = try await child.request("clear_queue") }
+        catch {
+            // A failed queue read must not prevent an explicit Stop.
+            _ = await interruptEventStream(child, generation: stopping)
+            throw error
+        }
+        guard generation == stopping, rpc === child else { throw RemoteFault.unknownOutcome }
         if recoveringEvents || snapshot.bash?.status == .unknownOutcome {
             guard await interruptEventStream(child, generation: generation) else { throw RemoteFault.unavailable }
             return

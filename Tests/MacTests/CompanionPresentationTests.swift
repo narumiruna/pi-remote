@@ -1160,7 +1160,7 @@ done
             model.state.commands = [CommandOption(name: "skill:fixture-skill", detail: "", source: "skill"),
                                     CommandOption(name: "review-fixture", detail: "", source: "prompt")]
             model.text = ""
-            try await capture(PiConversationView(model: model, openControls: { _ in }), name: "terminal-reference-startup", width: 1100, height: 593) { host, window in
+            try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "terminal-reference-startup", width: 1100, height: 593) { host, window in
                 _ = try self.labelled("[Context]", in: host)
                 _ = try self.labelled("fixture-skill", in: host)
                 let prompts = try self.labelled("/review-fixture", in: host)
@@ -1193,7 +1193,7 @@ done
                 notices: [ExtensionNotice(id: "fixture-info", text: "Background diagnostic fixture"),
                           ExtensionNotice(id: "fixture-error", text: "Fixture resource is unavailable", severity: .error)])
             model.state.notices = ["Background diagnostic fixture", "Native status fixture", "Legacy flattened widget"]
-            try await capture(PiConversationView(model: model, openControls: { _ in }), name: "terminal-reference-extension-slots", width: 1200, height: 760) { host, window in
+            try await capture(PiConversationView(model: model, openControls: { _ in true }), name: "terminal-reference-extension-slots", width: 1200, height: 760) { host, window in
                 let above = try self.labelled("Progress · 0/2 complete\n▶ First fixture task\n○ Second fixture task", in: host)
                 let aboveFrame = try XCTUnwrap(above.frame())
                 let editor = try self.nativeEditor(in: host)

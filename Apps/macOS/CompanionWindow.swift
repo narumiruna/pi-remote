@@ -331,19 +331,22 @@ struct CompanionWindow: View {
         model.panel = "rename"
     }
 
-    private func openPiControl(_ name: String) {
-        guard model.state.dialogs.isEmpty else { model.composerError = "Answer or cancel the open request first."; return }
+    private func openPiControl(_ name: String) -> Bool {
+        guard model.state.dialogs.isEmpty else { model.composerError = "Answer or cancel the open request first."; return false }
         let idleOnly = ["new", "compact", "fork", "clone", "settings", "name", "export", "import"]
-        guard !idleOnly.contains(name) || !model.state.working else { model.composerError = "Wait for Pi to become idle."; return }
+        guard !idleOnly.contains(name) || !model.state.working else { model.composerError = "Wait for Pi to become idle."; return false }
         switch name {
         case "session", "clone": showInspector("Session")
         case "settings": model.panel = "runtime"
-        case "fork": model.openNativeWorkflow(.tree)
-        case "name": if let id = model.state.selected { beginRename(id) }
+        case "fork": return model.openNativeWorkflow(.tree)
+        case "name":
+            guard let id = model.state.selected, canRename(id) else { return false }
+            beginRename(id)
         case "files": showInspector("Files")
         case "commands": model.panel = "commands"
         default: model.panel = name
         }
+        return true
     }
 
     private func showInspector(_ tab: String) {
