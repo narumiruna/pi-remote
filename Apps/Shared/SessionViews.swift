@@ -112,6 +112,7 @@ private struct SessionListView: View {
         .navigationTitle("Sessions")
         .confirmationDialog("Resume interrupted session?", isPresented: Binding(get: { interrupted != nil }, set: { if !$0 { interrupted = nil } })) {
             Button("Resume without resending any prompt") { if let session = interrupted { resume(session) }; interrupted = nil }
+            Button("Cancel", role: .cancel) { interrupted = nil }
         } message: { Text("Saved messages do not prove that an interrupted tool completed. Review the transcript and project before sending another prompt.") }
     }
     private func resume(_ session: SessionInfo) {

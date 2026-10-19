@@ -53,8 +53,11 @@ final class SpacesInterfaceTests: XCTestCase {
         capture(app, "phone-space-sessions")
         interrupted.tap()
         XCTAssertTrue(app.buttons["Resume without resending any prompt"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].tap()
+        // iOS presents this confirmation as a popover. Tap outside to cancel.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)).tap()
+        XCTAssertTrue(app.buttons["Resume without resending any prompt"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.navigationBars["Sessions"].exists)
+        XCTAssertTrue(app.staticTexts["Current session"].exists)
     }
 
     func testSpacesRemainBrowsableWhileWorkingButSessionActionsAreDisabled() {
