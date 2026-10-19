@@ -3,6 +3,7 @@ import { mkdir, realpath } from "node:fs/promises"
 import { join, resolve, sep } from "node:path"
 import { DirectoryAccess } from "./directories.ts"
 import { displayText, faultCode, foundationNow, object } from "./errors.ts"
+import { readSessionHistory, SESSION_HISTORY_BYTES } from "./history.ts"
 import {
   type ClientPacket,
   enumValue,
@@ -691,7 +692,7 @@ export class Coordinator {
       })
       if (!actual.startsWith((await realpath(folder)) + sep)) throw new Fault("staleDirectory")
       const file = Bun.file(actual)
-      if (file.size > 64 * 1024 * 1024) throw new Fault("tooLarge")
+      if (file.size > SESSION_HISTORY_BYTES) throw new Fault("tooLarge")
       const prefix = await file.slice(0, 65536).text()
       const header = object(JSON.parse(prefix.split("\n")[0]))
       if (header.type !== "session" || header.id !== item.piID) throw new Fault("incompatiblePi")
@@ -725,9 +726,20 @@ export class Coordinator {
       check()
       await this.refreshConfiguration()
       check()
-      const history = object(await rpc.request("get_messages"))
+      let history = await readSessionHistory({
+        folder,
+        file: item.file,
+        id: item.piID,
+        cwd: item.directory.path,
+        required: args.includes("--session"),
+      })
+      if (history === undefined) {
+        // Fresh startup messages can exist only in memory until Pi writes its first file.
+        const startup = object(await rpc.request("get_messages"))
+        history = Array.isArray(startup.messages) ? startup.messages : []
+      }
       check()
-      this.reducer.replaceHistory(Array.isArray(history.messages) ? history.messages : [])
+      this.reducer.replaceHistory(history)
       this.snapshot.messages = this.reducer.messages
       this.snapshot.hasOlderMessages = this.reducer.omitted
       this.snapshot.phase = "idle"

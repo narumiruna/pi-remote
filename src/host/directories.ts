@@ -34,7 +34,6 @@ export interface DirectoryPage {
 }
 interface Node {
   record: DirectoryRecord
-  fd: number
   touched: number
 }
 interface Cursor {
@@ -69,19 +68,17 @@ class DirectoryIterator {
         (process.platform === "darwin" ? 0x1000000 : 0x80000),
       0,
     )
-    if (duplicate < 0) throw new Fault("resourceLimit")
+    if (duplicate < 0) throw iteratorFault()
     this.handle = enumeration.symbols.fdopendir(duplicate)
     if (!this.handle) {
+      const error = iteratorFault()
       closeSync(duplicate)
-      throw new Fault("permissionDenied")
+      throw error
     }
   }
   readSync(): { name: string } | null {
     if (!this.handle || !enumeration) throw new Fault("staleDirectory")
-    const errorPointer =
-      enumeration.symbols[process.platform === "darwin" ? "__error" : "__errno_location"]()
-    if (!errorPointer) throw new Fault("unsupportedFeature")
-    const errno = new Int32Array(toArrayBuffer(errorPointer, 0, 4))
+    const errno = iteratorErrno()
     errno[0] = 0
     const entry = enumeration.symbols.readdir(this.handle)
     if (!entry) {
@@ -105,6 +102,17 @@ class DirectoryIterator {
       this.handle = null
     }
   }
+}
+
+function iteratorErrno(): Int32Array {
+  const pointer =
+    enumeration?.symbols[process.platform === "darwin" ? "__error" : "__errno_location"]()
+  if (!pointer) throw new Fault("unsupportedFeature")
+  return new Int32Array(toArrayBuffer(pointer, 0, 4))
+}
+function iteratorFault(): Fault {
+  const errno = iteratorErrno()[0]
+  return new Fault(errno === 23 || errno === 24 ? "resourceLimit" : "permissionDenied")
 }
 
 let linux: ReturnType<typeof openStatx> | undefined
@@ -213,61 +221,58 @@ export class DirectoryAccess {
     return current
   }
 
+  private evict(): void {
+    const pinned = new Set([...this.cursors.values()].map((cursor) => cursor.directory))
+    let oldest: string | undefined
+    let age = Number.POSITIVE_INFINITY
+    for (const [id, node] of this.nodes) {
+      if (!pinned.has(id) && node.touched < age) {
+        oldest = id
+        age = node.touched
+      }
+    }
+    if (!oldest) throw new Fault("resourceLimit")
+    this.nodes.delete(oldest)
+  }
+
   private register(path: string): string {
     const openedNode = opened(path)
+    closeSync(openedNode.fd)
     for (const [id, node] of this.nodes) {
       if (
         node.record.path === openedNode.record.path &&
         node.record.identity === openedNode.record.identity
       ) {
-        closeSync(openedNode.fd)
         node.touched = performance.now()
         return id
       }
     }
-    if (this.nodes.size >= 4096) {
-      // Map insertion order is not access order. Never evict a directory with a live cursor.
-      let oldest: string | undefined
-      let age = Number.POSITIVE_INFINITY
-      for (const [id, node] of this.nodes) {
-        if (
-          node.touched < age &&
-          ![...this.cursors.values()].some((cursor) => cursor.directory === id)
-        ) {
-          oldest = id
-          age = node.touched
-        }
-      }
-      if (oldest) {
-        const node = this.nodes.get(oldest)
-        if (node) closeSync(node.fd)
-        this.nodes.delete(oldest)
-      } else {
-        closeSync(openedNode.fd)
-        throw new Fault("resourceLimit")
-      }
-    }
+    if (this.nodes.size >= 4096) this.evict()
     const id = randomUUID().toUpperCase()
-    this.nodes.set(id, { ...openedNode, touched: performance.now() })
+    this.nodes.set(id, { record: openedNode.record, touched: performance.now() })
     return id
   }
 
-  private resolveSync(id: string): DirectoryRecord {
+  private openNode(id: string): { record: DirectoryRecord; fd: number } {
     this.check()
     const node = this.nodes.get(id)
     if (!node) throw new Fault("staleDirectory")
     const current = opened(node.record.path)
-    try {
-      if (
-        current.record.identity !== node.record.identity ||
-        identity(node.fd) !== node.record.identity
-      )
-        throw new Fault("staleDirectory")
-    } finally {
+    if (
+      current.record.path !== node.record.path ||
+      current.record.identity !== node.record.identity
+    ) {
       closeSync(current.fd)
+      throw new Fault("staleDirectory")
     }
     node.touched = performance.now()
-    return { ...node.record }
+    return current
+  }
+
+  private resolveSync(id: string): DirectoryRecord {
+    const current = this.openNode(id)
+    closeSync(current.fd)
+    return current.record
   }
 
   async resolve(id: string): Promise<DirectoryRecord> {
@@ -303,25 +308,28 @@ export class DirectoryAccess {
     for (const [token, item] of this.cursors)
       if (performance.now() - item.created >= 60_000) this.discard(token)
     const selected = id ?? this.register(this.initialPath)
-    const record = this.resolveSync(selected)
+    let record: DirectoryRecord
     let token = cursor
     let iterator: DirectoryIterator
     if (token !== undefined) {
       const saved = this.cursors.get(token)
       if (!saved || saved.directory !== selected) throw new Fault("staleDirectory")
+      record = this.resolveSync(selected)
       iterator = saved.iterator
     } else {
-      if (this.cursors.size >= 8) {
-        const oldest = this.cursors.keys().next().value
-        if (oldest) this.discard(oldest)
-      }
-      const node = this.nodes.get(selected)
-      if (!node) throw new Fault("staleDirectory")
+      const current = this.openNode(selected)
+      record = current.record
       try {
-        // Enumerate the live descriptor, not a path that can be replaced after validation.
-        iterator = new DirectoryIterator(node.fd)
+        if (this.cursors.size >= 8) {
+          const oldest = this.cursors.keys().next().value
+          if (oldest) this.discard(oldest)
+        }
+        // The iterator owns a duplicate of this exact validated directory descriptor.
+        iterator = new DirectoryIterator(current.fd)
       } catch (error) {
         return mapped(error)
+      } finally {
+        closeSync(current.fd)
       }
       token = randomUUID().toUpperCase()
       this.cursors.set(token, { directory: selected, iterator, created: performance.now() })
@@ -371,7 +379,6 @@ export class DirectoryAccess {
     if (this.closed) return
     this.closed = true
     for (const token of this.cursors.keys()) this.discard(token)
-    for (const node of this.nodes.values()) closeSync(node.fd)
     this.nodes.clear()
   }
 }

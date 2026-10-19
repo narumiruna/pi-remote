@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { required, until } from "../fixtures/client.ts"
 import { Coordinator } from "./coordinator.ts"
 import { DirectoryAccess } from "./directories.ts"
 import { type ClientPacket, enumValue, packet } from "./protocol.ts"
-import { type PiRPC, RPCError } from "./rpc.ts"
+import { type PiRPC, RPC_LIMITS, RPCError } from "./rpc.ts"
 import { Fault, PrivateStorage } from "./storage.ts"
 
 type Request = Extract<ClientPacket, { kind: "request" }>
@@ -1298,4 +1298,38 @@ test("dialogs expire, reject duplicate answers and reject stale session context"
   expect(await send("answer", { dialog: "answer-once", cancelled: true }, { session: id })).toEqual(
     { failure: { _0: "conflict" } },
   )
+})
+
+test("resume bounds display after loading history larger than one RPC record", async () => {
+  await open()
+  await create()
+  const id = required(host.snapshot.selected)
+  const state = (await rpc().request("get_state")) as { sessionFile: string }
+  expect(await send("closeSession")).toEqual({ ok: {} })
+  const header = (await Bun.file(state.sessionFile).text()).split("\n")[0]
+  const messages = Array.from({ length: 140 }, (_, index) => ({
+    role: "user",
+    content: `${index}: ${"x".repeat(64 * 1024 - 16)}`,
+    timestamp: index,
+  }))
+  expect(Buffer.byteLength(JSON.stringify({ messages }))).toBeGreaterThan(RPC_LIMITS.recordBytes)
+  expect(messages.every((message) => Buffer.byteLength(message.content) < 64 * 1024)).toBe(true)
+  const entries = messages.map((message, index) =>
+    JSON.stringify({
+      type: "message",
+      id: `m${index}`,
+      parentId: index ? `m${index - 1}` : null,
+      timestamp: new Date(index).toISOString(),
+      message,
+    }),
+  )
+  await writeFile(state.sessionFile, `${header}\n${entries.join("\n")}\n`)
+  const before = await Bun.file(state.sessionFile).text()
+  expect(await send("resumeSession", { id })).toEqual({ ok: {} })
+  expect(host.snapshot.phase).toBe("idle")
+  expect(host.snapshot.hasOlderMessages).toBe(true)
+  expect(host.snapshot.messages.at(-1)?.text).toStartWith("139: ")
+  expect(Buffer.byteLength(JSON.stringify(host.snapshot.messages))).toBeLessThan(3 * 1024 * 1024)
+  expect(((await rpc().request("get_state")) as { prompts: number }).prompts).toBe(0)
+  expect(await Bun.file(state.sessionFile).text()).toBe(before)
 })

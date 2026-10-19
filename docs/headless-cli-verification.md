@@ -63,6 +63,18 @@ The coordinator, RPC and WSS suites pass 105 tests without skips on each of macO
 
 R1–R5 are addressed. No item is deferred or needs clarification. Earlier checks above remain their recorded checkpoints; unchanged native checks were not rerun.
 
+### Crash recovery, directory limits and large-history follow-up
+
+Three more P2 findings were reproduced at `0dd8ee4`:
+
+- [R6: hidden phone Stop after a Pi crash](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4316371299). The new UI test failed because Stop was absent for a selected `interrupted` session with `unknownOutcome`. The phone now shows Stop in that state. The phase and replay rules are unchanged. Three focused iPhone 17 Pro UI checks pass in `/tmp/pi-remote-pr24-r6-clean.xcresult`, including actual Stop activation followed by explicit resume consent, offline controls and the normal working composer. The final batch uses a clean build directory. Earlier fixture/test attempts are not final acceptance evidence. Eighteen phone product checks and unsigned iOS/Mac builds pass. These UI checks use the dedicated fixture; they are not a new phone-to-CLI crash or provider test.
+- [R7: directory descriptor exhaustion](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4316371307). A child-only file limit of 128 reproduced a lasting browse failure with 160 folders. Cached folder records no longer retain descriptors. Canonical path and device/inode/birth-time identity checks remain. Live enumeration keeps its own descriptor. Real reduced-limit checks pass on macOS and Linux: all returned and refreshed folder IDs resolve, aliases stay stable, eight cursors remain bounded, closure releases descriptors, and external exhaustion recovers after release. Permission and replacement checks still fail closed.
+- [R8: large saved history blocks resume](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4316371313). A roughly 9.18 MiB history with 140 individually bounded messages reproduced `unknownOutcome`. Saved-history display now reads the owned JSONL file after Pi loads and migrates it. The 64 MiB file bound and 8 MiB RPC record bound remain. Actual Pi 1.3.0 checks match branch, compaction, context-edit and legacy-migration projections. Large resume preserves 140 runtime messages without a prompt or full-history RPC. A fresh-session probe also preserves a visible startup message that exists only in memory. That case keeps the existing RPC path and its existing limit.
+
+Current full package gates pass on both platforms: macOS has 200 tests pass and three skips; Linux has 201 pass and two skips. Seven hook tests, Biome, full TypeScript typecheck, build and local/global npm installation pass on each. The skips cover the opt-in OS-secret roundtrip, platform-only checks and Linux root permission behavior. The non-root Linux directory/history subset passes all 23 tests without skips. Its first attempt used `nobody` with a missing home directory and failed the home-path fixture; the corrected private-home run passes.
+
+Independent final source review and `git diff --check` pass. An initial adaptive directory-cache patch was rejected because it could return stale row IDs. A file-only history patch was corrected to retain fresh startup messages. Neither rejected version was published. R1–R8 are addressed. No item is deferred or needs clarification. No new real-provider, hardware or off-site result is claimed.
+
 ## Negative and lifecycle checks
 
 - Wrong certificate, hostname, expired/corrupt/missing identity and changed catalog fingerprint fail closed. Public and wildcard binding are rejected.

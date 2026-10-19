@@ -57,6 +57,12 @@ The default catalog is `~/Library/Application Support/PiRemoteCLI` on macOS and 
 
 The CLI supports pairing/authentication/revocation; snapshots and synchronization; initial, parent, paged and explicit-path directory browsing; saved-session creation/resume/close; prompts, steering, follow-up and Stop; model/thinking selection; command discovery and standard select/confirm/input/editor dialogs. Text, thinking and generic tool activity stream through the existing version-1 iOS protocol.
 
+After a Pi crash or protocol fault, the phone keeps Stop available for the selected session with an unknown outcome. Use Stop before closing or reopening it. Reconnect does not clear that requirement or replay a prompt.
+
+Directory browsing retains a bounded cache of validated records, not one file descriptor per cached folder. Each resolution checks the canonical path and directory identity again. Live enumeration still uses a directory descriptor. A selection evicted from the cache must be opened again. External file-descriptor exhaustion returns an explicit resource error; releasing that pressure does not require a host restart.
+
+Saved history is read from the owned JSONL file after Pi loads it and performs any migration. The read has a 64 MiB file limit and preserves the active branch, context edits and compaction projection. Display limits still apply. This does not change the file or Pi's model context. A new session with no saved file keeps the existing bounded RPC startup-history path.
+
 Select dialogs keep their response values unchanged. They support at most 100 string options, each at most 512 UTF-8 bytes. Values must survive display sanitization unchanged. Options must have distinct Swift string identifiers, including canonical Unicode comparison. The host cancels unsafe dialogs with a notice instead of changing or removing choices. A select answer must match an offered value unless the request is cancelled.
 
 A validated dialog can keep pending prompt acceptance open for its remaining lifetime, up to five minutes, plus 30 seconds for completion. Sequential dialogs renew that bounded wait. After the last dialog is answered or expires, a 30-second completion limit applies. Unrelated RPC deadlines, Stop controls and abort signals are not extended. If Pi does not complete within the resulting deadline, the outcome remains unknown; the host does not replay the command.

@@ -56,7 +56,7 @@ struct ConversationView<Extras: View>: View {
                                 .frame(maxWidth: .infinity)
                             #else
                             ContentUnavailableView(state.selected == nil ? "No session selected" : (!canCompose ? "Pi is not running" : (state.working ? "Pi is working" : "Ready for a task")), systemImage: "bubble.left.and.text.bubble.right",
-                                                   description: Text(state.selected == nil ? "Choose a folder and start a session, then send a prompt." : (!canCompose ? "Open the saved session to continue. Previous prompts are not resent." : (state.working ? "Waiting for output. Stop remains available." : "Send a prompt to start working in this session."))))
+                                                   description: Text(state.selected == nil ? "Choose a folder and start a session, then send a prompt." : (!canCompose ? (state.error == .unknownOutcome ? "Use Stop, then reopen the saved session. Previous prompts are not resent." : "Open the saved session to continue. Previous prompts are not resent.") : (state.working ? "Waiting for output. Stop remains available." : "Send a prompt to start working in this session."))))
                                 .frame(maxWidth: .infinity)
                             #endif
                         }
@@ -202,7 +202,7 @@ struct ConversationView<Extras: View>: View {
                         .frame(minHeight: 44)
                         .accessibilityLabel("Prompt").accessibilityIdentifier("instruction")
                         .disabled(!canCompose)
-                    if state.working {
+                    if state.working || (state.selected != nil && state.error == .unknownOutcome) {
                         Button(action: stop) {
                             Label("Stop", systemImage: "stop.fill").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                         }
