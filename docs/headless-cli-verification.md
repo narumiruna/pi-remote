@@ -1,6 +1,6 @@
 # Headless CLI verification
 
-Date: 2026-10-19. Base: `d51221d` (`main`, including PR #23). This record covers the reduced CLI milestone, not the unfinished native-app plan or complete upstream Pi RPC coverage.
+Date: 2026-10-19. Base: `d51221d` (`main`, including PR #23). Handoff: [PR #24](https://github.com/narumiruna/pi-remote/pull/24). This record covers the reduced CLI milestone, not the unfinished native-app plan or complete upstream Pi RPC coverage.
 
 The final macOS and Linux CI gates pass, including the packed local/global npm artifact and native secret-store workers. Required skips are identified below; no failing acceptance check remains.
 

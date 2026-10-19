@@ -270,7 +270,7 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 
 The separate macOS/Linux host runs in a foreground tmux pane with npm package management, Bun runtime, Biome checks, full TypeScript typecheck and a single-line Husky hook. A launch folder such as `~/src` or `~/projects` is the phone's initial browsing location, not an automatic Pi session or a tools sandbox.
 
-The reduced first milestone is implemented. See [usage and capability mapping](docs/headless-cli.md), the [verification record](docs/headless-cli-verification.md) and the [active handoff checklist](docs/plans/2026-10-19_headless-cli-plan.md). The earlier Swift CLI prototype was backed up and removed without changing the native host implementation. macOS Keychain and Linux Secret Service protect persistent credentials; unsupported filesystems and unavailable stores fail closed. Local fixture checks are not real-provider, hardware or off-site evidence. Registry publication is not authorized.
+The reduced first milestone is implemented. See [usage and capability mapping](docs/headless-cli.md) and the [verification record](docs/headless-cli-verification.md). The accepted implementation plan and Git handoff are complete; the active plan was removed after [PR #24](https://github.com/narumiruna/pi-remote/pull/24) was opened. The earlier Swift CLI prototype was backed up and removed without changing the native host implementation. macOS Keychain and Linux Secret Service protect persistent credentials; unsupported filesystems and unavailable stores fail closed. Local fixture checks are not real-provider, hardware or off-site evidence. Registry publication is not authorized.
 
 ## Plan
 
