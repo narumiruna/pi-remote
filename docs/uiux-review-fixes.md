@@ -11,7 +11,7 @@ The review corrections cover the Mac and iPhone interfaces. They do not change a
 | Loaded phone conversations had no direct recovery | A disconnected conversation has a direct Reconnect action. Cached tool/thinking disclosure and Latest remain usable. Send, Stop, remote attachments and answers remain unavailable offline. |
 | Long Mac extension requests could overflow | Request text has its own bounded scroll area. Response fields, errors and answer/cancel controls remain outside that area. Pending or acknowledged answers cannot be sent again while state catches up. |
 | Listen addresses became stale | Settings refreshes the list when opened and provides Refresh addresses while iPhone access is stopped. Refresh keeps an available selection and never replaces identity, revokes devices or starts a listener. No available address prevents startup. |
-| Phone notices lost severity; Forget was immediate | Warnings/errors have explicit visible severity labels. Informational notices, widgets, status and diagnostics remain collapsed. Forget uses a named alert with Cancel and explains local credential deletion and re-pairing. |
+| Phone notices lost severity; Forget was immediate | A compact row shows warning/error counts. Tap it for complete severity-labeled notices, widgets, status and diagnostics in a scrollable sheet. Reserved host recovery instructions remain visible above the composer. Forget uses a named alert with Cancel and explains local credential deletion and re-pairing. |
 | The Files inspector stayed empty on app-level pages | Context-free Files/Activity content is hidden without clearing the saved visibility choice. Explicit Session controls can still identify loaded work from another page. Files/Activity tab selection returns to the loaded conversation when required. |
 | The empty Mac conversation said idle | The header, Pi footer and toolbar use No session loaded. The composer gives session-selection guidance rather than Enter to send. |
 | Optional networking appeared before local setup | Pi and folder access appears first. The optional section and its controls consistently use iPhone access. |
@@ -75,6 +75,26 @@ xcodebuild -quiet -project PiRemote.xcodeproj -scheme PiRemoteInterface \
 ```
 
 The unsigned build commands remain in [native app verification](native-apps.md#automated-checks). Temporary logs include `/tmp/pi-uiux-mac-accepted-batch.log`, `/tmp/pi-uiux-context-menu-isolated.log`, `/tmp/pi-uiux-inspector-tabs-isolated.log`, `/tmp/pi-uiux-phone-model-final.log`, `/tmp/pi-uiux-phone-ui-tests-final.log`, `/tmp/pi-uiux-mac-build.log` and `/tmp/pi-uiux-ios-build.log`.
+
+## Compact phone notice follow-up
+
+Long warnings previously occupied up to 180 points above the composer. With the keyboard open, this left little space for the transcript. General extension content now uses one single-line summary with a minimum 44-point touch target. The detail sheet keeps complete selectable text and a fixed Close action. Opening details does not run a command or change the draft. Reserved typed `recovery` notices keep their existing bounded inline display.
+
+Verified on the iPhone 17 Pro simulator, iOS 26.5:
+
+- All 14 `PhoneRecoveryTests` pass, including count/plural handling, long text, typed severity and legacy fallback.
+- Four focused `PhoneRecoveryInterfaceTests` pass: compact severity counts and sheet dismissal, a 30-line MCP-style warning with the keyboard open, visible reserved recovery, and status/widgets with no typed notices.
+- The long-warning check confirms that the transcript and Send remain visible, complete warning text reaches the sheet, and Close remains available after scrolling.
+- `git diff --check` passes. The product and fixture compile as part of these simulator test runs.
+
+Repeat the model command above with `PhoneRecoveryTests`. For the interface command, select only these four methods:
+
+1. `testWarningAndErrorUseCompactSummaryWithCompleteDetails`
+2. `testLongWarningDoesNotReduceTranscriptWithKeyboardOpen`
+3. `testRecoveryInstructionStaysVisibleOutsideDetails`
+4. `testStatusWidgetsAndRecoveryStayInDetailsWithoutTypedNotices`
+
+The first filtered interface invocation selected zero tests and is not passing evidence. After project regeneration and fixture launch-argument updates, the result bundle confirms four tests passed with no failures or skips. Logs: `/tmp/pi-phone-notice-model.log` and `/tmp/pi-phone-notice-ui.log`. No physical-device or live VoiceOver check was run.
 
 ## Limits
 

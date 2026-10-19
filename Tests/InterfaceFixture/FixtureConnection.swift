@@ -53,12 +53,18 @@ actor FixtureConnection: PhoneConnection {
             state.phase = "waiting"
             state.dialogs = [ExtensionDialog(id: "recovery", method: "confirm", title: "Recovery request", message: "The fixture disconnects when the first answer is sent.", options: [], text: "", expires: nil)]
         }
-        if phase == "extension-notices" || phase == "extension-notices-empty" {
-            let notices: [ExtensionNotice] = phase == "extension-notices-empty" ? [] : [
+        if phase.hasPrefix("extension-notices") {
+            let warning = phase == "extension-notices-long"
+                ? "MCP servers need attention:\n" + String(repeating: "Server configuration needs attention.\n", count: 30) + "Run /mcp to fix."
+                : "Fixture warning"
+            var notices: [ExtensionNotice] = phase == "extension-notices-empty" ? [] : [
                 ExtensionNotice(id: "info", text: "Fixture information"),
-                ExtensionNotice(id: "warning", text: "Fixture warning", severity: .warning),
+                ExtensionNotice(id: "warning", text: warning, severity: .warning),
                 ExtensionNotice(id: "error", text: "Fixture error", severity: .error)
             ]
+            if phase == "extension-notices-recovery" {
+                notices.append(ExtensionNotice(id: "recovery", text: "Use Stop, then reopen the saved session.", severity: .warning))
+            }
             state.notices = ["Fixture recovery diagnostic", "Fixture status", "Fixture above widget", "Fixture below widget"] + notices.map(\.text)
             state.extensionDisplay = ExtensionDisplayState(
                 statuses: [ExtensionStatus(id: "status", text: "Fixture status")],

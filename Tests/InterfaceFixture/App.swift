@@ -10,7 +10,7 @@ struct InterfaceFixtureApp: App {
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
-        let phase = ["working", "retrying", "streaming", "large", "error", "disconnected", "images", "import", "legacy-import", "import-missing-directory", "dialog-recovery", "extension-notices", "extension-notices-empty"].first(where: arguments.contains) ?? "idle"
+        let phase = ["working", "retrying", "streaming", "large", "error", "disconnected", "images", "import", "legacy-import", "import-missing-directory", "dialog-recovery", "extension-notices", "extension-notices-empty", "extension-notices-long", "extension-notices-recovery"].first(where: arguments.contains) ?? "idle"
         let defaults = UserDefaults(suiteName: "PiRemote.InterfaceFixture")!
         defaults.removePersistentDomain(forName: "PiRemote.InterfaceFixture")
         let mac = SavedMac(id: FixtureConnection.host, name: "Fixture Mac", url: URL(string: "wss://127.0.0.1:7443/")!, certificate: Data(), device: UUID())
