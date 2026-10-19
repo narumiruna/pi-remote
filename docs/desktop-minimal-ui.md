@@ -24,9 +24,9 @@ The host, protocol, credentials, pairing, catalog/JSONL formats and single-activ
 - Removed Desktop debug click IDs remain accepted inputs but fail closed when their visible target is absent. They are not redirected. No arbitrary click access was added.
 - Commands is an ordinary app panel, but product capture intentionally rejects every non-nil `model.panel`. Private native fixtures inspect Commands and separately verify that this protection remains enforced. Protected normal-app captures are not treated as evidence.
 
-## Verification
+## Original minimal-workflow verification
 
-The configured Mac test enumeration contains **366 tests**. Six serialized, disjoint batches report **365 passed, zero failed and one skipped**. This is not a single-process full-suite pass.
+At that checkpoint, the configured Mac test enumeration contained **366 tests**. Six serialized, disjoint batches reported **365 passed, zero failed and one skipped**. This is not a single-process full-suite pass.
 
 | Batch | Passed | Skipped | Log under `/tmp/pi-minimal-desktop/` |
 |---|---:|---:|---|
@@ -70,8 +70,23 @@ Native keyboard and accessibility checks cover menu selection, sidebar selection
 - Old tests expected Devices in Actions and closed rows always expanded with disabled Close. Tests now verify the approved Settings route, collapsed group and explicit expansion, retaining the status/consent/history assertions.
 - An initial host-test command used the system Command Line Tools and could not load Testing macros. The command-local Xcode toolchain passes all seven selected tests; the global developer-tool selection was not changed.
 
+## Debug-banner footer clipping follow-up
+
+A later normal-app capture at 1104 × 829 confirmed that the usage/model/thinking row was partly covered by the debug banner. Sidebar Settings was also below the visible workspace. Earlier capture matrices used debug off and did not cover this state.
+
+`CompanionWindow` now lays out the workspace and debug banner as vertical siblings. Its `GeometryReader` measures only the space above the banner, rather than using the full window height behind a bottom safe-area inset. The banner and its Disable control remain visible; no fixed-height padding or debug-protection change is used.
+
+Verification under `/tmp/pi-footer-clipping/`:
+
+- The new native regression fails before the fix: footer controls overlap the banner by 25 points (`reproduce.log`, `reproduce-summary.json`).
+- It passes at 900 × 600, 1104 × 829 and 1300 × 800 while toggling debug on/off/on. Controls remain inside the viewport and above the banner; native editor identity, draft and session state remain unchanged.
+- All 41 selected debug-controller, conversation-mode/layout and interface-structure tests pass (`focused.log`, `focused-summary.json`). A test-helper actor annotation was then corrected; the final isolated regression passes without that compiler warning (`final-regression.log`). The unsigned Mac build and `git diff --check` pass. iPhone/host code is unchanged; their suites were not repeated for this layout-only fix.
+- Reviewed native captures with debug on at the minimum and reported sizes, and debug off at the reported size. The complete footer and Settings are visible. Six private captures are under `captures/`; no image enters Git.
+
+These corrected captures use private native fixtures. The user's running app was inspected but not stopped or replaced. The corrected build must be relaunched before its normal-app appearance can be verified. This follow-up does not complete the separate user/VoiceOver acceptance gates.
+
 ## Remaining acceptance
 
-The normal-app debug service was unavailable during final checks. The agent did not replace/restart the user's app, submit a prompt or change Pi/network state through debug controls. To continue, the revised build must be running with user-enabled debug mode.
+Normal-app debug was unavailable at the original minimal-workflow checkpoint. It was available for the later clipping report above, but that inspection did not exercise the full revised workflow. The agent did not replace/restart the user's app, submit a prompt or change Pi/network state through debug controls. Continue review after the corrected build is running with user-enabled debug mode.
 
 Normal-app review must still check the primary workflow and relocated controls, including a populated conversation and active/error states where available. Actual provider work, live streaming, full keyboard/VoiceOver traversal and the user's minimalist visual acceptance are not established by private fixtures. Full host/shared-package suites, signed builds and physical-device checks were not repeated. Do not mark these checks passed from the captures above. The active plan remains open.

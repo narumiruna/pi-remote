@@ -26,7 +26,7 @@ struct CompanionWindow: View {
     @State private var sheetFocusTarget: NSView?
     private var theme: MacInterfaceTheme { MacInterfaceTheme(mode: model.interfaceMode) }
 
-    var body: some View {
+    private var mainContent: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 toolbar(compact: geometry.size.width < 1100)
@@ -61,24 +61,17 @@ struct CompanionWindow: View {
                            height: min(640, max(360, geometry.size.height - 40)))
             }
         }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Measure the workspace after the banner has reserved its height.
+            mainContent
+            if model.debug.enabled { debugBanner }
+        }
         .background(MacDebugWindowMarker(selectInspector: { section in
             showInspector(section)
         }).frame(width: 1, height: 1).allowsHitTesting(false))
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if model.debug.enabled {
-                HStack {
-                    Label("Local debug mode is on · app-only UI controls enabled", systemImage: "ladybug")
-                        .font(.caption).lineLimit(1)
-                    Spacer()
-                    Button("Disable debug mode") { model.debug.disable() }
-                        .accessibilityIdentifier("mac-debug-banner-disable")
-                }
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(theme.background).foregroundStyle(theme.text)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("mac-debug-banner")
-            }
-        }
         .environment(\.colorScheme, model.interfaceMode == .pi ? .dark : systemColorScheme)
         .environment(\.macInterfaceMode, model.interfaceMode)
         // Expose SwiftUI's in-process tree for opted-in debug clicks. Preserve
@@ -118,6 +111,20 @@ struct CompanionWindow: View {
             if !model.state.dialogs.isEmpty { model.panel = "dialog" }
             presentation.renamingSession = nil
         }
+    }
+
+    private var debugBanner: some View {
+        HStack {
+            Label("Local debug mode is on · app-only UI controls enabled", systemImage: "ladybug")
+                .font(.caption).lineLimit(1)
+            Spacer()
+            Button("Disable debug mode") { model.debug.disable() }
+                .accessibilityIdentifier("mac-debug-banner-disable")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(theme.background).foregroundStyle(theme.text)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mac-debug-banner")
     }
 
     private func toolbar(compact: Bool) -> some View {
