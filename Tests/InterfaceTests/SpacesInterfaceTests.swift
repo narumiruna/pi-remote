@@ -38,6 +38,7 @@ final class SpacesInterfaceTests: XCTestCase {
         XCTAssertTrue(app.collectionViews.staticTexts["Other directory session"].exists)
         XCTAssertFalse(app.collectionViews.staticTexts["Fixture session"].exists)
         XCTAssertFalse(app.buttons["New in current directory"].exists)
+        app.navigationBars["Sessions"].buttons["Spaces"].tap()
         app.buttons["Close"].tap()
         XCTAssertTrue(app.staticTexts["Fixture session"].waitForExistence(timeout: 5), "Browsing a Space must not resume its sessions")
 
@@ -86,7 +87,8 @@ final class SpacesInterfaceTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Choose a Mac folder"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["/Users/fixture/project"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Start Pi Here"].isEnabled)
-        app.navigationBars.buttons["Sessions"].tap()
+        app.navigationBars["Choose a Mac folder"].buttons["Sessions"].tap()
+        app.navigationBars["Sessions"].buttons["Spaces"].tap()
         app.buttons["Close"].tap()
         XCTAssertTrue(app.staticTexts["Fixture session"].waitForExistence(timeout: 5))
         app.buttons["Spaces"].tap()

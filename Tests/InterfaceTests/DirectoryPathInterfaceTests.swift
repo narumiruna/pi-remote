@@ -105,7 +105,7 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["New fixture session"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.collectionViews.staticTexts.matching(identifier: "New fixture session").count, 1)
         XCTAssertFalse(app.collectionViews.staticTexts["Fixture session"].exists)
-        app.navigationBars.buttons["Spaces"].tap()
+        app.navigationBars["Sessions"].buttons["Spaces"].tap()
         app.buttons["space-/Users/fixture/project"].tap()
         XCTAssertTrue(app.staticTexts["Fixture session"].waitForExistence(timeout: 5))
         capture(app, "phone-explicit-start-session-catalog")
