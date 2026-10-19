@@ -11,6 +11,7 @@ export const RPC_LIMITS = Object.freeze({
   eventCount: 256,
   startupMs: 10_000,
   requestMs: 30_000,
+  dialogMs: 300_000,
   controlMs: 1000,
   gracefulMs: 500,
   termMs: 500,
@@ -42,6 +43,7 @@ type Pending = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
+  expire: () => void
   cleanup: () => void
 }
 type Write = {
@@ -200,12 +202,27 @@ export class PiRPC {
       }
       const timer = setTimeout(expire, timeoutMs)
       const cleanup = () => signal?.removeEventListener("abort", expire)
-      this.pending.set(id, { command, resolve, reject, timer, cleanup })
+      this.pending.set(id, { command, resolve, reject, timer, expire, cleanup })
       signal?.addEventListener("abort", expire, { once: true })
       void this.enqueue(bytes, () => this.pending.has(id)).catch((error: Error) => {
         this.takePending(id)?.reject(error)
       })
     })
+  }
+
+  /** Only pending prompt acceptance can wait for host-validated dialog interaction. */
+  setPromptResponseTimeout(timeoutMs: number): void {
+    if (
+      !Number.isFinite(timeoutMs) ||
+      timeoutMs <= 0 ||
+      timeoutMs > RPC_LIMITS.dialogMs + RPC_LIMITS.requestMs
+    )
+      throw invalidRequest()
+    for (const pending of this.pending.values()) {
+      if (pending.command !== "prompt") continue
+      clearTimeout(pending.timer)
+      pending.timer = setTimeout(pending.expire, timeoutMs)
+    }
   }
 
   /** Extension UI responses have no normal response. The coordinator checks dialog lifetime. */

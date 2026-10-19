@@ -635,6 +635,7 @@ export class Coordinator {
           throw new Fault("tooLarge")
         this.dialogIDs.delete(id)
         this.snapshot.dialogs = this.snapshot.dialogs.filter((d) => d.id !== id)
+        this.updatePromptResponseTimeout()
         await this.rpc().answer({
           id,
           value: f.value,
@@ -879,13 +880,16 @@ export class Coordinator {
         ]
       }
       if (unsafeSelection || this.snapshot.dialogs.length >= 8 || id.length > 128) {
+        this.updatePromptResponseTimeout()
         void this.rpc()
           .answer({ id, cancelled: true })
           .catch(() => this.ended())
         return
       }
       const duration =
-        typeof event.timeout === "number" ? Math.max(0, Math.min(event.timeout, 300_000)) : 300_000
+        typeof event.timeout === "number"
+          ? Math.max(0, Math.min(event.timeout, RPC_LIMITS.dialogMs))
+          : RPC_LIMITS.dialogMs
       this.dialogIDs.set(id, performance.now() + duration)
       this.snapshot.dialogs = this.snapshot.dialogs.filter((d) => d.id !== id)
       this.snapshot.dialogs.push({
@@ -897,6 +901,7 @@ export class Coordinator {
         text: displayText(event.prefill ?? event.text, 64 * 1024),
         expires: foundationNow() + duration / 1000,
       })
+      this.updatePromptResponseTimeout()
     } else if (method === "notify") {
       this.snapshot.notices = [...this.snapshot.notices.slice(-7), displayText(event.message, 4096)]
     } else if (method === "set_editor_text") {
@@ -904,15 +909,24 @@ export class Coordinator {
       this.snapshot.draftID = randomUUID().toUpperCase()
     }
   }
+  private updatePromptResponseTimeout(): void {
+    const now = performance.now()
+    const remaining = Math.max(now, ...this.dialogIDs.values()) - now
+    this.child?.setPromptResponseTimeout(remaining + RPC_LIMITS.requestMs)
+  }
+
   private expireDialogs(): void {
     if (this.closing) return
+    let expired = false
     for (const [id, expiry] of this.dialogIDs) {
       if (expiry > performance.now()) continue
       this.dialogIDs.delete(id)
       this.snapshot.dialogs = this.snapshot.dialogs.filter((d) => d.id !== id)
+      expired = true
       void this.child?.answer({ id, cancelled: true }).catch(() => this.ended())
       this.schedulePublish()
     }
+    if (expired) this.updatePromptResponseTimeout()
   }
   private recoverStoppedChild(): void {
     this.unresolvedInput = false

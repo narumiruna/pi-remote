@@ -98,6 +98,55 @@ describe("Pi RPC subprocess", () => {
     await expect(rpc.answer({})).rejects.toBeInstanceOf(RPCError)
   })
 
+  test("dialog waits extend only pending prompt responses and still honor cancellation", async () => {
+    const events: Record<string, unknown>[] = []
+    const rpc = await start("normal", { onEvent: (event) => events.push(event) })
+    const controller = new AbortController()
+    let settled = false
+    const prompt = rpc.request("prompt", { message: "/fixture-select" }, 200, controller.signal)
+    void prompt.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    await until(() => events.some((event) => event.type === "extension_ui_request"))
+    rpc.setPromptResponseTimeout(500)
+    await expect(rpc.request("fixture_no_response", {}, 40)).rejects.toMatchObject({
+      code: "unknownOutcome",
+    })
+    await Bun.sleep(220)
+    expect(settled).toBe(false)
+    controller.abort()
+    await expect(prompt).rejects.toMatchObject({ code: "unknownOutcome" })
+  })
+
+  test("a deferred prompt response still expires without completion", async () => {
+    const events: Record<string, unknown>[] = []
+    const rpc = await start("normal", { onEvent: (event) => events.push(event) })
+    const prompt = rpc.request("prompt", { message: "/fixture-select" }, 200)
+    await until(() => events.some((event) => event.type === "extension_ui_request"))
+    const before = Date.now()
+    rpc.setPromptResponseTimeout(70)
+    await expect(prompt).rejects.toMatchObject({ code: "unknownOutcome" })
+    expect(Date.now() - before).toBeLessThan(1500)
+  })
+
+  test("dialog timeout changes are bounded and do not change future requests", async () => {
+    const rpc = await start()
+    for (const value of [0, -1, NaN, Infinity, RPC_LIMITS.dialogMs + RPC_LIMITS.requestMs + 1]) {
+      expect(() => rpc.setPromptResponseTimeout(value)).toThrow(RPCError)
+    }
+    rpc.setPromptResponseTimeout(500)
+    await expect(rpc.request("fixture_delayed", {}, 25)).rejects.toMatchObject({
+      code: "unknownOutcome",
+    })
+    await Bun.sleep(100)
+    expect(await rpc.request("get_state")).toHaveProperty("isStreaming", false)
+  })
+
   test("prompt acknowledgement is not completion, and agent_end precedes settlement", async () => {
     const events: Record<string, unknown>[] = []
     const rpc = await start("normal", { onEvent: (event) => events.push(event) })

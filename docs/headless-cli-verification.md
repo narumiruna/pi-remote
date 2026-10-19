@@ -55,6 +55,14 @@ The updated coordinator suite passes 53 tests, including seven capacity cases. C
 
 R1–R3 remain addressed. R4 is addressed by the bounded emergency path. No item is deferred or needs clarification.
 
+### Interactive-command deadline follow-up
+
+[R5: command wait versus dialog lifetime](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4316195503), P2, was reproduced at `1d7974c`. Two tests reduced only the initial private RPC deadline to 200 ms, kept a valid dialog open for 350 ms, and received `unknownOutcome` before an answer. The fix resets only pending prompt-response timers from host-validated dialog lifetimes. After the last dialog is answered or expires, the 30-second completion bound applies. Sequential dialogs renew the wait. Unrelated requests, future defaults, abort signals and Stop deadlines are unchanged.
+
+The coordinator, RPC and WSS suites pass 105 tests without skips on each of macOS and Linux. Nine new tests cover command and slash-prompt routes, sequential dialogs, expiry, Stop, missing completion, cancellation and timer bounds. Both platforms pass Biome, full TypeScript typecheck, build and local/global npm installation. A separate probe kept the unmodified 30-second RPC deadline, answered after 31 seconds, confirmed command completion and idle, then sent another prompt successfully. This was a provider-free host probe, not an iPhone or real-provider result. The shared Swift client's existing request timeout was not changed or revalidated.
+
+R1–R5 are addressed. No item is deferred or needs clarification. Earlier checks above remain their recorded checkpoints; unchanged native checks were not rerun.
+
 ## Negative and lifecycle checks
 
 - Wrong certificate, hostname, expired/corrupt/missing identity and changed catalog fingerprint fail closed. Public and wildcard binding are rejected.

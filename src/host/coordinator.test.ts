@@ -632,6 +632,158 @@ test("tool errors remain visible and model/thinking changes use confirmed state"
   )
 })
 
+for (const action of ["command", "prompt"] as const) {
+  test(`review regression: ${action} waits through a valid dialog past the base RPC deadline`, async () => {
+    await open()
+    await create()
+    const original = rpc().request.bind(rpc())
+    const mocked = spyOn(rpc(), "request").mockImplementation((command, fields, timeout, signal) =>
+      original(command, fields, command === "prompt" ? 200 : timeout, signal),
+    )
+    let result: Record<string, unknown> | undefined
+    const waiting = send(
+      action,
+      action === "command"
+        ? { name: "fixture-select", arguments: "" }
+        : { text: "/fixture-select", delivery: "prompt" },
+    ).then((value) => {
+      result = value
+      return value
+    })
+    try {
+      await until(() => host.snapshot.dialogs.some((dialog) => dialog.id === "fixture-dialog"))
+      await Bun.sleep(350)
+      expect(result).toBeUndefined()
+      expect(host.snapshot.error).not.toBe("unknownOutcome")
+      expect(
+        await send("answer", { dialog: "fixture-dialog", value: "Second", cancelled: false }),
+      ).toEqual({ ok: {} })
+      expect(await waiting).toEqual({ ok: {} })
+      expect(host.snapshot.phase).toBe("idle")
+      expect(host.snapshot.error).toBeUndefined()
+      expect(await send("prompt", { text: "/handled", delivery: "prompt" })).toEqual({ ok: {} })
+    } finally {
+      mocked.mockRestore()
+    }
+  })
+}
+
+test("dialog expiry cancels the request without losing the waiting command", async () => {
+  await open()
+  await create()
+  const original = rpc().request.bind(rpc())
+  const mocked = spyOn(rpc(), "request").mockImplementation((command, fields, timeout, signal) =>
+    original(command, fields, command === "prompt" ? 200 : timeout, signal),
+  )
+  const deadlines = spyOn(rpc(), "setPromptResponseTimeout")
+  const waiting = send("command", { name: "fixture-select", arguments: "" })
+  try {
+    await until(() => host.snapshot.dialogs.length === 1)
+    await events({
+      type: "extension_ui_request",
+      id: "fixture-dialog",
+      method: "select",
+      title: "Short fixture",
+      options: ["First", "Second"],
+      timeout: 50,
+    })
+    expect(await waiting).toEqual({ ok: {} })
+    expect(host.snapshot.phase).toBe("idle")
+    expect(host.snapshot.error).toBeUndefined()
+    expect(host.snapshot.dialogs).toEqual([])
+    expect(deadlines.mock.calls.some(([duration]) => duration === 30_000)).toBe(true)
+  } finally {
+    mocked.mockRestore()
+    deadlines.mockRestore()
+  }
+})
+
+test("sequential extension dialogs each renew the bounded command wait", async () => {
+  await open()
+  await create()
+  const original = rpc().request.bind(rpc())
+  const mocked = spyOn(rpc(), "request").mockImplementation((command, fields, timeout, signal) =>
+    original(command, fields, command === "prompt" ? 200 : timeout, signal),
+  )
+  const deadlines = spyOn(rpc(), "setPromptResponseTimeout")
+  let settled = false
+  const waiting = send("command", { name: "fixture-select-twice", arguments: "" }).then((value) => {
+    settled = true
+    return value
+  })
+  try {
+    await until(() => host.snapshot.dialogs.some((dialog) => dialog.id === "fixture-dialog"))
+    await Bun.sleep(350)
+    expect(settled).toBe(false)
+    expect(
+      await send("answer", { dialog: "fixture-dialog", value: "First", cancelled: false }),
+    ).toEqual({ ok: {} })
+    await until(() => host.snapshot.dialogs.some((dialog) => dialog.id === "fixture-dialog-second"))
+    expect(required(deadlines.mock.calls.at(-1))[0]).toBeGreaterThan(300_000)
+    expect(required(deadlines.mock.calls.at(-1))[0]).toBeLessThanOrEqual(330_000)
+    await Bun.sleep(350)
+    expect(settled).toBe(false)
+    expect(
+      await send("answer", { dialog: "fixture-dialog-second", value: "Second", cancelled: false }),
+    ).toEqual({ ok: {} })
+    expect(await waiting).toEqual({ ok: {} })
+    expect(host.snapshot.phase).toBe("idle")
+    expect(host.snapshot.error).toBeUndefined()
+  } finally {
+    mocked.mockRestore()
+    deadlines.mockRestore()
+  }
+})
+
+test("a missing completion after a dialog answer still has a bounded deadline", async () => {
+  await open()
+  await create()
+  const original = rpc().setPromptResponseTimeout.bind(rpc())
+  const deadlines = spyOn(rpc(), "setPromptResponseTimeout").mockImplementation((duration) =>
+    original(duration > 30_000 ? 2000 : 80),
+  )
+  const answer = spyOn(rpc(), "answer").mockResolvedValue(undefined)
+  const waiting = send("command", { name: "fixture-select", arguments: "" })
+  try {
+    await until(() => host.snapshot.dialogs.length === 1)
+    expect(
+      await send("answer", { dialog: "fixture-dialog", value: "Second", cancelled: false }),
+    ).toEqual({ ok: {} })
+    expect(required(deadlines.mock.calls.at(-1))[0]).toBe(30_000)
+    expect(await waiting).toEqual({ failure: { _0: "unknownOutcome" } })
+    expect(host.snapshot.error).toBe("unknownOutcome")
+    expect(await send("stop")).toEqual({ ok: {} })
+  } finally {
+    answer.mockRestore()
+    deadlines.mockRestore()
+  }
+})
+
+test("Stop remains available after a command waits beyond its base deadline", async () => {
+  await open()
+  await create()
+  const original = rpc().request.bind(rpc())
+  const mocked = spyOn(rpc(), "request").mockImplementation((command, fields, timeout, signal) =>
+    original(command, fields, command === "prompt" ? 200 : timeout, signal),
+  )
+  let settled = false
+  const waiting = send("command", { name: "fixture-select", arguments: "" }).then((value) => {
+    settled = true
+    return value
+  })
+  try {
+    await until(() => host.snapshot.dialogs.length === 1)
+    await Bun.sleep(350)
+    expect(settled).toBe(false)
+    expect(await send("stop")).toEqual({ ok: {} })
+    expect(await waiting).toEqual({ ok: {} })
+    expect(host.snapshot.error).toBeUndefined()
+    expect(host.snapshot.dialogs).toEqual([])
+  } finally {
+    mocked.mockRestore()
+  }
+})
+
 test("an extension command can receive its answer while its RPC acceptance is pending", async () => {
   await open()
   await create()

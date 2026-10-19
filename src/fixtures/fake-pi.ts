@@ -24,6 +24,8 @@ const sessionFile = args.includes("--session")
 let streaming = false
 let prompts = 0
 let pendingDialogCommand: Record<string, unknown> | undefined
+let pendingDialogID = "fixture-dialog"
+let pendingDialogCount = 0
 let model = { id: "fixture-model", provider: "fixture", name: "Fixture model", reasoning: true }
 let thinkingLevel = "medium"
 const messages: Record<string, unknown>[] = []
@@ -101,6 +103,11 @@ async function handle(command: Record<string, unknown>): Promise<void> {
       await response(command, {
         commands: [
           { name: "fixture-select", description: "Fixture selection", source: "extension" },
+          {
+            name: "fixture-select-twice",
+            description: "Sequential fixture selections",
+            source: "extension",
+          },
         ],
       })
       return
@@ -143,8 +150,10 @@ async function handle(command: Record<string, unknown>): Promise<void> {
       await response(command)
       return
     case "prompt": {
-      if (command.message === "/fixture-select") {
+      if (command.message === "/fixture-select" || command.message === "/fixture-select-twice") {
         pendingDialogCommand = command
+        pendingDialogID = "fixture-dialog"
+        pendingDialogCount = command.message === "/fixture-select-twice" ? 2 : 1
         await emit({
           type: "extension_ui_request",
           id: "fixture-dialog",
@@ -231,10 +240,22 @@ async function handle(command: Record<string, unknown>): Promise<void> {
       return
     }
     case "extension_ui_response":
-      if (pendingDialogCommand && command.id === "fixture-dialog") {
-        const pending = pendingDialogCommand
-        pendingDialogCommand = undefined
-        await response(pending, { disposition: "handled" })
+      if (pendingDialogCommand && command.id === pendingDialogID) {
+        pendingDialogCount -= 1
+        if (pendingDialogCount > 0 && command.cancelled !== true) {
+          pendingDialogID = "fixture-dialog-second"
+          await emit({
+            type: "extension_ui_request",
+            id: pendingDialogID,
+            method: "select",
+            title: "Second fixture selection",
+            options: ["First", "Second"],
+          })
+        } else {
+          const pending = pendingDialogCommand
+          pendingDialogCommand = undefined
+          await response(pending, { disposition: "handled" })
+        }
       }
       await emit({ type: "fixture_answer", answer: command })
       return
