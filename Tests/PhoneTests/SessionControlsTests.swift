@@ -40,7 +40,7 @@ final class SessionControlsTests: XCTestCase {
         state.selected = session
         state.sessions = [SessionInfo(id: session, title: "Phone fixture", directory: "/fixture/phone-session")]
         state.piVersion = "9.9.9"
-        state.capabilities = ["pi-release-notes", "model-cycling", "close-session"]
+        state.capabilities = ["pi-release-notes", "models", "thinking", "model-cycling", "close-session", "clone", "git-diff"]
         state.models = [ModelOption(provider: "fixture", model: "synthetic", name: "Fixture model")]
         state.model = state.models[0].id
         state.thinkingLevels = ["off", "high"]
@@ -224,23 +224,22 @@ final class SessionControlsTests: XCTestCase {
             }
             // UIKit does not expose the menu picker's actionable node in this
             // in-process tree. Explicit action/disabled checks below use native buttons.
-            var foundClone = false, pageNumber = 0
+            let unavailable = ["Pi changelog", "Cycle model", "Cycle thinking level", "Close Pi session", "Rename", "Compact context", "Clone session", "Working tree diff"]
+            var pageNumber = 0
             try await self.pages(root) { page in
                 let text = try self.captureText(page, name: "Phone-no-capabilities-actions-page-\(pageNumber)")
                 pageNumber += 1
-                for label in ["Pi changelog", "Cycle model", "Cycle thinking level", "Close Pi session"] {
+                for label in unavailable {
                     XCTAssertFalse(text.contains { $0.text.contains(label.lowercased()) }, "Unavailable control: " + label)
                 }
-                foundClone = foundClone || text.contains { $0.text.contains("clone session") }
             }
-            XCTAssertTrue(foundClone, "The scan must reach the retained Session actions")
             try await self.assertDetails(root, expanded: false, changelog: false, name: "Phone-no-capabilities-collapsed")
             try await self.toggleDetails(root)
             try await self.assertDetails(root, expanded: true, changelog: false, name: "Phone-no-capabilities-expanded")
             try await self.pages(root) { page in
                 let text = try self.captureText(page, name: "Phone-no-capabilities-expanded-actions-page-\(pageNumber)")
                 pageNumber += 1
-                for label in ["Pi changelog", "Cycle model", "Cycle thinking level", "Close Pi session"] {
+                for label in unavailable {
                     XCTAssertFalse(text.contains { $0.text.contains(label.lowercased()) }, "Details must not restore unavailable controls: " + label)
                 }
             }

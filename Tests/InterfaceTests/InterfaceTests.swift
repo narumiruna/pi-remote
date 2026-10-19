@@ -106,7 +106,7 @@ final class InterfaceTests: XCTestCase {
     private func chooseImportFolder(_ app: XCUIApplication) {
         let choose = app.buttons["Choose import folder"]
         reveal(choose, app: app, towardTop: true); choose.tap()
-        XCTAssertTrue(app.navigationBars["Choose a Mac folder"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Choose a host folder"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["project"].waitForExistence(timeout: 5)); app.buttons["project"].tap()
         XCTAssertTrue(app.buttons["nested"].waitForExistence(timeout: 5)); app.buttons["nested"].tap()
         let use = app.buttons["Use this folder"]
@@ -522,7 +522,7 @@ final class InterfaceTests: XCTestCase {
     func testMacFileAttachmentAppendsToTheDraftWithoutSending() throws {
         let app = launch(["idle"])
         instruction(app).tap(); instruction(app).typeText("Keep this draft")
-        app.buttons["More"].tap(); app.buttons["Mac files"].tap()
+        app.buttons["More"].tap(); app.buttons["Host files"].tap()
         XCTAssertTrue(app.buttons["project"].waitForExistence(timeout: 5))
         app.buttons["project"].tap()
         XCTAssertTrue(app.buttons["fixture.swift"].waitForExistence(timeout: 5))

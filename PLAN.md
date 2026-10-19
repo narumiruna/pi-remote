@@ -15,9 +15,9 @@ Status: unsigned Mac, iOS simulator and device-SDK builds pass. The [earlier ups
 ## Context
 
 - This repository contains native SwiftUI apps, shared protocol code, an authenticated Mac host, a phone client, local RPC and secure WebSocket spikes, and an iOS diagnostic test host.
-- Swift is the implementation language for the first version, including both apps and shared code.
-- Pi already provides a bidirectional JSON RPC interface over a subprocess's stdin and stdout. A TypeScript backend is not required.
-- Pi, project files, tools, model credentials, and command execution stay on the Mac. Pi still sends model requests to its configured provider; this is not an offline AI system.
+- The native apps, Mac host and shared package use Swift. The standalone macOS/Linux CLI uses TypeScript on Bun, with npm package management and a separate writable catalog.
+- Pi provides a bidirectional JSON RPC interface over a subprocess's stdin and stdout.
+- Pi, project files, tools, model credentials, and command execution stay on the host. Pi still sends model requests to its configured provider; this is not an offline AI system.
 - RPC mode supports prompts, streaming output, steering, follow-up messages, cancellation, model selection, session state, and supported extension dialogs.
 - RPC starts a separate Pi process. It does not attach to an arbitrary Pi terminal session that is already running.
 
@@ -201,11 +201,11 @@ The intended data path is iOS client → authenticated secure connection → Mac
 - Reject directory and session switches while Pi is working; require the user to stop work and reach idle first.
 - Show actionable errors for inaccessible, deleted, or moved folders; do not start Pi in a fallback directory.
 
-### Swift transport
+### Secure transport
 
 - Use an authenticated secure WebSocket connection for commands, responses, and events.
 - Prototype an Apple Network.framework server on macOS and URLSession WebSocket client on iOS before building the screens. Verify TLS trust and WebSocket interoperability with local integration tests and the iOS simulator.
-- If the prototype cannot meet those requirements, record the reason and select a maintained Swift server library before implementation continues. Do not add a Node.js or TypeScript service.
+- If the prototype cannot meet those requirements, record the reason and select a maintained server library before implementation continues.
 - Start with a manually entered address. Add local discovery only if setup tests show that it is necessary.
 - Support both the local network and Tailscale in the first version; verify address selection, listener binding and authenticated connections on this laptop. Document that off-site behavior is not established by local tests.
 - Do not require router port forwarding. Do not use an unencrypted public listener.
@@ -265,6 +265,12 @@ Remote access to Pi can lead to file changes and shell execution with the Mac us
 - Start with personal iOS and macOS builds; check build configuration, folder permissions and implemented lifecycle behavior in the simulator and on this laptop. Device provisioning and installation are not completion requirements.
 - Before later distribution, validate TestFlight requirements for iOS and signing and notarization for the directly distributed macOS companion.
 - Request required iOS local-network permissions and define a deliberate certificate-trust flow. Do not add broad App Transport Security exceptions as a workaround.
+
+## Headless CLI
+
+The separate macOS/Linux host runs in a foreground tmux pane with npm package management, Bun runtime, Biome checks, full TypeScript typecheck and a single-line Husky hook. A launch folder such as `~/src` or `~/projects` is the phone's initial browsing location, not an automatic Pi session or a tools sandbox.
+
+The reduced first milestone is implemented. See [usage and capability mapping](docs/headless-cli.md), the [verification record](docs/headless-cli-verification.md) and the [active handoff checklist](docs/plans/2026-10-19_headless-cli-plan.md). The earlier Swift CLI prototype was backed up and removed without changing the native host implementation. macOS Keychain and Linux Secret Service protect persistent credentials; unsupported filesystems and unavailable stores fail closed. Local fixture checks are not real-provider, hardware or off-site evidence. Registry publication is not authorized.
 
 ## Plan
 
@@ -418,7 +424,7 @@ The completed mode checkpoints below describe the earlier layout. The [minimal D
 
 ## Completion Checklist
 
-- [x] Both apps and all app-owned service code are written in Swift; no TypeScript backend is required. See `Apps/`, `Packages/`, root `Package.swift` and `project.yml`.
+- [x] Implement the native apps and host. The current Swift implementation is in `Apps/`, `Packages/`, root `Package.swift` and `project.yml`.
 - [x] Simulator interface review confirms the minimal conversation layout, directory picker and secondary controls remain readable and reachable with large text and the keyboard open; six UI tests and reviewed captures pass, including live scroll retention and the bounded 100-message transcript.
 - [x] The iOS simulator securely connects to the production host on this laptop, browses permitted directories and starts Pi in the selected directory; the explicit provider fixture passes on LAN and Tailscale.
 - [x] Session details use the session's canonical directory. Installed-Pi, package and simulator restart checks verify that restoration preserves it without a silent fallback; changed or inaccessible directories are rejected.

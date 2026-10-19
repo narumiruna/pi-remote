@@ -64,7 +64,9 @@ struct PhoneRoot: View {
                                              stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } },
                                              request: model.connected ? model.scopedRequest(for: state) : nil) {
                                 Menu {
-                                    Button("Photo", systemImage: "photo") { attachmentScope = model.contentScope; pickingPhoto = true }
+                                    if state.capabilities.contains("images") {
+                                        Button("Photo", systemImage: "photo") { attachmentScope = model.contentScope; pickingPhoto = true }
+                                    }
                                     Button("Text file") { attachmentScope = model.contentScope; importing = true }
                                 } label: { Label("Attach", systemImage: "plus").labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44) }
                                     .accessibilityLabel("Attach")
@@ -72,8 +74,8 @@ struct PhoneRoot: View {
                         } else {
                             ScrollView {
                                 VStack(spacing: 16) {
-                                    ContentUnavailableView("Connect to your Mac", systemImage: "network",
-                                                           description: Text("Start Pi Remote for Mac, then pair or select a saved connection."))
+                                    ContentUnavailableView("Connect to your host", systemImage: "network",
+                                                           description: Text("Start Pi Remote for Mac or the CLI host, then pair or select a saved connection."))
                                     reconnectButton
                                     Button { model.panel = "connections" } label: { Text("Connections").frame(minHeight: 44) }
                                 }.padding(.bottom, 24)
@@ -94,8 +96,12 @@ struct PhoneRoot: View {
                         ToolbarItem(placement: .topBarTrailing) {
                             Menu {
                                 Button("Session controls") { model.panel = "controls" }.disabled(!model.connected)
-                                Button("History") { model.panel = "history" }.disabled(!model.connected || model.state?.working == true)
-                                Button("Mac files") { model.panel = "files" }.disabled(!model.connected)
+                                if model.state?.capabilities.contains("history") == true {
+                                    Button("History") { model.panel = "history" }.disabled(!model.connected || model.state?.working == true)
+                                }
+                                if model.state?.capabilities.contains("file-preview") == true {
+                                    Button("Host files") { model.panel = "files" }.disabled(!model.connected)
+                                }
                                 Button("Connections") { model.panel = "connections" }
                                 Button("Lock", systemImage: "lock") { model.lock() }
                                 Text(model.connected ? (model.state?.phase ?? "Connected") : "Disconnected")
@@ -191,12 +197,12 @@ struct PhoneRoot: View {
                     DirectoryBrowser(selecting: true, request: request, pathEntry: state.capabilities.contains("directory-path")) { id, _ in
                         _ = try await request(.createSession(directory: id)); model.panel = nil
                     }
-                case "files":
+                case "files" where state.capabilities.contains("file-preview"):
                     DirectoryBrowser(selecting: false, request: request, attach: { preview in
                         try model.attachText(preview, context: state.context); model.panel = nil
                     }, pathEntry: state.capabilities.contains("directory-path")) { _, _ in }
                 case "controls": SessionControls(state: state, request: request, closed: { model.panel = "sessions" }) { model.preview = $0; model.panel = "preview" }
-                case "history": HistoryView(request: request, paged: state.capabilities.contains("history-pages")) { model.panel = nil }
+                case "history" where state.capabilities.contains("history"): HistoryView(request: request, paged: state.capabilities.contains("history-pages")) { model.panel = nil }
                 case "preview": if let value = model.preview { FilePreviewView(preview: value) }
                 case "dialog":
                     if let dialog = model.pendingDialog {
@@ -238,7 +244,7 @@ struct ConnectionsView: View {
     @State private var editing: SavedMac?
     var body: some View {
         List {
-            Button("Pair a Mac", systemImage: "plus") { model.panel = "pair" }.frame(minHeight: 44)
+            Button("Pair a host", systemImage: "plus") { model.panel = "pair" }.frame(minHeight: 44)
             ForEach(model.saved) { mac in
                 VStack(alignment: .leading, spacing: 8) {
                     Button(mac.name) { model.chooseMac(mac.id); model.panel = nil }.frame(minHeight: 44)
@@ -253,13 +259,13 @@ struct ConnectionsView: View {
                 }
             }
         }
-        .navigationTitle("Mac connections")
-        .alert("Forget " + (model.macToForget?.name ?? "Mac") + "?",
+        .navigationTitle("Host connections")
+        .alert("Forget " + (model.macToForget?.name ?? "host") + "?",
                isPresented: Binding(get: { model.macToForget != nil }, set: { if !$0 { model.macToForget = nil } })) {
-            Button("Forget Mac", role: .destructive) { model.confirmForget() }
+            Button("Forget host", role: .destructive) { model.confirmForget() }
             Button("Cancel", role: .cancel) { model.macToForget = nil }
         } message: {
-            Text("This disconnects this iPhone from this Mac, if connected, and deletes its saved credentials for this Mac. Pair again to reconnect. It does not revoke this iPhone on the Mac. To revoke access, use Devices on the Mac.")
+            Text("This disconnects this iPhone from this host, if connected, and deletes its saved credentials for this host. Pair again to reconnect. It does not revoke this iPhone on the host. To revoke access, use the host's device controls.")
         }
         .alert("Server address", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
             TextField("wss://address:7443/", text: $address).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -276,7 +282,7 @@ struct PairingView: View {
 
     var body: some View {
         Form {
-            Text("In Pi Remote for Mac, select Start iPhone access, then Pair iPhone to show a pairing QR code. The code expires in two minutes.")
+            Text("In Pi Remote for Mac, select Start iPhone access, then Pair iPhone. For the CLI host, open pairing in its terminal controls. The code expires in two minutes.")
             Button("Scan QR code", systemImage: "qrcode.viewfinder") {
                 scanScope = model.contentScope
                 scanning = true
@@ -285,21 +291,21 @@ struct PairingView: View {
                 TextEditor(text: $model.pairingText).frame(minHeight: 100).font(.caption.monospaced()).autocorrectionDisabled()
             }
             if let code = try? PairingCode.decode(model.pairingText) {
-                Section("Mac to pair") {
+                Section("Host to pair") {
                     Text(code.name)
                     Text(code.url.absoluteString).font(.caption.monospaced())
-                    Text("Check that this is your Mac before requesting pairing.").font(.caption)
+                    Text("Check that this is your host before requesting pairing.").font(.caption)
                 }
             }
-            Text("Trust only a code scanned or copied from your own Mac. Pairing gives this device Pi control with the Mac user's file and command permissions.")
+            Text("Trust only a code scanned or copied from your own host. Pairing gives this device Pi control with the host user's file and command permissions.")
                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
             Text("Device ID: " + model.device.uuidString).font(.caption.monospaced()).textSelection(.enabled)
             if let info = model.pairingInfo { Text(info) }
             if let fault = model.fault { Text(fault.explanation).foregroundStyle(.primary) }
-            Button(model.pairing ? "Waiting for Mac approval…" : "Request pairing") { model.pair() }
+            Button(model.pairing ? "Waiting for host approval…" : "Request pairing") { model.pair() }
                 .disabled(model.pairing || model.pairingText.isEmpty).frame(minHeight: 44)
         }
-        .navigationTitle("Pair with Mac")
+        .navigationTitle("Pair with host")
         .fullScreenCover(isPresented: $scanning) {
             PairingScanner { text in
                 guard scanning, let scanScope else { return }

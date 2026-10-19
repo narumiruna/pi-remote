@@ -61,7 +61,7 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertTrue(app.staticTexts[path].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["This folder is empty."].exists)
         XCTAssertTrue(start.isEnabled)
-        XCTAssertTrue(app.navigationBars["Choose a Mac folder"].exists)
+        XCTAssertTrue(app.navigationBars["Choose a host folder"].exists)
         capture(app, "phone-typed-path-opened-not-started")
 
         // Closing after Go must leave the original session and catalog unchanged.
@@ -89,10 +89,10 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(start.frame.width, 44)
         XCTAssertGreaterThanOrEqual(start.frame.height, 44)
         XCTAssertTrue(app.frame.contains(start.frame))
-        XCTAssertTrue(app.navigationBars["Choose a Mac folder"].exists)
+        XCTAssertTrue(app.navigationBars["Choose a host folder"].exists)
         capture(app, "phone-corrected-path-before-explicit-start")
         start.tap()
-        XCTAssertTrue(app.navigationBars["Choose a Mac folder"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Choose a host folder"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["nested"].waitForExistence(timeout: 5))
         app.buttons["More"].tap()
         app.buttons["Session controls"].tap()

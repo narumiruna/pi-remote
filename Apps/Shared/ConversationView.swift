@@ -65,7 +65,9 @@ struct ConversationView<Extras: View>: View {
                             Text("Earlier messages are saved on the Mac. Use /history to inspect them.")
                                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
                             #else
-                            Text("Earlier messages are saved on the Mac. Open History to inspect them.")
+                            Text(state.capabilities.contains("history")
+                                 ? "Earlier messages are saved on the host. Open History to inspect them."
+                                 : "Earlier messages remain in the host\u{2019}s saved session. History viewing is unavailable on this host.")
                                 .font(.caption).foregroundStyle(.primary.opacity(0.75))
                             #endif
                         }
