@@ -37,7 +37,7 @@ struct ConversationView<Extras: View>: View {
         #if os(macOS)
         16
         #else
-        20
+        12
         #endif
     }
     private var canCompose: Bool { state.selected != nil && !["unavailable", "interrupted", "recovering", "starting", "stopping"].contains(state.phase) }
@@ -74,15 +74,26 @@ struct ConversationView<Extras: View>: View {
                                     DisclosureGroup {
                                         Text(message.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
                                         if message.truncated { Text("Output truncated at the display limit.").font(.caption).foregroundStyle(.primary.opacity(0.75)) }
+                                        #if !os(macOS)
+                                        if let images = message.images {
+                                            OutputImageList(images: images, request: request)
+                                        }
+                                        #endif
                                     } label: {
                                         Label(DisplayLimit.text(message.text.components(separatedBy: "\n").first ?? "Tool", bytes: 128),
                                               systemImage: message.isError ? "exclamationmark.triangle" : "wrench.and.screwdriver")
-                                            .font(.subheadline).frame(minHeight: controlMinimum)
+                                            .font(.subheadline)
+                                            #if !os(macOS)
+                                            .lineLimit(1)
+                                            #endif
+                                            .frame(minHeight: controlMinimum)
                                     }
+                                    #if os(macOS)
                                     if let images = message.images {
                                         OutputImageList(images: images, request: request)
                                         if message.truncated { Text("Some output was omitted. Read History or inspect the source on the Mac.").font(.caption) }
                                     }
+                                    #endif
                                     if message.isError {
                                         Text("Tool error: " + DisplayLimit.text(message.text, bytes: 1_024))
                                             .font(.callout).textSelection(.enabled)
@@ -90,14 +101,25 @@ struct ConversationView<Extras: View>: View {
                                 }
                             } else {
                                 VStack(alignment: .leading, spacing: 6) {
+                                    #if os(macOS)
                                     Text(message.role == "user" ? "You" : "Pi")
                                         .font(.caption.weight(.semibold)).foregroundStyle(.primary.opacity(0.75))
+                                    #else
+                                    if message.role != "assistant" || PhoneAssistantContent.parts(in: message).contains(where: { !$0.toolCall && !$0.text.isEmpty }) || message.thinking?.isEmpty == false {
+                                        Text(message.role == "user" ? "You" : "Pi")
+                                            .font(.caption.weight(.semibold)).foregroundStyle(.primary.opacity(0.75))
+                                    }
+                                    #endif
                                     if let thinking = message.thinking, !thinking.isEmpty {
                                         DisclosureGroup { MarkdownContent(text: thinking) } label: {
                                             Text("Thinking").frame(minHeight: controlMinimum)
                                         }.font(.callout)
                                     }
+                                    #if os(macOS)
                                     MarkdownContent(text: message.text)
+                                    #else
+                                    PhoneAssistantContent(message: message)
+                                    #endif
                                     if let images = message.images { OutputImageList(images: images, request: request) }
                                     if message.truncated { Text("Display truncated; inspect History or the source file.").font(.caption).foregroundStyle(.primary.opacity(0.75)) }
                                     if message.isError { Label("Pi reported an error", systemImage: "exclamationmark.triangle").foregroundStyle(.primary).font(.caption) }
@@ -116,11 +138,14 @@ struct ConversationView<Extras: View>: View {
                     .frame(maxWidth: .infinity)
                     .padding(24)
                     #else
-                    .padding(20)
+                    .padding(16)
                     #endif
                 }
                 #if os(macOS)
                 .accessibilityIdentifier("mac-conversation-transcript")
+                #else
+                .scrollDismissesKeyboard(.interactively)
+                .accessibilityIdentifier("phone-conversation-transcript")
                 #endif
                 .clipped()
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -158,21 +183,17 @@ struct ConversationView<Extras: View>: View {
             #if os(macOS)
             macComposer
             #else
-            VStack(alignment: .leading, spacing: 8) {
-                if state.working {
-                    Picker("Send as", selection: $delivery) {
-                        Text("Steering").tag(Delivery.steer)
-                        Text("Follow-up").tag(Delivery.followUp)
-                    }.pickerStyle(.menu).disabled(!remoteAvailable)
-                    .accessibilityHint("Steering guides Pi after the current response and tool calls finish. Follow-up waits until Pi finishes the current task.")
-                }
-                HStack(alignment: .bottom, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                if state.working && dynamicTypeSize.isAccessibilitySize { phoneDeliveryPicker }
+                HStack(alignment: .bottom, spacing: 6) {
                     extras().disabled(!remoteAvailable)
                     TextField("Message Pi", text: $text, prompt: Text("Message Pi").foregroundColor(.primary.opacity(0.75)), axis: .vertical)
-                        .lineLimit(1...(dynamicTypeSize.isAccessibilitySize ? 2 : 6)).textFieldStyle(.plain)
+                        .lineLimit(1...3).textFieldStyle(.plain)
+                        .frame(minHeight: 44)
                         .accessibilityLabel("Prompt").accessibilityIdentifier("instruction")
                         .disabled(!canCompose)
                     if state.working {
+                        if !dynamicTypeSize.isAccessibilitySize { phoneDeliveryPicker }
                         Button(action: stop) {
                             Label("Stop", systemImage: "stop.fill").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                         }
@@ -183,17 +204,37 @@ struct ConversationView<Extras: View>: View {
                     Button(action: send) {
                         Label("Send", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                     }
-                        .buttonStyle(.borderedProminent).foregroundStyle(.background).accessibilityLabel("Send")
+                        .buttonStyle(.plain).background(.tint, in: Circle()).foregroundStyle(.background).accessibilityLabel("Send")
                         .disabled(!remoteAvailable || sending || !canCompose)
                         .keyboardShortcut(.return, modifiers: .command)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 12).padding(.vertical, 8)
             #endif
         }
         .onChange(of: state.working) { _, working in delivery = working ? .steer : .prompt }
         .onAppear { delivery = state.working ? .steer : .prompt }
     }
+
+    #if !os(macOS)
+    private var phoneDeliveryPicker: some View {
+        Menu {
+            Picker("Send as", selection: $delivery) {
+                Text("Steering").tag(Delivery.steer)
+                Text("Follow-up").tag(Delivery.followUp)
+            }.pickerStyle(.inline)
+        } label: {
+            HStack(spacing: 4) {
+                Text(delivery == .followUp ? "Follow-up" : "Steering")
+                Image(systemName: "chevron.up.chevron.down").imageScale(.small)
+            }
+            .font(.caption).frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain).fixedSize(horizontal: true, vertical: false).disabled(!remoteAvailable)
+        .accessibilityLabel("Send as: " + (delivery == .followUp ? "Follow-up" : "Steering"))
+        .accessibilityHint("Steering guides Pi after the current response and tool calls finish. Follow-up waits until Pi finishes the current task.")
+    }
+    #endif
 
     #if os(macOS)
     private var macEditable: Bool {
@@ -570,6 +611,62 @@ private final class ComposerTextView: NSTextView {
 #endif
 
 #if !os(macOS)
+struct PhoneAssistantContent: View {
+    let message: TranscriptMessage
+
+    struct Part: Identifiable, Equatable {
+        var id: Int
+        var text: String
+        var toolCall: Bool
+    }
+
+    // Only typed tool-call ranges can collapse. Never guess from prose or JSON text.
+    static func parts(in message: TranscriptMessage) -> [Part] {
+        guard message.role == "assistant", let ranges = message.toolCallRanges, !ranges.isEmpty else {
+            return [Part(id: 0, text: message.text, toolCall: false)]
+        }
+        let bytes = Array(message.text.utf8)
+        var parts: [Part] = []
+        var cursor = 0
+        for range in ranges {
+            guard range.lowerBound >= cursor, range.upperBound <= bytes.count, !range.isEmpty,
+                  let prose = String(bytes: bytes[cursor..<range.lowerBound], encoding: .utf8),
+                  let call = String(bytes: bytes[range], encoding: .utf8) else {
+                return [Part(id: 0, text: message.text, toolCall: false)]
+            }
+            if !prose.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(Part(id: cursor, text: prose, toolCall: false))
+            }
+            parts.append(Part(id: range.lowerBound, text: call, toolCall: true))
+            cursor = range.upperBound
+        }
+        guard let tail = String(bytes: bytes[cursor...], encoding: .utf8) else {
+            return [Part(id: 0, text: message.text, toolCall: false)]
+        }
+        if !tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append(Part(id: cursor, text: tail, toolCall: false))
+        }
+        return parts
+    }
+
+    var body: some View {
+        ForEach(Self.parts(in: message)) { part in
+            if part.toolCall {
+                let name = DisplayLimit.text(part.text.components(separatedBy: "\n").first ?? "Tool", bytes: 128)
+                DisclosureGroup {
+                    Text(part.text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        .accessibilityIdentifier("phone-tool-arguments-\(part.id)")
+                } label: {
+                    Label(name, systemImage: "wrench.and.screwdriver")
+                        .font(.subheadline).lineLimit(1).frame(minHeight: 44)
+                }
+            } else {
+                MarkdownContent(text: part.text)
+            }
+        }
+    }
+}
+
 struct PhoneExtensionNotices: View {
     let state: HostSnapshot
     @State private var contentHeight: CGFloat = 44

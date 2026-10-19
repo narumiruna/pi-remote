@@ -43,8 +43,9 @@ final class SessionLifecycleInterfaceTests: XCTestCase {
         }
         app.launchArguments = ["idle"]
         app.launch()
-        XCTAssertTrue(app.buttons["Sessions"].waitForExistence(timeout: 10))
-        app.buttons["Sessions"].tap()
+        XCTAssertTrue(app.buttons["Spaces"].waitForExistence(timeout: 10))
+        app.buttons["Spaces"].tap()
+        app.buttons["space-/Users/fixture/project"].tap()
         let link = app.buttons["New in current directory"]
         XCTAssertTrue(link.waitForExistence(timeout: 5))
         reveal(link, app: app); link.tap()
@@ -70,8 +71,9 @@ final class SessionLifecycleInterfaceTests: XCTestCase {
         reveal(review, app: app); review.tap()
         XCTAssertTrue(alert.waitForExistence(timeout: 5))
         alert.buttons["Start new session"].tap()
-        XCTAssertTrue(app.buttons["Sessions"].waitForExistence(timeout: 5))
-        app.buttons["Sessions"].tap()
+        XCTAssertTrue(app.buttons["Spaces"].waitForExistence(timeout: 5))
+        app.buttons["Spaces"].tap()
+        app.buttons["space-/Users/fixture/project"].tap()
         let child = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "New child fixture")).firstMatch
         reveal(child, app: app)
         XCTAssertTrue(child.isHittable)

@@ -21,9 +21,12 @@ public struct TranscriptMessage: Codable, Sendable, Equatable, Identifiable {
     public var truncated: Bool
     public var images: [OutputImageReference]?
     public var tool: TranscriptTool?
-    public init(id: UUID = UUID(), role: String, text: String, thinking: String? = nil, isError: Bool = false, streaming: Bool = false, truncated: Bool = false, images: [OutputImageReference]? = nil, tool: TranscriptTool? = nil) {
+    /// UTF-8 byte ranges of typed tool calls in text. Absent in older snapshots.
+    public var toolCallRanges: [Range<Int>]?
+    public init(id: UUID = UUID(), role: String, text: String, thinking: String? = nil, isError: Bool = false, streaming: Bool = false, truncated: Bool = false, images: [OutputImageReference]? = nil, tool: TranscriptTool? = nil, toolCallRanges: [Range<Int>]? = nil) {
         self.id = id; self.role = role; self.text = text; self.thinking = thinking; self.isError = isError
         self.streaming = streaming; self.truncated = truncated; self.images = images; self.tool = tool
+        self.toolCallRanges = toolCallRanges
     }
 }
 

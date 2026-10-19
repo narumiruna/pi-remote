@@ -37,8 +37,8 @@ final class DirectoryPathInterfaceTests: XCTestCase {
     }
 
     private func openPicker(_ app: XCUIApplication) {
-        app.buttons["Sessions"].tap()
-        XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
+        app.buttons["Spaces"].tap()
+        XCTAssertTrue(app.navigationBars["Spaces"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["New fixture session"].exists)
         app.buttons["New session"].tap()
         XCTAssertTrue(app.buttons["project"].waitForExistence(timeout: 5))
@@ -50,7 +50,7 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         app.launchArguments = ["idle"]
         app.launch()
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["Sessions"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Spaces"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.frame.width, 402)
         XCTAssertEqual(app.frame.height, 874)
         openPicker(app)
@@ -66,7 +66,7 @@ final class DirectoryPathInterfaceTests: XCTestCase {
 
         // Closing after Go must leave the original session and catalog unchanged.
         app.buttons["Close"].tap()
-        XCTAssertTrue(app.buttons["Sessions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Spaces"].waitForExistence(timeout: 5))
         openPicker(app)
         enter("~/project/nested", app: app)
         XCTAssertTrue(app.staticTexts[path].waitForExistence(timeout: 5))
@@ -99,10 +99,15 @@ final class DirectoryPathInterfaceTests: XCTestCase {
         XCTAssertTrue(app.staticTexts[path].waitForExistence(timeout: 5))
         capture(app, "phone-explicit-start-canonical-directory")
         app.buttons["Close"].tap()
-        app.buttons["Sessions"].tap()
+        app.buttons["Spaces"].tap()
+        XCTAssertFalse(app.collectionViews.staticTexts["New fixture session"].exists)
+        app.buttons["space-/Users/fixture/project/nested"].tap()
         XCTAssertTrue(app.staticTexts["New fixture session"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.collectionViews.staticTexts.matching(identifier: "New fixture session").count, 1)
-        XCTAssertTrue(app.staticTexts["Fixture session"].exists)
+        XCTAssertFalse(app.collectionViews.staticTexts["Fixture session"].exists)
+        app.navigationBars["Sessions"].buttons["Spaces"].tap()
+        app.buttons["space-/Users/fixture/project"].tap()
+        XCTAssertTrue(app.staticTexts["Fixture session"].waitForExistence(timeout: 5))
         capture(app, "phone-explicit-start-session-catalog")
     }
 }

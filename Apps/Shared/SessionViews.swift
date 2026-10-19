@@ -10,42 +10,109 @@ private var sessionControlMinimum: CGFloat? {
     #endif
 }
 
-struct SessionListView: View {
+struct SpaceListView: View {
     let state: HostSnapshot
+    let request: (SessionAction) async throws -> AppResult
+    let newSession: () -> Void
+    let selected: () -> Void
+
+    private var directories: [String] {
+        Set(state.sessions.map(\.directory)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    var body: some View {
+        List {
+            Section {
+                Button("New session", systemImage: "plus", action: newSession)
+                    .frame(minHeight: sessionControlMinimum).disabled(state.working)
+                if state.capabilities.contains("session-import") {
+                    NavigationLink("Import JSONL session") {
+                        SessionImportView(request: request, canChooseDirectory: state.capabilities.contains("session-import-directory"),
+                                          canEnterPath: state.capabilities.contains("directory-path"), imported: selected)
+                    }.frame(minHeight: sessionControlMinimum).disabled(state.working)
+                }
+            }
+            Section {
+                ForEach(directories, id: \.self) { directory in
+                    let sessions = state.sessions.filter { $0.directory == directory }
+                    NavigationLink {
+                        SessionListView(state: state, directory: directory, request: request, newSession: newSession, selected: selected)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(URL(fileURLWithPath: directory).lastPathComponent.isEmpty ? directory : URL(fileURLWithPath: directory).lastPathComponent,
+                                  systemImage: "folder")
+                            Text(directory).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            Text("\(sessions.count) \(sessions.count == 1 ? "session" : "sessions")").font(.caption).foregroundStyle(.secondary)
+                        }.padding(.vertical, 4).frame(minHeight: sessionControlMinimum, alignment: .leading)
+                    }
+                    .accessibilityIdentifier("space-" + directory)
+                }
+                if directories.isEmpty {
+                    Text("No spaces yet. Start a session in a Mac folder to add a space.")
+                        .foregroundStyle(.secondary)
+                }
+            } header: { Text("Mac folders") }
+        }
+        .navigationTitle("Spaces")
+    }
+}
+
+private struct SessionListView: View {
+    let state: HostSnapshot
+    let directory: String
     let request: (SessionAction) async throws -> AppResult
     let newSession: () -> Void
     let selected: () -> Void
     @State private var interrupted: SessionInfo?
     @State private var error: String?
+    private var sessions: [SessionInfo] { state.sessions.filter { $0.directory == directory } }
+    private var isCurrentDirectory: Bool { sessions.contains { $0.id == state.selected } }
+
     var body: some View {
         List {
-            Button("New session", systemImage: "plus", action: newSession).frame(minHeight: sessionControlMinimum).disabled(state.working)
-            if state.capabilities.contains("session-lifecycle"), state.selected != nil {
+            Section {
+                Text(directory).font(.caption.monospaced()).foregroundStyle(.secondary)
+            }
+            if state.capabilities.contains("directory-path") {
+                NavigationLink {
+                    DirectoryBrowser(selecting: true, request: request, pathEntry: true, initialPath: directory) { id, _ in
+                        _ = try await request(.createSession(directory: id)); selected()
+                    }
+                } label: { Label("New session", systemImage: "plus") }
+                    .frame(minHeight: sessionControlMinimum).disabled(state.working)
+            } else {
+                Button("New session", systemImage: "plus", action: newSession)
+                    .frame(minHeight: sessionControlMinimum).disabled(state.working)
+            }
+            if state.capabilities.contains("session-lifecycle"), isCurrentDirectory {
                 NavigationLink("New in current directory") {
                     NewManagedSessionView(state: state, request: request, created: selected)
                 }.frame(minHeight: sessionControlMinimum).disabled(state.working)
             }
-            if state.capabilities.contains("session-import") {
-                NavigationLink("Import JSONL session") { SessionImportView(request: request, canChooseDirectory: state.capabilities.contains("session-import-directory"), canEnterPath: state.capabilities.contains("directory-path"), imported: selected) }
-                    .frame(minHeight: sessionControlMinimum).disabled(state.working)
-            }
             if let error { Text(error).foregroundStyle(.primary) }
-            ForEach(state.sessions) { session in
+            ForEach(sessions) { session in
                 Button {
                     if session.interrupted { interrupted = session }
                     else { resume(session) }
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(session.title).foregroundStyle(.primary)
-                        Text(session.directory).font(.caption.monospaced()).foregroundStyle(.primary.opacity(0.75)).lineLimit(2)
+                        Text(session.updated, format: .dateTime.year().month().day().hour().minute())
+                            .font(.caption).foregroundStyle(.secondary)
+                        if sessions.filter({ $0.title == session.title }).count > 1 {
+                            Text("ID: " + session.id.uuidString.prefix(8)).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        }
+                        if session.id == state.selected { Label("Current session", systemImage: "checkmark.circle").font(.caption) }
                         if session.interrupted { Label("Review interrupted work before continuing", systemImage: "exclamationmark.triangle").font(.caption) }
-                    }.padding(.vertical, 4)
+                    }.padding(.vertical, 4).frame(minHeight: sessionControlMinimum, alignment: .leading)
                 }.disabled(state.working)
+                    .accessibilityIdentifier("session-" + session.id.uuidString)
             }
         }
         .navigationTitle("Sessions")
         .confirmationDialog("Resume interrupted session?", isPresented: Binding(get: { interrupted != nil }, set: { if !$0 { interrupted = nil } })) {
             Button("Resume without resending any prompt") { if let session = interrupted { resume(session) }; interrupted = nil }
+            Button("Cancel", role: .cancel) { interrupted = nil }
         } message: { Text("Saved messages do not prove that an interrupted tool completed. Review the transcript and project before sending another prompt.") }
     }
     private func resume(_ session: SessionInfo) {

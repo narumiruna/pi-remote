@@ -332,6 +332,45 @@ final class PhoneRecoveryTests: XCTestCase {
         XCTAssertEqual(PhoneExtensionNotices.information(in: state), ["Ready", "Widget"])
     }
 
+    func testToolCallPartsKeepProseVisibleAndSeparateMultipleTypedCalls() throws {
+        let raw: JSONValue = .object(["role": .string("assistant"), "content": .array([
+            .object(["type": .string("text"), "text": .string("先檢查 😀")]),
+            .object(["type": .string("toolCall"), "name": .string("read"), "arguments": .object(["path": .string("檔案.swift")])]),
+            .object(["type": .string("text"), "text": .string("Explanation stays visible.")]),
+            .object(["type": .string("toolCall"), "name": .string("bash"), "arguments": .object(["command": .string("git status")])])
+        ])])
+        let message = try XCTUnwrap(TranscriptReducer.message(raw))
+        let parts = PhoneAssistantContent.parts(in: message)
+        XCTAssertEqual(parts.map(\.toolCall), [false, true, false, true])
+        XCTAssertEqual(parts.filter { $0.toolCall }.map(\.text), ["read\n{\"path\":\"檔案.swift\"}", "bash\n{\"command\":\"git status\"}"])
+        XCTAssertTrue(parts[0].text.contains("先檢查 😀"))
+        XCTAssertTrue(parts[2].text.contains("Explanation stays visible."))
+    }
+
+    func testPlainTextAndInvalidToolRangesNeverHideOrdinaryReplies() {
+        let text = "read\n{\"path\":\"example\"} 😀"
+        var message = TranscriptMessage(role: "assistant", text: text)
+        let cases: [[Range<Int>]?] = [nil, [], [-1..<3], [0..<1_000], [0..<8, 2..<4], [0..<(text.utf8.count - 1)]]
+        for ranges in cases {
+            message.toolCallRanges = ranges
+            XCTAssertEqual(PhoneAssistantContent.parts(in: message), [.init(id: 0, text: text, toolCall: false)])
+        }
+        message.role = "user"
+        message.toolCallRanges = [0..<4]
+        XCTAssertEqual(PhoneAssistantContent.parts(in: message), [.init(id: 0, text: text, toolCall: false)])
+    }
+
+    func testTruncatedToolCallPartsRemainReadable() throws {
+        let message = try XCTUnwrap(TranscriptReducer.message(.object(["role": .string("assistant"), "content": .array([
+            .object(["type": .string("toolCall"), "name": .string("write"), "arguments": .object(["content": .string(String(repeating: "字", count: 20_000))])])
+        ])])))
+        XCTAssertTrue(message.truncated)
+        let parts = PhoneAssistantContent.parts(in: message)
+        XCTAssertEqual(parts.count, 1)
+        XCTAssertTrue(parts[0].toolCall)
+        XCTAssertEqual(parts[0].text, message.text)
+    }
+
     func testNoticeSummaryCountsSeverityWithoutIncludingDiagnosticText() {
         let notices = [ExtensionNotice(id: "i", text: "Private information"),
                        ExtensionNotice(id: "w", text: String(repeating: "Long warning\n", count: 100), severity: .warning),
