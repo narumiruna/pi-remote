@@ -7,7 +7,7 @@
 Native session changes now use upstream Pi core RPC when the working directory can remain unchanged:
 
 - Creating another session in the current directory calls `new_session`.
-- **New in current directory** offers an explicit confirmation and optional parent tracking. The parent is the current managed session, never a phone-supplied path. Parent tracking records ancestry; it does not copy messages.
+- **New in current directory** in Session controls offers explicit confirmation and optional parent tracking. On iPhone, the Space's **New session options** opens the same flow and explains **Current folder · Optional parent link**. The separate **New session** route reviews or changes the folder before Start Pi Here. The parent is the current managed session, never a phone-supplied path. Parent tracking records ancestry; it does not copy messages.
 - Resuming a persisted managed session or importing reviewed JSONL in the same directory calls `switch_session`.
 - Changing directories replaces the child process. Upstream Pi core can change its session cwd without changing the OS process cwd; process replacement keeps both directories consistent.
 - Reopening an allocated but unwritten session also replaces the process explicitly, using its saved ID. It does not invent a conversation or resend a prompt.

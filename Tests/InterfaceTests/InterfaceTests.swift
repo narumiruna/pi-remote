@@ -114,6 +114,34 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
     }
 
+    func testPhoneControlsPrioritizeModelAndKeepDetailsExplicit() throws {
+        let app = launch(["idle"])
+        controls(app)
+        let model = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model,")).firstMatch
+        let thinking = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Thinking level,")).firstMatch
+        XCTAssertTrue(model.isHittable)
+        XCTAssertTrue(thinking.isHittable)
+        XCTAssertLessThan(model.frame.minY, thinking.frame.minY)
+        XCTAssertLessThan(thinking.frame.minY, app.staticTexts["Working directory"].frame.minY)
+        XCTAssertFalse(app.staticTexts["Version: UI fixture"].exists)
+        XCTAssertFalse(app.buttons["Pi changelog"].exists)
+        capture(app, "phone-model-first-controls")
+        let details = app.descendants(matching: .any).matching(identifier: "phone-session-details").firstMatch
+        reveal(details, app: app); details.tap()
+        let version = app.staticTexts["Version: UI fixture"]
+        XCTAssertTrue(version.waitForExistence(timeout: 5))
+        let notes = app.buttons["Pi changelog"]
+        reveal(notes, app: app)
+        XCTAssertTrue(notes.isHittable)
+        capture(app, "phone-session-details-expanded")
+        reveal(details, app: app, towardTop: true); details.tap()
+        XCTAssertTrue(version.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Pi changelog"].exists)
+        capture(app, "phone-session-details-recollapsed")
+        app.buttons["Close"].tap()
+        XCTAssertFalse(app.buttons["Send"].isEnabled)
+    }
+
     func testCoreModelAndThinkingCyclingRefreshTheControls() throws {
         let app = launch(["idle"])
         controls(app)
@@ -163,6 +191,8 @@ final class InterfaceTests: XCTestCase {
     func testReleaseNotesPageNavigationAndReload() throws {
         let app = launch(["idle"])
         controls(app)
+        let details = app.descendants(matching: .any).matching(identifier: "phone-session-details").firstMatch
+        reveal(details, app: app); details.tap()
         let notes = app.buttons["Pi changelog"]
         reveal(notes, app: app); notes.tap()
         XCTAssertTrue(app.navigationBars["Pi changelog"].waitForExistence(timeout: 5))
@@ -267,7 +297,7 @@ final class InterfaceTests: XCTestCase {
         let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Fixture session")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 5)); saved.tap()
         XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Send"].isEnabled)
+        XCTAssertFalse(app.buttons["Send"].isEnabled, "Reopening a session must not enable an empty prompt")
         XCTAssertFalse(app.buttons["Stop"].exists)
     }
 
@@ -571,6 +601,7 @@ final class InterfaceTests: XCTestCase {
         let app = launch(["dark", "error"])
         let failure = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Permission denied for the fixture file")).firstMatch
         XCTAssertTrue(failure.waitForExistence(timeout: 5), "Tool errors must not require expanding a result")
+        reachable(app.buttons["Access denied"], app: app)
         try audit(app)
         capture(app, "compact-dark-error")
         app.buttons["Access denied"].tap()

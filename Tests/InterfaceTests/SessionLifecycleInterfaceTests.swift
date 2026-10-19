@@ -46,7 +46,7 @@ final class SessionLifecycleInterfaceTests: XCTestCase {
         XCTAssertTrue(app.buttons["Spaces"].waitForExistence(timeout: 10))
         app.buttons["Spaces"].tap()
         app.buttons["space-/Users/fixture/project"].tap()
-        let link = app.buttons["New in current directory"]
+        let link = app.buttons["space-new-session-options"]
         XCTAssertTrue(link.waitForExistence(timeout: 5))
         reveal(link, app: app); link.tap()
         XCTAssertTrue(app.navigationBars["New session"].waitForExistence(timeout: 5))

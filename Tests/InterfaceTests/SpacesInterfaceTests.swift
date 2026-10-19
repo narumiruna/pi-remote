@@ -29,7 +29,7 @@ final class SpacesInterfaceTests: XCTestCase {
         XCTAssertTrue(project.label.contains("2 sessions"))
         XCTAssertTrue(other.label.contains("1 session"))
         XCTAssertFalse(app.collectionViews.staticTexts["Fixture session"].exists)
-        XCTAssertFalse(app.buttons["New in current directory"].exists)
+        XCTAssertFalse(app.buttons["space-new-session-options"].exists)
         capture(app, "phone-spaces-grouped-directories")
 
         other.tap()
@@ -37,7 +37,7 @@ final class SpacesInterfaceTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["/Users/fixture/other/project"].exists)
         XCTAssertTrue(app.collectionViews.staticTexts["Other directory session"].exists)
         XCTAssertFalse(app.collectionViews.staticTexts["Fixture session"].exists)
-        XCTAssertFalse(app.buttons["New in current directory"].exists)
+        XCTAssertFalse(app.buttons["space-new-session-options"].exists)
         app.navigationBars["Sessions"].buttons["Spaces"].tap()
         app.buttons["Close"].tap()
         XCTAssertTrue(app.staticTexts["Fixture session"].waitForExistence(timeout: 5), "Browsing a Space must not resume its sessions")
@@ -47,7 +47,9 @@ final class SpacesInterfaceTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["Other directory session"].exists)
         XCTAssertTrue(app.staticTexts["Current session"].exists)
-        XCTAssertTrue(app.buttons["New in current directory"].exists)
+        XCTAssertTrue(app.buttons["space-new-session-options"].exists)
+        XCTAssertTrue(app.staticTexts["Review or change this folder"].exists)
+        XCTAssertTrue(app.staticTexts["Current folder · Optional parent link"].exists)
         let interrupted = app.buttons["session-33333333-3333-3333-3333-333333333333"]
         XCTAssertTrue(interrupted.exists)
         capture(app, "phone-space-sessions")
@@ -68,7 +70,7 @@ final class SpacesInterfaceTests: XCTestCase {
         app.buttons["space-/Users/fixture/project"].tap()
         XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["New session"].isEnabled)
-        XCTAssertFalse(app.buttons["New in current directory"].isEnabled)
+        XCTAssertFalse(app.buttons["space-new-session-options"].isEnabled)
         XCTAssertFalse(app.buttons["session-33333333-3333-3333-3333-333333333333"].isEnabled)
     }
 
@@ -78,7 +80,7 @@ final class SpacesInterfaceTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["No spaces yet. Start a session in a Mac folder to add a space."].exists)
         XCTAssertTrue(app.buttons["New session"].isEnabled)
         XCTAssertTrue(app.buttons["Import JSONL session"].isEnabled)
-        XCTAssertFalse(app.buttons["New in current directory"].exists)
+        XCTAssertFalse(app.buttons["space-new-session-options"].exists)
         capture(app, "phone-spaces-empty")
     }
 

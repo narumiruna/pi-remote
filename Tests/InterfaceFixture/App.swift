@@ -25,7 +25,16 @@ struct InterfaceFixtureApp: App {
                     guard text == "Native copy fixture" else { throw RemoteFault.invalidRequest }
                 })
                 .preferredColorScheme(dark ? .dark : .light)
+                .transformEnvironment(\.dynamicTypeSize) { size in
+                    if ProcessInfo.processInfo.arguments.contains("large-text") { size = .accessibility3 }
+                }
                 .onChange(of: phase, initial: true) { _, phase in model.scene(phase) }
+                .onChange(of: model.state?.context) { _, context in
+                    if context != nil, ProcessInfo.processInfo.arguments.contains("image-draft") {
+                        // A fixture-only one-pixel PNG exercises attachment-only Send.
+                        model.image = ImageAttachment(data: Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")!, mimeType: "image/png")
+                    }
+                }
         }
     }
 }
