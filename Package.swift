@@ -58,6 +58,7 @@ let package = Package(
         .executableTarget(name: "NativeFailureCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeFailureCheck"),
         .executableTarget(name: "NativeExtensionCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeExtensionCheck"),
         .executableTarget(name: "NativeProviderCheck", dependencies: ["PiRemoteHost"], path: "Spikes/NativeProviderCheck"),
+        .executableTarget(name: "CLIClientCheck", dependencies: ["PiRemoteClient", "PiRemoteSecurity", .product(name: "PiRemoteCore", package: "PiRemoteCore")], path: "Spikes/CLIClientCheck", exclude: ["README.md"]),
         .executableTarget(name: "SimulatorHostFixture", dependencies: ["PiRemoteHost"], path: "Spikes/SimulatorHostFixture")
     ]
 )

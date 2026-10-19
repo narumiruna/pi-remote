@@ -11,6 +11,37 @@ final class PhoneRecoveryInterfaceTests: XCTestCase {
         return app
     }
 
+    func testInterruptedUnknownOutcomeKeepsStopReachableAndClearsRecovery() {
+        let app = launch("crashed")
+        defer { app.terminate() }
+        let stop = app.buttons["Stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCTAssertTrue(stop.isHittable)
+        XCTAssertGreaterThanOrEqual(stop.frame.height, 44)
+        XCTAssertTrue(app.staticTexts["Interrupted"].exists)
+        XCTAssertFalse(app.textFields["instruction"].isEnabled)
+        XCTAssertFalse(app.buttons["Send"].isEnabled)
+        stop.tap()
+        XCTAssertTrue(stop.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Interrupted"].exists)
+        XCTAssertFalse(app.textFields["instruction"].isEnabled)
+        app.buttons["Spaces"].tap()
+        let project = app.buttons["space-/Users/fixture/project"]
+        XCTAssertTrue(project.waitForExistence(timeout: 5))
+        project.tap()
+        let session = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "session-")).firstMatch
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        session.tap()
+        let resume = app.buttons["Resume without resending any prompt"]
+        XCTAssertTrue(resume.waitForExistence(timeout: 5))
+        resume.tap()
+        XCTAssertTrue(app.staticTexts["Idle"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textFields["instruction"].isEnabled)
+        app.textFields["instruction"].tap()
+        app.textFields["instruction"].typeText("New work after Stop")
+        XCTAssertTrue(app.buttons["Send"].isEnabled)
+    }
+
     func testOfflineDialogClosesLocallyCachedReadingWorksAndReconnectDoesNotReplay() {
         let app = launch("dialog-recovery")
         defer { app.terminate() }

@@ -1,0 +1,37 @@
+{
+  "name": "pi-remote",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A foreground Pi Remote host for macOS and Linux",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "bin": {
+    "pi-remote": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "docs/headless-cli.md",
+    "docs/headless-cli-verification.md"
+  ],
+  "scripts": {
+    "check": "biome ci src scripts package.json tsconfig.json biome.json",
+    "format": "biome format --write src scripts package.json tsconfig.json biome.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src && node --test scripts/pre-commit.test.mjs",
+    "test:package": "node scripts/test-package.mjs",
+    "build": "bun build src/cli.ts src/host/secret-worker.ts --target=bun --packages=external --outdir dist",
+    "ci": "npm run check && npm run typecheck && npm test && npm run build && npm run test:package",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@napi-rs/keyring": "2.1.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@types/bun": "1.4.0",
+    "husky": "9.1.7",
+    "typescript": "7.0.2"
+  }
+}

@@ -77,7 +77,7 @@ final class SpacesInterfaceTests: XCTestCase {
     func testEmptySpacesKeepCreationAndImportAvailable() {
         let app = launch("spaces-empty")
         defer { app.terminate() }
-        XCTAssertTrue(app.staticTexts["No spaces yet. Start a session in a Mac folder to add a space."].exists)
+        XCTAssertTrue(app.staticTexts["No spaces yet. Start a session in a host folder to add a space."].exists)
         XCTAssertTrue(app.buttons["New session"].isEnabled)
         XCTAssertTrue(app.buttons["Import JSONL session"].isEnabled)
         XCTAssertFalse(app.buttons["space-new-session-options"].exists)
@@ -89,10 +89,10 @@ final class SpacesInterfaceTests: XCTestCase {
         defer { app.terminate() }
         app.buttons["space-/Users/fixture/project"].tap()
         app.buttons["New session"].tap()
-        XCTAssertTrue(app.navigationBars["Choose a Mac folder"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Choose a host folder"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["/Users/fixture/project"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Start Pi Here"].isEnabled)
-        app.navigationBars["Choose a Mac folder"].buttons["Sessions"].tap()
+        app.navigationBars["Choose a host folder"].buttons["Sessions"].tap()
         app.navigationBars["Sessions"].buttons["Spaces"].tap()
         app.buttons["Close"].tap()
         XCTAssertTrue(app.staticTexts["Fixture session"].waitForExistence(timeout: 5))

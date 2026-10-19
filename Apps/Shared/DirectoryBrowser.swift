@@ -7,6 +7,12 @@ private let directoryControlMinimum: CGFloat? = 44
 private let directoryControlMinimum: CGFloat? = nil
 #endif
 
+#if os(macOS)
+private let directoryHostTerm = "Mac"
+#else
+private let directoryHostTerm = "host"
+#endif
+
 struct DirectoryBrowser: View {
     var selecting: Bool
     var request: (SessionAction) async throws -> AppResult
@@ -58,7 +64,7 @@ struct DirectoryBrowser: View {
             if showsPathEditor {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        TextField("Mac folder path", text: $typedPath, prompt: Text("~/src/project"))
+                        TextField(directoryHostTerm.capitalized + " folder path", text: $typedPath, prompt: Text("~/src/project"))
                             .textFieldStyle(.roundedBorder).font(.body.monospaced())
                             .autocorrectionDisabled().focused($editingPath)
                             .accessibilityIdentifier("mac-folder-path")
@@ -72,7 +78,7 @@ struct DirectoryBrowser: View {
                             .accessibilityIdentifier("mac-folder-go")
                             .accessibilityHint("Open this folder without starting Pi. Review the resolved path before selecting it.")
                     }
-                    Text("Absolute Mac path or ~/folder")
+                    Text("Absolute " + directoryHostTerm + " path or ~/folder")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if typedPath.utf8.count > 4_096 {
@@ -91,7 +97,7 @@ struct DirectoryBrowser: View {
                         Text("…").font(.caption.monospaced()).opacity(pathStartsClipped ? 1 : 0).accessibilityHidden(true)
                         ScrollView(.horizontal) {
                             Text(page.path).font(.caption.monospaced()).fixedSize()
-                                .accessibilityHint("Mac folder path. Scroll horizontally to read the full path.")
+                                .accessibilityHint(directoryHostTerm.capitalized + " folder path. Scroll horizontally to read the full path.")
                         }.defaultScrollAnchor(.trailing).id(page.id)
                             .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.x + $0.contentInsets.leading > 1 } action: { _, clipped in
                                 pathStartsClipped = clipped
@@ -134,7 +140,7 @@ struct DirectoryBrowser: View {
                     .accessibilityIdentifier("mac-folder-select")
             }
         }
-        .navigationTitle(selecting ? "Choose a Mac folder" : "Mac files")
+        .navigationTitle(selecting ? "Choose a " + directoryHostTerm + " folder" : directoryHostTerm.capitalized + " files")
         .task {
             if let initialPath { await browser.open(path: initialPath, request: request) }
             else { await browser.open(nil, request: request) }
@@ -248,7 +254,7 @@ struct DirectoryBrowser: View {
                         copyPathButton(page.path)
                         editPathButton
                     }
-                    Text("Resolved Mac folder").font(.caption).foregroundStyle(.secondary)
+                    Text("Resolved " + directoryHostTerm + " folder").font(.caption).foregroundStyle(.secondary)
                     canonicalPath(page.path)
                 } else {
                     HStack(spacing: 6) {
@@ -464,7 +470,7 @@ struct ExtensionDialogView: View {
                     Text(fault.explanation).font(.caption)
                 }
                 if !available {
-                    Text("Disconnected. The request stays pending on the Mac. Reconnect before answering.").font(.caption)
+                    Text("Disconnected. The request stays pending on the " + directoryHostTerm + ". Reconnect before answering.").font(.caption)
                     if let reconnect {
                         Button(action: reconnect) { Text(connecting ? "Connecting…" : "Reconnect").frame(minHeight: directoryControlMinimum) }
                             .disabled(connecting).accessibilityIdentifier("extension-dialog-reconnect")
@@ -484,13 +490,13 @@ struct ExtensionDialogView: View {
                 }
                 Button(role: .cancel) { answer(nil, nil, true) } label: { Text("Cancel").frame(minHeight: directoryControlMinimum) }
                     .accessibilityIdentifier("extension-dialog-cancel")
-                    .accessibilityHint("Cancel this request on the Mac.")
+                    .accessibilityHint("Cancel this request on the " + directoryHostTerm + ".")
                     .disabled(!available || sending)
                 if let close {
                     Button(action: close) { Text("Close").frame(minHeight: directoryControlMinimum) }
-                        .accessibilityHint("Close on this iPhone only. This does not answer or cancel the request on the Mac.")
+                        .accessibilityHint("Close on this iPhone only. This does not answer or cancel the request on the " + directoryHostTerm + ".")
                         .accessibilityIdentifier("extension-dialog-close")
-                    Text("Close leaves this request pending on the Mac.").font(.caption)
+                    Text("Close leaves this request pending on the " + directoryHostTerm + ".").font(.caption)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(16).background(.bar)
         }

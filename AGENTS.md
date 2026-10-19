@@ -24,7 +24,6 @@ These instructions apply to all files in this repository.
 
 ## Code style
 
-- Use Swift for the iOS app, macOS companion, and shared app code; do not add a TypeScript backend.
 - Keep platform-specific process and networking code outside the shared package.
 - Use the simplest solution that meets the current requirement; do not add features or settings for possible future needs.
 

@@ -48,10 +48,10 @@ struct SpaceListView: View {
                     .accessibilityIdentifier("space-" + directory)
                 }
                 if directories.isEmpty {
-                    Text("No spaces yet. Start a session in a Mac folder to add a space.")
+                    Text("No spaces yet. Start a session in a host folder to add a space.")
                         .foregroundStyle(.secondary)
                 }
-            } header: { Text("Mac folders") }
+            } header: { Text("Host folders") }
         }
         .navigationTitle("Spaces")
     }
@@ -193,7 +193,7 @@ struct SessionControls: View {
                 }
             }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("This stops the idle Pi process, not the listener. Saved history remains on the Mac. Reopen it from Sessions; no prompt is resent.") }
+        } message: { Text("This stops the idle Pi process, not the listener. Saved history remains on the host. Reopen it from Sessions; no prompt is resent.") }
         #endif
     }
     @ViewBuilder private var standardControls: some View {
@@ -206,8 +206,8 @@ struct SessionControls: View {
         }
         Section("Pi") {
             Text("Version: " + state.piVersion).font(.caption)
-            modelPicker
-            thinkingPicker
+            modelPicker.disabled(!state.capabilities.contains("models"))
+            thinkingPicker.disabled(!state.capabilities.contains("thinking"))
             if state.capabilities.contains("model-cycling") {
                 Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: sessionControlMinimum)
                 Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: sessionControlMinimum)
@@ -227,8 +227,8 @@ struct SessionControls: View {
     private var phoneControls: some View {
         Group {
             Section {
-                modelPicker
-                thinkingPicker
+                modelPicker.disabled(!state.capabilities.contains("models"))
+                thinkingPicker.disabled(!state.capabilities.contains("thinking"))
                 if state.capabilities.contains("model-cycling") {
                     Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: sessionControlMinimum)
                     Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: sessionControlMinimum)
@@ -393,19 +393,27 @@ struct SessionControls: View {
                     NewManagedSessionView(state: state, request: request, created: closed)
                 }.frame(minHeight: sessionControlMinimum)
             }
-            TextField("Session name", text: $name)
-            Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
-            NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: sessionControlMinimum)
-            Button("Clone session") { perform(.clone) }
+            if state.capabilities.contains("session-lifecycle") {
+                TextField("Session name", text: $name)
+                Button("Rename") { perform(.rename(name: name)) }.disabled(name.isEmpty)
+            }
+            if state.capabilities.contains("compaction") {
+                NavigationLink("Compact context") { CompactionView(request: request) }.frame(minHeight: sessionControlMinimum)
+            }
+            if state.capabilities.contains("clone") {
+                Button("Clone session") { perform(.clone) }
+            }
             #if !os(macOS)
             if state.capabilities.contains("close-session") {
                 Button("Close Pi session", role: .destructive) { confirmClose = true }.frame(minHeight: sessionControlMinimum)
             }
             #endif
-            Button("Working tree diff") {
-                Task {
-                    do { if case .preview(let value) = try await request(.diff) { preview(value) } }
-                    catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+            if state.capabilities.contains("git-diff") {
+                Button("Working tree diff") {
+                    Task {
+                        do { if case .preview(let value) = try await request(.diff) { preview(value) } }
+                        catch { self.error = (error as? RemoteFault ?? .unavailable).explanation }
+                    }
                 }
             }
         }.disabled(state.working || state.selected == nil)

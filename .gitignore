@@ -88,6 +88,10 @@ playground.xcworkspace
 .swiftpm/
 
 .build/
+node_modules/
+/dist/
+*.tgz
+.husky/_/
 .transport-fixture/
 Spikes/TransportDevice/TransportDeviceSpike.xcodeproj/
 PiRemote.xcodeproj/

@@ -54,7 +54,7 @@ The generated `PiRemote.xcodeproj` is ignored. No TypeScript backend, terminal, 
 
 ## Security
 
-Pairing uses a two-minute high-entropy code scanned or copied from the Mac. Select **Pair iPhone** on the Mac to display its QR code. On the phone, use **Connections → Pair a Mac → Scan QR code**, review the Mac name and address, then select **Request pairing**. The in-app scanner requires camera permission; it does not use the system Camera app or a web service. Copy and paste remain available if scanning is unavailable or the code exceeds QR capacity. This interaction is implemented and simulator-tested, but physical camera scanning remains unverified.
+Pairing uses a two-minute high-entropy code scanned or copied from the Mac. Select **Pair iPhone** on the Mac to display its QR code. On the phone, use **Connections → Pair a host → Scan QR code**, review the Mac name and address, then select **Request pairing**. The in-app scanner requires camera permission; it does not use the system Camera app or a web service. Copy and paste remain available if scanning is unavailable or the code exceeds QR capacity. This interaction is implemented and simulator-tested, but physical camera scanning remains unverified.
 
 The phone pins the certificate in that code before sending the pairing grant. The Mac user must approve the displayed device ID. Codes permit at most five attempts, and the host accepts at most 16 paired devices. A code is sensitive: do not put it in logs or share it through an untrusted channel.
 

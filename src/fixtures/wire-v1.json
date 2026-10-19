@@ -1,0 +1,1652 @@
+{
+  "authentication": {
+    "device": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+    "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+    "proof": "cy8F7EN0LrsbNlERS/XOYjvjDnYOwCsDTuaU5qh1RLg=",
+    "secret": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+  },
+  "client": [
+    {
+      "name": "pair",
+      "packet": {
+        "payload": {
+          "pair": {
+            "device": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+            "grant": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+            "name": "Fixture phone"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "authenticate",
+      "packet": {
+        "payload": {
+          "authenticate": {
+            "device": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+            "proof": "cy8F7EN0LrsbNlERS/XOYjvjDnYOwCsDTuaU5qh1RLg="
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "snapshot",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "snapshot": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "synchronize",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "synchronize": {
+                  "after": 9007199254740991,
+                  "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "synchronize-nil",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "synchronize": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "directories",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "directories": {
+                  "cursor": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "directories-nil",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "directories": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "directoryAtPath",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "directoryAtPath": {
+                  "path": "~/src/project"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "preview",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "preview": {
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "createSession",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "createSession": {
+                  "directory": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "newSession",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "newSession": {
+                  "parent": true
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "importSession",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "importSession": {
+                  "data": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "importSessionInDirectory",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "importSessionInDirectory": {
+                  "data": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+                  "directory": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "resumeSession",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "resumeSession": {
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "prompt",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "prompt": {
+                  "delivery": "prompt",
+                  "text": "Fixture instruction"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "prompt-image",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "prompt": {
+                  "delivery": "steer",
+                  "image": {
+                    "data": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+                    "mimeType": "image/png"
+                  },
+                  "text": "Fixture image"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "prompt-followUp",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "prompt": {
+                  "delivery": "followUp",
+                  "text": "Fixture follow-up"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "stop",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "stop": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "recoverQueue",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "recoverQueue": {
+                  "stop": true
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "bash",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "bash": {
+                  "command": "fixture only",
+                  "confirmed": true,
+                  "excludeFromContext": false
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "abortBash",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "abortBash": {
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "model",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "model": {
+                  "id": "model",
+                  "provider": "fixture"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "thinking",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "thinking": {
+                  "level": "high"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "cycleModel",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "cycleModel": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "cycleThinking",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "cycleThinking": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "compact",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "compact": {
+                  "instructions": "Fixture summary"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "rename",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "rename": {
+                  "name": "Fixture"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "history",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "history": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "historyPage",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "historyPage": {
+                  "cursor": "11223344-5566-7788-99AA-BBCCDDEEFF00"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "historyEntry",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "historyEntry": {
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "sessionTree",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "sessionTree": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "fork",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "fork": {
+                  "entry": "entry"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "clone",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "clone": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "command",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "command": {
+                  "arguments": "",
+                  "name": "fixture-select"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "answer",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "answer": {
+                  "cancelled": false,
+                  "dialog": "dialog",
+                  "value": "Second"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "answer-confirm",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "answer": {
+                  "cancelled": false,
+                  "confirmed": true,
+                  "dialog": "dialog"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "diff",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "diff": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "statistics",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "statistics": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "releaseNotes",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "releaseNotes": {
+                  "offset": 0
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "exportSession",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "exportSession": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "exportJSONL",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "exportJSONL": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "outputImage",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "outputImage": {
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "lastAssistant",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "lastAssistant": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "runtimeSettings",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "runtimeSettings": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "queueMode",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "queueMode": {
+                  "kind": "followUp",
+                  "mode": "one-at-a-time"
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "autoCompaction",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "autoCompaction": {
+                  "enabled": false
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "autoRetry",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "autoRetry": {
+                  "enabled": true
+                }
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "abortRetry",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "abortRetry": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "closeSession",
+      "packet": {
+        "payload": {
+          "request": {
+            "_0": {
+              "action": {
+                "closeSession": {}
+              },
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+              "session": "01234567-89AB-CDEF-0123-456789ABCDEF"
+            }
+          }
+        },
+        "version": 1
+      }
+    }
+  ],
+  "generatedBy": "CLIClientCheck --fixtures; Foundation JSONEncoder",
+  "server": [
+    {
+      "name": "challenge",
+      "packet": {
+        "payload": {
+          "challenge": {
+            "nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "approvalRequired",
+      "packet": {
+        "payload": {
+          "approvalRequired": {}
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "paired",
+      "packet": {
+        "payload": {
+          "paired": {
+            "credential": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+            "host": "01234567-89AB-CDEF-0123-456789ABCDEF"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "authenticated",
+      "packet": {
+        "payload": {
+          "authenticated": {
+            "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+            "host": "01234567-89AB-CDEF-0123-456789ABCDEF"
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "reply-ok",
+      "packet": {
+        "payload": {
+          "reply": {
+            "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+            "result": {
+              "ok": {}
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "reply-snapshot",
+      "packet": {
+        "payload": {
+          "reply": {
+            "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+            "result": {
+              "snapshot": {
+                "_0": {
+                  "capabilities": [
+                    "directories",
+                    "directory-path",
+                    "sessions",
+                    "prompt",
+                    "steering",
+                    "follow-up",
+                    "stop",
+                    "models",
+                    "thinking",
+                    "extension-dialogs",
+                    "history",
+                    "history-pages",
+                    "thinking-display",
+                    "fork",
+                    "clone",
+                    "compaction",
+                    "file-preview",
+                    "git-diff",
+                    "images",
+                    "session-statistics",
+                    "output-images",
+                    "last-assistant",
+                    "runtime-settings",
+                    "close-session",
+                    "session-export",
+                    "session-import",
+                    "session-jsonl-export",
+                    "session-import-directory",
+                    "pi-release-notes",
+                    "model-cycling",
+                    "retry-controls",
+                    "session-tree",
+                    "session-lifecycle",
+                    "bash",
+                    "queue-recovery",
+                    "extension-display"
+                  ],
+                  "commands": [
+                    {
+                      "detail": "Fixture dialog",
+                      "name": "fixture-select",
+                      "source": "extension"
+                    }
+                  ],
+                  "dialogs": [
+                    {
+                      "expires": 456.25,
+                      "id": "dialog",
+                      "message": "Choose",
+                      "method": "select",
+                      "options": ["First", "Second"],
+                      "text": "",
+                      "title": "Fixture"
+                    }
+                  ],
+                  "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+                  "extensionDisplay": {
+                    "notices": [
+                      {
+                        "id": "notice",
+                        "severity": "info",
+                        "text": "Fixture notice"
+                      }
+                    ],
+                    "statuses": [
+                      {
+                        "id": "status",
+                        "text": "Fixture status"
+                      }
+                    ],
+                    "widgets": [
+                      {
+                        "id": "widget",
+                        "placement": "aboveEditor",
+                        "text": "Fixture widget"
+                      }
+                    ]
+                  },
+                  "hasOlderMessages": false,
+                  "host": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                  "messages": [
+                    {
+                      "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+                      "images": [
+                        {
+                          "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                        }
+                      ],
+                      "isError": false,
+                      "role": "assistant",
+                      "streaming": false,
+                      "text": "Fixture text",
+                      "thinking": "Fixture thinking",
+                      "tool": {
+                        "name": "read",
+                        "status": "completed",
+                        "target": "fixture.txt"
+                      },
+                      "toolCallRanges": [[0, 7]],
+                      "truncated": false
+                    }
+                  ],
+                  "model": "",
+                  "models": [
+                    {
+                      "model": "model",
+                      "name": "Fixture model",
+                      "provider": "fixture"
+                    }
+                  ],
+                  "notices": [],
+                  "phase": "idle",
+                  "piVersion": "Not running",
+                  "runtime": {
+                    "autoCompactionEnabled": true,
+                    "followUpMode": "one-at-a-time",
+                    "steeringMode": "all"
+                  },
+                  "selected": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                  "sequence": 9007199254740991,
+                  "sessions": [
+                    {
+                      "directory": "/fixture/project",
+                      "id": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                      "interrupted": true,
+                      "title": "Fixture",
+                      "updated": 123.5
+                    }
+                  ],
+                  "thinking": "",
+                  "thinkingLevels": []
+                }
+              }
+            },
+            "state": {
+              "capabilities": [
+                "directories",
+                "directory-path",
+                "sessions",
+                "prompt",
+                "steering",
+                "follow-up",
+                "stop",
+                "models",
+                "thinking",
+                "extension-dialogs",
+                "history",
+                "history-pages",
+                "thinking-display",
+                "fork",
+                "clone",
+                "compaction",
+                "file-preview",
+                "git-diff",
+                "images",
+                "session-statistics",
+                "output-images",
+                "last-assistant",
+                "runtime-settings",
+                "close-session",
+                "session-export",
+                "session-import",
+                "session-jsonl-export",
+                "session-import-directory",
+                "pi-release-notes",
+                "model-cycling",
+                "retry-controls",
+                "session-tree",
+                "session-lifecycle",
+                "bash",
+                "queue-recovery",
+                "extension-display"
+              ],
+              "commands": [
+                {
+                  "detail": "Fixture dialog",
+                  "name": "fixture-select",
+                  "source": "extension"
+                }
+              ],
+              "dialogs": [
+                {
+                  "expires": 456.25,
+                  "id": "dialog",
+                  "message": "Choose",
+                  "method": "select",
+                  "options": ["First", "Second"],
+                  "text": "",
+                  "title": "Fixture"
+                }
+              ],
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "extensionDisplay": {
+                "notices": [
+                  {
+                    "id": "notice",
+                    "severity": "info",
+                    "text": "Fixture notice"
+                  }
+                ],
+                "statuses": [
+                  {
+                    "id": "status",
+                    "text": "Fixture status"
+                  }
+                ],
+                "widgets": [
+                  {
+                    "id": "widget",
+                    "placement": "aboveEditor",
+                    "text": "Fixture widget"
+                  }
+                ]
+              },
+              "hasOlderMessages": false,
+              "host": "01234567-89AB-CDEF-0123-456789ABCDEF",
+              "messages": [
+                {
+                  "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+                  "images": [
+                    {
+                      "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                    }
+                  ],
+                  "isError": false,
+                  "role": "assistant",
+                  "streaming": false,
+                  "text": "Fixture text",
+                  "thinking": "Fixture thinking",
+                  "tool": {
+                    "name": "read",
+                    "status": "completed",
+                    "target": "fixture.txt"
+                  },
+                  "toolCallRanges": [[0, 7]],
+                  "truncated": false
+                }
+              ],
+              "model": "",
+              "models": [
+                {
+                  "model": "model",
+                  "name": "Fixture model",
+                  "provider": "fixture"
+                }
+              ],
+              "notices": [],
+              "phase": "idle",
+              "piVersion": "Not running",
+              "runtime": {
+                "autoCompactionEnabled": true,
+                "followUpMode": "one-at-a-time",
+                "steeringMode": "all"
+              },
+              "selected": "01234567-89AB-CDEF-0123-456789ABCDEF",
+              "sequence": 9007199254740991,
+              "sessions": [
+                {
+                  "directory": "/fixture/project",
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                  "interrupted": true,
+                  "title": "Fixture",
+                  "updated": 123.5
+                }
+              ],
+              "thinking": "",
+              "thinkingLevels": []
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "reply-sync",
+      "packet": {
+        "payload": {
+          "reply": {
+            "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+            "result": {
+              "synchronized": {
+                "_0": {
+                  "events": [],
+                  "snapshot": {
+                    "capabilities": [
+                      "directories",
+                      "directory-path",
+                      "sessions",
+                      "prompt",
+                      "steering",
+                      "follow-up",
+                      "stop",
+                      "models",
+                      "thinking",
+                      "extension-dialogs",
+                      "history",
+                      "history-pages",
+                      "thinking-display",
+                      "fork",
+                      "clone",
+                      "compaction",
+                      "file-preview",
+                      "git-diff",
+                      "images",
+                      "session-statistics",
+                      "output-images",
+                      "last-assistant",
+                      "runtime-settings",
+                      "close-session",
+                      "session-export",
+                      "session-import",
+                      "session-jsonl-export",
+                      "session-import-directory",
+                      "pi-release-notes",
+                      "model-cycling",
+                      "retry-controls",
+                      "session-tree",
+                      "session-lifecycle",
+                      "bash",
+                      "queue-recovery",
+                      "extension-display"
+                    ],
+                    "commands": [
+                      {
+                        "detail": "Fixture dialog",
+                        "name": "fixture-select",
+                        "source": "extension"
+                      }
+                    ],
+                    "dialogs": [
+                      {
+                        "expires": 456.25,
+                        "id": "dialog",
+                        "message": "Choose",
+                        "method": "select",
+                        "options": ["First", "Second"],
+                        "text": "",
+                        "title": "Fixture"
+                      }
+                    ],
+                    "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+                    "extensionDisplay": {
+                      "notices": [
+                        {
+                          "id": "notice",
+                          "severity": "info",
+                          "text": "Fixture notice"
+                        }
+                      ],
+                      "statuses": [
+                        {
+                          "id": "status",
+                          "text": "Fixture status"
+                        }
+                      ],
+                      "widgets": [
+                        {
+                          "id": "widget",
+                          "placement": "aboveEditor",
+                          "text": "Fixture widget"
+                        }
+                      ]
+                    },
+                    "hasOlderMessages": false,
+                    "host": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                    "messages": [
+                      {
+                        "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+                        "images": [
+                          {
+                            "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                          }
+                        ],
+                        "isError": false,
+                        "role": "assistant",
+                        "streaming": false,
+                        "text": "Fixture text",
+                        "thinking": "Fixture thinking",
+                        "tool": {
+                          "name": "read",
+                          "status": "completed",
+                          "target": "fixture.txt"
+                        },
+                        "toolCallRanges": [[0, 7]],
+                        "truncated": false
+                      }
+                    ],
+                    "model": "",
+                    "models": [
+                      {
+                        "model": "model",
+                        "name": "Fixture model",
+                        "provider": "fixture"
+                      }
+                    ],
+                    "notices": [],
+                    "phase": "idle",
+                    "piVersion": "Not running",
+                    "runtime": {
+                      "autoCompactionEnabled": true,
+                      "followUpMode": "one-at-a-time",
+                      "steeringMode": "all"
+                    },
+                    "selected": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                    "sequence": 9007199254740991,
+                    "sessions": [
+                      {
+                        "directory": "/fixture/project",
+                        "id": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                        "interrupted": true,
+                        "title": "Fixture",
+                        "updated": 123.5
+                      }
+                    ],
+                    "thinking": "",
+                    "thinkingLevels": []
+                  }
+                }
+              }
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "reply-directories",
+      "packet": {
+        "payload": {
+          "reply": {
+            "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+            "result": {
+              "directories": {
+                "_0": {
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                  "items": [
+                    {
+                      "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+                      "isDirectory": true,
+                      "name": "nested"
+                    }
+                  ],
+                  "parent": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+                  "path": "/fixture/project"
+                }
+              }
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "reply-failure",
+      "packet": {
+        "payload": {
+          "reply": {
+            "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+            "result": {
+              "failure": {
+                "_0": "unsupportedFeature"
+              }
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "state",
+      "packet": {
+        "payload": {
+          "state": {
+            "_0": {
+              "capabilities": [
+                "directories",
+                "directory-path",
+                "sessions",
+                "prompt",
+                "steering",
+                "follow-up",
+                "stop",
+                "models",
+                "thinking",
+                "extension-dialogs",
+                "history",
+                "history-pages",
+                "thinking-display",
+                "fork",
+                "clone",
+                "compaction",
+                "file-preview",
+                "git-diff",
+                "images",
+                "session-statistics",
+                "output-images",
+                "last-assistant",
+                "runtime-settings",
+                "close-session",
+                "session-export",
+                "session-import",
+                "session-jsonl-export",
+                "session-import-directory",
+                "pi-release-notes",
+                "model-cycling",
+                "retry-controls",
+                "session-tree",
+                "session-lifecycle",
+                "bash",
+                "queue-recovery",
+                "extension-display"
+              ],
+              "commands": [
+                {
+                  "detail": "Fixture dialog",
+                  "name": "fixture-select",
+                  "source": "extension"
+                }
+              ],
+              "dialogs": [
+                {
+                  "expires": 456.25,
+                  "id": "dialog",
+                  "message": "Choose",
+                  "method": "select",
+                  "options": ["First", "Second"],
+                  "text": "",
+                  "title": "Fixture"
+                }
+              ],
+              "epoch": "ABCDEF01-2345-6789-ABCD-EF0123456789",
+              "extensionDisplay": {
+                "notices": [
+                  {
+                    "id": "notice",
+                    "severity": "info",
+                    "text": "Fixture notice"
+                  }
+                ],
+                "statuses": [
+                  {
+                    "id": "status",
+                    "text": "Fixture status"
+                  }
+                ],
+                "widgets": [
+                  {
+                    "id": "widget",
+                    "placement": "aboveEditor",
+                    "text": "Fixture widget"
+                  }
+                ]
+              },
+              "hasOlderMessages": false,
+              "host": "01234567-89AB-CDEF-0123-456789ABCDEF",
+              "messages": [
+                {
+                  "id": "11223344-5566-7788-99AA-BBCCDDEEFF00",
+                  "images": [
+                    {
+                      "id": "01234567-89AB-CDEF-0123-456789ABCDEF"
+                    }
+                  ],
+                  "isError": false,
+                  "role": "assistant",
+                  "streaming": false,
+                  "text": "Fixture text",
+                  "thinking": "Fixture thinking",
+                  "tool": {
+                    "name": "read",
+                    "status": "completed",
+                    "target": "fixture.txt"
+                  },
+                  "toolCallRanges": [[0, 7]],
+                  "truncated": false
+                }
+              ],
+              "model": "",
+              "models": [
+                {
+                  "model": "model",
+                  "name": "Fixture model",
+                  "provider": "fixture"
+                }
+              ],
+              "notices": [],
+              "phase": "idle",
+              "piVersion": "Not running",
+              "runtime": {
+                "autoCompactionEnabled": true,
+                "followUpMode": "one-at-a-time",
+                "steeringMode": "all"
+              },
+              "selected": "01234567-89AB-CDEF-0123-456789ABCDEF",
+              "sequence": 9007199254740991,
+              "sessions": [
+                {
+                  "directory": "/fixture/project",
+                  "id": "01234567-89AB-CDEF-0123-456789ABCDEF",
+                  "interrupted": true,
+                  "title": "Fixture",
+                  "updated": 123.5
+                }
+              ],
+              "thinking": "",
+              "thinkingLevels": []
+            }
+          }
+        },
+        "version": 1
+      }
+    },
+    {
+      "name": "denied",
+      "packet": {
+        "payload": {
+          "denied": {}
+        },
+        "version": 1
+      }
+    }
+  ]
+}

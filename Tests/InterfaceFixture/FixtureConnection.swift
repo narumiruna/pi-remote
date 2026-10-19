@@ -56,6 +56,11 @@ actor FixtureConnection: PhoneConnection {
             TranscriptMessage(role: "tool", text: phase == "error" ? "Read file\nPermission denied for the fixture file." : "Read file\nFixture output", isError: phase == "error")
         ]
         if phase == "error" { state.error = .permissionDenied }
+        if phase == "crashed" {
+            state.phase = "interrupted"; state.error = .unknownOutcome
+            state.sessions[0].interrupted = true
+            state.capabilities = ["sessions", "prompt", "stop", "close-session"]
+        }
         if phase == "dialog-recovery" {
             let cached = (0..<12).map { TranscriptMessage(role: "assistant", text: "Cached record \($0). " + String(repeating: "Read this saved text offline. ", count: 16)) }
             state.messages = cached + state.messages
@@ -213,7 +218,11 @@ actor FixtureConnection: PhoneConnection {
             disconnect(fault: .unavailable)
             throw RemoteFault.unavailable
         }
-        if action.mutates { snapshot.error = nil }
+        if action.mutates {
+            if snapshot.error == .unknownOutcome {
+                guard case .stop = action else { throw RemoteFault.busy }
+            } else { snapshot.error = nil }
+        }
         defer { if action.mutates { publish() } }
         switch action {
         case .snapshot: return .snapshot(snapshot)
@@ -254,7 +263,7 @@ actor FixtureConnection: PhoneConnection {
             guard !snapshot.working, var runtime = snapshot.runtime else { throw RemoteFault.busy }
             runtime.autoCompactionEnabled = enabled; snapshot.runtime = runtime
         case .closeSession:
-            guard !snapshot.working else { throw RemoteFault.busy }
+            guard !snapshot.working, snapshot.error != .unknownOutcome else { throw RemoteFault.busy }
             snapshot.selected = nil; snapshot.messages = []; snapshot.runtime = nil
         case .outputImage(let id):
             guard id == Self.imageID else { throw RemoteFault.expired }
@@ -307,12 +316,15 @@ actor FixtureConnection: PhoneConnection {
         case .importSession(let data): try importCopy(data)
         case .importSessionInDirectory(let data, let id): try importCopy(data, directory: directoryPath(id))
         case .resumeSession(let id):
-            snapshot.selected = id
+            guard !snapshot.working, snapshot.error != .unknownOutcome else { throw RemoteFault.busy }
+            snapshot.selected = id; snapshot.phase = "idle"
             snapshot.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
         case .prompt(let text, _, _):
             snapshot.messages.append(TranscriptMessage(role: "user", text: text)); snapshot.phase = "working"
         case .stop:
-            snapshot.phase = "idle"; snapshot.dialogs = []
+            let crashRecovery = snapshot.phase == "interrupted" && snapshot.error == .unknownOutcome
+            snapshot.phase = crashRecovery ? "interrupted" : "idle"
+            snapshot.dialogs = []; snapshot.error = nil
             for index in snapshot.messages.indices { snapshot.messages[index].streaming = false }
         case .model(let provider, let id): snapshot.model = provider + "/" + id
         case .thinking(let level): snapshot.thinking = level
