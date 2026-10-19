@@ -4,7 +4,7 @@
 
 Make the normal workflow clear: select a session, write an instruction, read the result. Remove repeated actions and secondary information from the conversation surface. Keep supported capabilities reachable.
 
-**Status: implementation and native verification pass; normal-app review and user acceptance remain open.** This plan covers all five findings from the normal-app debug review. See the [current verification record](../desktop-minimal-ui.md). The normal-app debug service is unavailable; the revised build must run with user-enabled debug mode to continue. Native accessibility checks do not prove live VoiceOver traversal.
+**Status: implementation and native verification pass; normal-app review and user acceptance remain open.** This plan covers all five findings from the normal-app debug review. See the [current verification record](../desktop-minimal-ui.md). A later normal-app capture found bottom-footer clipping with debug enabled. Its layout correction passes focused native checks; relaunch the corrected build to continue normal-app review. Native accessibility checks do not prove live VoiceOver traversal.
 
 ## Evidence and scope
 
@@ -72,8 +72,8 @@ Source mapping and native route checks pass. Normal-app traversal remains open; 
   - Build the unsigned Mac app. Build iOS and run affected phone regressions if shared views change. Run `git diff --check` and verify local documentation paths.
   - Review Desktop light/dark at 900 × 600, 1104 × 829 and 1300 × 800; check 260/320-point Session panes, long names/drafts, empty/unloaded states, populated history, working state and warnings/errors. Use private fixtures for states unavailable in the live app and label that evidence separately.
   - Check keyboard/VoiceOver access to relocated actions. Update the fixed debug identifier tests when controls move; do not add arbitrary click/input access. If live checks are blocked, record the required user action or explicit acceptance; do not mark them passed.
-  - Passed: 365 Mac tests with one pre-existing ownership skip across disjoint serialized batches; 49 iPhone simulator tests with one optional provider-fixture skip and seven host Close-consent tests; both unsigned builds; the native capture review, diff check and local path checks. Enumeration and result counts match all 366 configured Mac tests.
-  - Blocked: normal-app debug is unavailable. Run the revised build and enable debug mode to continue. Live VoiceOver and user visual acceptance remain unverified. Actual iPhone Picker menu selection is outside the in-process fixture's evidence.
+  - Original checkpoint passed: 365 Mac tests with one pre-existing ownership skip across disjoint serialized batches; 49 iPhone simulator tests with one optional provider-fixture skip and seven host Close-consent tests; both unsigned builds; the native capture review, diff check and local path checks. Enumeration and result counts match all 366 configured Mac tests.
+  - Pending: relaunch the build with the debug-banner layout correction and continue normal-app review. The clipping follow-up passes 41 focused Mac tests and an unsigned build; this is not a repeat of the complete original matrix. Live VoiceOver and user visual acceptance remain unverified. Actual iPhone Picker menu selection is outside the in-process fixture's evidence.
 - [x] Update current-behavior documentation after implementation and verified checks. Keep the product overview in `README.md`; update affected navigation/design rules in `PLAN.md` and mode/interface documentation. Record exact test results, reviewed captures and limitations in a durable verification document. Do not edit unrelated plans or present this proposal as current behavior.
 
 ## Completion Checklist

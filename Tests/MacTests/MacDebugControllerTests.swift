@@ -469,6 +469,66 @@ private final class DebugSecrets: SecretStore, @unchecked Sendable {
         }
     }
 
+    func testDebugBannerReservesSpaceForCompleteDesktopFooter() async throws {
+        try await withModel { model, _ in
+            let session = SessionInfo(id: UUID(), title: "Footer fixture", directory: "/tmp/footer-fixture")
+            model.state.sessions = [session]; model.state.selected = session.id
+            model.destination = .session(session.id)
+            model.interfaceMode = .desktop
+            model.sidebarVisible = true
+            model.inspectorVisible = false
+            model.state.model = "fixture/footer-model"
+            model.state.thinking = "high"
+            model.state.messages = [TranscriptMessage(role: "assistant", text: "Fixture response")]
+            model.text = "Keep this unsent draft"
+            let before = model.state
+            @MainActor func editor(in view: NSView) -> PiEditorTextView? {
+                if let editor = view as? PiEditorTextView { return editor }
+                return view.subviews.lazy.compactMap { editor(in: $0) }.first
+            }
+            let captures = URL(fileURLWithPath: "/tmp/pi-footer-clipping/captures", isDirectory: true)
+            try FileManager.default.createDirectory(at: captures, withIntermediateDirectories: true)
+            for (width, height) in [(900.0, 600.0), (1104.0, 829.0), (1300.0, 800.0)] {
+                try await withMacNativeRootWindow(model, width: width, height: height) { root, window in
+                    let originalEditor = try XCTUnwrap(editor(in: root))
+                    for enabled in [true, false, true] {
+                        if enabled { model.debug.enable(model: model) } else { model.debug.disable() }
+                        XCTAssertEqual(model.debug.enabled, enabled, model.debug.error ?? "")
+                        try await Task.sleep(for: .milliseconds(180))
+                        root.layoutSubtreeIfNeeded()
+                        let viewport = window.convertToScreen(root.convert(root.bounds, to: nil))
+                        let modelButton = try self.frame("pi-model-selector", in: root)
+                        let thinking = try self.frame("pi-thinking-selector", in: root)
+                        for frame in [modelButton, thinking] {
+                            XCTAssertTrue(viewport.contains(frame), "Footer controls must not extend below the window")
+                            if enabled {
+                                let banner = try self.frame("mac-debug-banner-disable", in: root)
+                                XCTAssertGreaterThanOrEqual(frame.minY, banner.maxY + 4,
+                                                            "The debug banner must not cover the footer")
+                            }
+                        }
+                        XCTAssertTrue(editor(in: root) === originalEditor, "Banner changes must not replace the editor")
+                        XCTAssertEqual(originalEditor.string, "Keep this unsent draft")
+                        XCTAssertEqual(model.state, before)
+                        XCTAssertEqual(model.text, "Keep this unsent draft")
+                        let pixels = try MacDebugController.snapshot(window: window)
+                        let bitmap = NSBitmapImageRep(cgImage: pixels.value)
+                        try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+                            .write(to: captures.appendingPathComponent("footer-\(Int(width))x\(Int(height))-debug-\(enabled).png"))
+                    }
+                }
+            }
+        }
+    }
+
+    private func frame(_ id: String, in root: NSView) throws -> NSRect {
+        let object = try XCTUnwrap(find(id, in: root), id)
+        let selector = NSSelectorFromString("accessibilityFrame")
+        XCTAssertTrue(object.responds(to: selector), id)
+        typealias Method = @convention(c) (AnyObject, Selector) -> NSRect
+        return unsafeBitCast(object.method(for: selector), to: Method.self)(object, selector)
+    }
+
     private func find(_ id: String, in object: NSObject) -> NSObject? {
         var seen = Set<ObjectIdentifier>()
         func visit(_ value: NSObject) -> NSObject? {
