@@ -69,7 +69,7 @@ private struct SidebarFixtureRoot: View {
         VStack(spacing: 0) {
             List { Text("Pi"); Text("Overview"); Text("Workspace") }.listStyle(.sidebar)
             Divider()
-            List { Text("Devices"); Text("Settings") }.listStyle(.sidebar).frame(height: 116)
+            List { Text("Settings") }.listStyle(.sidebar).frame(height: 52)
         }
     }
 }

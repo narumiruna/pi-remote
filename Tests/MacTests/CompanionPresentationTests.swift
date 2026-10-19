@@ -132,16 +132,21 @@ private final class PresentationSecrets: SecretStore, @unchecked Sendable {
 #!/bin/sh
 if [ "${1:-}" = --version ]; then printf '1.3.0\n'; exit 0; fi
 printf '%s\n' "$$" >> "$PWD/child-pids"
-folder=''; session=''
+folder=''; session=''; file=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --session-dir) folder=$2; shift 2 ;;
         --session-id) session=$2; shift 2 ;;
+        --session) file=$2; shift 2 ;;
         *) shift ;;
     esac
 done
-file="$folder/$session.jsonl"
-printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+if [ -z "$file" ]; then
+    file="$folder/$session.jsonl"
+    printf '{"type":"session","version":3,"id":"%s","cwd":"%s"}\n' "$session" "$PWD" > "$file"
+else
+    session=$(/usr/bin/head -n 1 "$file" | /usr/bin/sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+fi
 streaming=false
 reply() { printf '{"id":"%s","type":"response","command":"%s","success":true,"data":%s}\n' "$id" "$command" "$1"; }
 while IFS= read -r line; do
@@ -792,8 +797,28 @@ done
             let closedSaved = await model.closeSession(saved.id)
             XCTAssertTrue(closedActive); XCTAssertTrue(closedSaved)
             for (width, height) in [(900, 600), (1300, 800)] {
-                try await capture(CompanionWindow(model: model), name: "management-overview-closed-only-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, _ in
+                try await capture(CompanionWindow(model: model), name: "management-overview-closed-only-\(width)", width: CGFloat(width), height: CGFloat(height)) { host, window in
                     _ = try self.element("mac-session-overview", in: host)
+                    XCTAssertTrue(self.hasLabel("Closed sessions (2)", in: host))
+                    XCTAssertFalse(self.hasLabel("Saved · Closed", in: host))
+                    let closed = try self.element("mac-overview-closed-sessions", in: host)
+                    if !closed.accessibilityPerformPress() {
+                        let frame = try XCTUnwrap(closed.frame())
+                        let point = window.convertPoint(fromScreen: NSPoint(x: frame.midX, y: frame.midY))
+                        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                            context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+                        let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [],
+                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                            context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+                        NSApp.postEvent(up, atStart: true)
+                        window.sendEvent(down)
+                        if let release = NSApp.nextEvent(matching: .leftMouseUp, until: Date(), inMode: .default, dequeue: true) {
+                            window.sendEvent(release)
+                        }
+                    }
+                    try await Task.sleep(for: .milliseconds(150))
+                    host.layoutSubtreeIfNeeded()
                     XCTAssertTrue(self.hasLabel("Saved · Closed", in: host))
                     XCTAssertTrue(self.hasLabel("Saved · Closed · Interrupted", in: host))
                     XCTAssertFalse(self.hasLabel("Idle", in: host))
@@ -1784,7 +1809,7 @@ done
                                    "Loaded-session state belongs in the Pi footer")
                     XCTAssertFalse(nodes.contains { ($0.value("accessibilityValue") as? String) == "Session view" })
                     XCTAssertGreaterThanOrEqual(self.descendants(host).compactMap { $0 as? NSOutlineView }.count, 2,
-                                               "Devices and Settings must use a separate pinned List")
+                                               "Settings must remain in a separate pinned List")
                     _ = try self.element("mac-session-" + second.id.uuidString, in: host)
                 }
             }

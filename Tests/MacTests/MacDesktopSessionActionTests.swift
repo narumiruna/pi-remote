@@ -68,7 +68,7 @@ private final class DesktopSessionSecrets: SecretStore, @unchecked Sendable {
         }
     }
 
-    func testClosedOverviewRendersDisabledCloseAndExplicitReopen() async throws {
+    func testClosedOverviewStartsCollapsedWithoutDisabledCloseRows() async throws {
         try await fixture { model in
             _ = NSApplication.shared
             let saved = SessionInfo(id: UUID(), title: "Closed fixture", directory: "/tmp/desktop-actions")
@@ -85,7 +85,7 @@ private final class DesktopSessionSecrets: SecretStore, @unchecked Sendable {
             host.layoutSubtreeIfNeeded()
             try await Task.sleep(for: .milliseconds(200))
             var stack: [NSObject] = [host], seen = Set<ObjectIdentifier>()
-            var foundClose = false, foundReopen = false
+            var foundClose = false, foundReopen = false, foundClosedGroup = false
             while let item = stack.popLast(), seen.count < 8192 {
                 guard seen.insert(ObjectIdentifier(item)).inserted else { continue }
                 func value(_ key: String) -> Any? {
@@ -93,19 +93,15 @@ private final class DesktopSessionSecrets: SecretStore, @unchecked Sendable {
                     return item.responds(to: selector) ? item.perform(selector)?.takeUnretainedValue() : nil
                 }
                 if value("accessibilityIdentifier") as? String == "mac-overview-close-" + saved.id.uuidString {
-                    let selector = NSSelectorFromString("isAccessibilityEnabled")
-                    typealias ReadBool = @convention(c) (AnyObject, Selector) -> Bool
-                    XCTAssertTrue(item.responds(to: selector))
-                    if item.responds(to: selector) {
-                        XCTAssertFalse(unsafeBitCast(item.method(for: selector), to: ReadBool.self)(item, selector))
-                    }
                     foundClose = true
                 }
                 if value("accessibilityLabel") as? String == "Reopen" { foundReopen = true }
+                if value("accessibilityIdentifier") as? String == "mac-overview-closed-sessions" { foundClosedGroup = true }
                 stack.append(contentsOf: (item as? NSView)?.subviews ?? [])
                 stack.append(contentsOf: value("accessibilityChildren") as? [NSObject] ?? [])
             }
-            XCTAssertTrue(foundClose); XCTAssertTrue(foundReopen)
+            XCTAssertFalse(foundClose); XCTAssertFalse(foundReopen)
+            XCTAssertTrue(foundClosedGroup)
             XCTAssertNil(model.state.selected)
             XCTAssertTrue(model.closedSessionIDs.contains(saved.id))
         }

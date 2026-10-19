@@ -855,7 +855,8 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
                         }
                         let actions = try self.menuItems("mac-global-actions", in: root).map(\.title)
                         XCTAssertFalse(actions.contains("Files")); XCTAssertFalse(actions.contains("Commands"))
-                        for title in ["Command palette…", "Settings", "Devices", "iPhone access…", "Keyboard shortcuts"] {
+                        XCTAssertFalse(actions.contains("Devices"), "Devices is reached through Settings")
+                        for title in ["Command palette…", "Overview", "Settings", "iPhone access…", "Keyboard shortcuts"] {
                             XCTAssertTrue(actions.contains(title), title)
                         }
                     }
@@ -872,7 +873,9 @@ private final class StructureSecrets: SecretStore, @unchecked Sendable {
             try await self.hosted(model) { root, _ in
                 let state = model.state
                 let runtime = await model.coordinator?.state()
-                for (title, destination) in [("Overview", MacDestination.overview), ("Settings", .settings), ("Devices", .devices)] {
+                let titles = try self.menuItems("mac-global-actions", in: root).map(\.title)
+                XCTAssertFalse(titles.contains("Devices"), "Devices belongs under Settings, not a duplicate Actions entry")
+                for (title, destination) in [("Overview", MacDestination.overview), ("Settings", .settings)] {
                     try await self.choose(title, from: "mac-global-actions", in: root)
                     XCTAssertEqual(model.destination, destination)
                     XCTAssertEqual(model.state, state)
