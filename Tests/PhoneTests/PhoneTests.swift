@@ -1,3 +1,4 @@
+import PiRemoteClient
 import PiRemoteCore
 import SwiftUI
 import UIKit
@@ -224,6 +225,154 @@ final class PhoneTests: XCTestCase {
                         add(attachment)
                     }
                 }
+            }
+        }
+    }
+}
+
+private actor SendConnection: PhoneConnection {
+    private(set) var actions: [SessionAction] = []
+    private(set) var contexts: [SessionContext] = []
+    private let holdRequests: Bool
+    private var pending: CheckedContinuation<AppResult, any Error>?
+
+    init(holdRequests: Bool) { self.holdRequests = holdRequests }
+    func pair(code: PairingCode, device: UUID, name: String) throws -> SavedMac { throw RemoteFault.unsupportedFeature }
+    func updates() -> AsyncStream<ClientUpdate> { AsyncStream { $0.finish() } }
+    func connect(_ mac: SavedMac) {}
+    func disconnect(fault: RemoteFault) {}
+    func forget(_ mac: SavedMac) {}
+    func request(_ action: SessionAction, context: SessionContext) async throws -> AppResult {
+        actions.append(action); contexts.append(context)
+        guard holdRequests else { return .ok }
+        return try await withCheckedThrowingContinuation { pending = $0 }
+    }
+    func finish() {
+        pending?.resume(returning: .ok)
+        pending = nil
+    }
+}
+
+@MainActor
+final class PhoneSendTests: XCTestCase {
+    private func withFixture(uncertain: Bool = false, holdRequests: Bool = false,
+                             _ body: @MainActor (PhoneModel, SendConnection, UserDefaults, HostSnapshot) async throws -> Void) async throws {
+        let name = "PiRemoteSendTests-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.set(uncertain, forKey: "uncertainAction")
+        let client = SendConnection(holdRequests: holdRequests)
+        let model = PhoneModel(defaults: defaults, connection: client)
+        defer { model.lock(); defaults.removePersistentDomain(forName: name) }
+        let host = UUID()
+        model.chooseMac(host); model.locked = false; model.covered = false
+        var state = HostSnapshot(host: host, epoch: UUID())
+        state.selected = UUID(); state.phase = "idle"
+        model.applyState(state)
+        try await body(model, client, defaults, state)
+    }
+
+    private func wait(_ condition: () async -> Bool) async throws {
+        for _ in 0..<100 {
+            if await condition() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("The send fixture did not settle")
+    }
+
+    func testEmptyTextWithoutImageDoesNotSendOrOpenResendConfirmation() async throws {
+        for uncertain in [false, true] {
+            try await withFixture(uncertain: uncertain) { model, client, defaults, state in
+                model.text = ""
+                model.send(context: state.context)
+                XCTAssertFalse(model.sending)
+                XCTAssertFalse(model.confirmResend)
+                try await Task.sleep(for: .milliseconds(30))
+                let actions = await client.actions
+                XCTAssertTrue(actions.isEmpty, "Empty input must not send any request")
+                XCTAssertEqual(model.text, "")
+                XCTAssertNil(model.image)
+                XCTAssertEqual(model.needsActionReview, uncertain)
+                XCTAssertEqual(defaults.bool(forKey: "uncertainAction"), uncertain)
+                XCTAssertEqual(model.fault, uncertain ? .unknownOutcome : nil)
+                model.lock()
+                XCTAssertEqual(PhoneModel(defaults: defaults, connection: client).text, "")
+            }
+        }
+    }
+
+    func testWhitespaceOnlyTextWithoutImageKeepsDraftAndDoesNotSendOrOpenResendConfirmation() async throws {
+        for uncertain in [false, true] {
+            for text in ["   ", "\t\r\n", " \n\t\u{00a0}\u{2003} "] {
+                try await withFixture(uncertain: uncertain) { model, client, defaults, state in
+                    model.text = text
+                    model.send(context: state.context)
+                    XCTAssertFalse(model.sending)
+                    XCTAssertFalse(model.confirmResend)
+                    try await Task.sleep(for: .milliseconds(30))
+                    let actions = await client.actions
+                    XCTAssertTrue(actions.isEmpty, "Whitespace-only input must not send any request")
+                    XCTAssertEqual(model.text, text, "A rejected send must not clear or trim the draft")
+                    XCTAssertEqual(model.needsActionReview, uncertain)
+                    XCTAssertEqual(defaults.bool(forKey: "uncertainAction"), uncertain)
+                    XCTAssertEqual(model.fault, uncertain ? .unknownOutcome : nil)
+                    model.lock()
+                    XCTAssertEqual(PhoneModel(defaults: defaults, connection: client).text, text)
+                }
+            }
+        }
+    }
+
+    func testNonemptyTextIsSentWithoutTrimmingAndKeptUntilAcknowledged() async throws {
+        try await withFixture(holdRequests: true) { model, client, defaults, state in
+            let text = " \n\tReview this change.\n  "
+            model.text = text
+            model.send(context: state.context)
+            try await wait { await client.actions.count == 1 }
+            let actions = await client.actions, contexts = await client.contexts
+            XCTAssertEqual(actions, [.prompt(text: text, delivery: .prompt, image: nil)])
+            XCTAssertEqual(contexts, [state.context])
+            XCTAssertTrue(model.sending)
+            XCTAssertEqual(model.text, text)
+            XCTAssertEqual(PhoneModel(defaults: defaults, connection: client).text, text)
+            await client.finish()
+            try await wait { !model.sending }
+            XCTAssertEqual(model.text, "")
+            XCTAssertEqual(PhoneModel(defaults: defaults, connection: client).text, "")
+        }
+    }
+
+    func testSuccessfulSendDoesNotClearDraftEditedWhileWaiting() async throws {
+        try await withFixture(holdRequests: true) { model, client, defaults, state in
+            model.text = "Submitted instruction"
+            model.send(context: state.context)
+            try await wait { await client.actions.count == 1 }
+            model.text = "New unsent draft"
+            await client.finish()
+            try await wait { !model.sending }
+            XCTAssertEqual(model.text, "New unsent draft")
+            XCTAssertEqual(PhoneModel(defaults: defaults, connection: client).text, "New unsent draft")
+            let actions = await client.actions
+            XCTAssertEqual(actions, [.prompt(text: "Submitted instruction", delivery: .prompt, image: nil)])
+        }
+    }
+
+    func testImageOnlyPromptIsSentAndAttachmentIsKeptUntilAcknowledged() async throws {
+        for text in ["", " \n\t "] {
+            try await withFixture(holdRequests: true) { model, client, _, state in
+                let image = ImageAttachment(data: Data([1, 2, 3]), mimeType: "image/png")
+                model.text = text; model.image = image
+                model.send(context: state.context)
+                try await wait { await client.actions.count == 1 }
+                let actions = await client.actions, contexts = await client.contexts
+                XCTAssertEqual(actions, [.prompt(text: text, delivery: .prompt, image: image)])
+                XCTAssertEqual(contexts, [state.context])
+                XCTAssertTrue(model.sending)
+                XCTAssertEqual(model.text, text)
+                XCTAssertEqual(model.image, image)
+                await client.finish()
+                try await wait { !model.sending }
+                XCTAssertEqual(model.text, "")
+                XCTAssertNil(model.image)
             }
         }
     }

@@ -10,6 +10,7 @@ struct ConversationView<Extras: View>: View {
     @Binding var delivery: Delivery
     var sending: Bool
     var remoteAvailable = true
+    var hasAttachment = false
     var send: () -> Void
     var stop: () -> Void
     var request: ((SessionAction) async throws -> AppResult)? = nil
@@ -177,14 +178,21 @@ struct ConversationView<Extras: View>: View {
                 }
             }
             #if !os(macOS)
-            PhoneExtensionNotices(state: state)
+            if dynamicTypeSize.isAccessibilitySize {
+                PhoneExtensionNotices(state: state)
+                if state.working { phoneDeliveryPicker.padding(.horizontal, 12) }
+            } else {
+                HStack(alignment: .top, spacing: 8) {
+                    if state.working { phoneDeliveryPicker.padding(.leading, 12) }
+                    PhoneExtensionNotices(state: state)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
             #endif
             Divider()
             #if os(macOS)
             macComposer
             #else
             VStack(alignment: .leading, spacing: 4) {
-                if state.working && dynamicTypeSize.isAccessibilitySize { phoneDeliveryPicker }
                 HStack(alignment: .bottom, spacing: 6) {
                     extras().disabled(!remoteAvailable)
                     TextField("Message Pi", text: $text, prompt: Text("Message Pi").foregroundColor(.primary.opacity(0.75)), axis: .vertical)
@@ -193,7 +201,6 @@ struct ConversationView<Extras: View>: View {
                         .accessibilityLabel("Prompt").accessibilityIdentifier("instruction")
                         .disabled(!canCompose)
                     if state.working {
-                        if !dynamicTypeSize.isAccessibilitySize { phoneDeliveryPicker }
                         Button(action: stop) {
                             Label("Stop", systemImage: "stop.fill").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                         }
@@ -205,7 +212,8 @@ struct ConversationView<Extras: View>: View {
                         Label("Send", systemImage: "arrow.up").labelStyle(.iconOnly).frame(minWidth: controlMinimum, minHeight: controlMinimum)
                     }
                         .buttonStyle(.plain).background(.tint, in: Circle()).foregroundStyle(.background).accessibilityLabel("Send")
-                        .disabled(!remoteAvailable || sending || !canCompose)
+                        .disabled(!phoneCanSend)
+                        .opacity(phoneCanSend ? 1 : 0.4)
                         .keyboardShortcut(.return, modifiers: .command)
                 }
             }
@@ -217,6 +225,11 @@ struct ConversationView<Extras: View>: View {
     }
 
     #if !os(macOS)
+    private var phoneCanSend: Bool {
+        remoteAvailable && !sending && canCompose
+            && (hasAttachment || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
     private var phoneDeliveryPicker: some View {
         Menu {
             Picker("Send as", selection: $delivery) {

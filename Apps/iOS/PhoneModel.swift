@@ -337,6 +337,7 @@ final class PhoneModel {
     func send(context: SessionContext? = nil) {
         guard !sending, connected, !locked, let state else { return }
         guard context == nil || context == state.context else { fault = .conflict; return }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || image != nil else { return }
         if submissions.uncertain && !approvedResend { resendContext = state.context; confirmResend = true; return }
         approvedResend = false; sending = true
         let message = text, attachment = image, submittedKey = draftKey, submittedContext = state.context

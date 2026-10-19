@@ -92,7 +92,8 @@ final class PhoneRecoveryInterfaceTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         }
         XCTAssertLessThanOrEqual(send.frame.height, 48)
-        XCTAssertLessThan(abs(delivery.frame.midY - send.frame.midY), 10)
+        XCTAssertLessThanOrEqual(delivery.frame.maxY, editor.frame.minY)
+        XCTAssertGreaterThanOrEqual(editor.frame.width, 220, "Delivery options must not take prompt width")
         XCTAssertTrue(app.buttons["extension-notice-summary"].isHittable)
         XCTAssertTrue(app.staticTexts["Fixture session"].exists)
         XCTAssertTrue(app.staticTexts["Working"].exists)
@@ -100,6 +101,71 @@ final class PhoneRecoveryInterfaceTests: XCTestCase {
         app.buttons["Follow-up"].tap()
         XCTAssertTrue(delivery.label.contains("Follow-up"))
         XCTAssertEqual(editor.value as? String, "Keep this draft")
+    }
+
+    func testLargeTextKeepsDeliveryAndNoticesAboveThePrompt() {
+        let app = XCUIApplication()
+        app.launchArguments = ["compact-working", "large-text"]
+        app.launch()
+        defer { app.terminate() }
+        let editor = app.textFields["instruction"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10))
+        editor.tap()
+        editor.typeText("Draft")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let delivery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Send as")).firstMatch
+        let summary = app.buttons["extension-notice-summary"]
+        for control in [delivery, summary, app.buttons["Stop"], app.buttons["Send"]] {
+            XCTAssertTrue(control.isHittable)
+            XCTAssertTrue(app.frame.contains(control.frame))
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+        }
+        XCTAssertLessThanOrEqual(summary.frame.maxY, delivery.frame.minY)
+        XCTAssertLessThanOrEqual(delivery.frame.maxY, editor.frame.minY)
+        XCTAssertGreaterThanOrEqual(editor.frame.width, 220)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "phone-large-text-working-keyboard"
+        capture.lifetime = .keepAlways
+        add(capture)
+        delivery.tap()
+        app.buttons["Follow-up"].tap()
+        XCTAssertTrue(delivery.label.contains("Follow-up"))
+        XCTAssertEqual(editor.value as? String, "Draft")
+    }
+
+    func testEmptyAndWhitespaceDraftDisableSendUntilTextIsEntered() {
+        let app = launch("idle")
+        defer { app.terminate() }
+        let send = app.buttons["Send"]
+        let editor = app.textFields["instruction"]
+        XCTAssertFalse(send.isEnabled)
+        editor.tap()
+        editor.typeText("   ")
+        XCTAssertFalse(send.isEnabled)
+        editor.typeText("Review")
+        XCTAssertTrue(send.isEnabled)
+        editor.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 9))
+        XCTAssertFalse(send.isEnabled)
+        XCTAssertEqual(editor.value as? String, "Message Pi")
+    }
+
+    func testImageOnlyDraftCanSendAndRemovingImageDisablesSend() {
+        let app = XCUIApplication()
+        app.launchArguments = ["idle", "image-draft"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["Image attached"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Send"].isEnabled)
+        app.buttons["Remove"].tap()
+        XCTAssertFalse(app.buttons["Send"].isEnabled)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Image attached"].waitForExistence(timeout: 10))
+        app.buttons["Send"].tap()
+        XCTAssertTrue(app.staticTexts["Image attached"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Stop"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Send"].isEnabled)
     }
 
     func testToolArgumentsAndOutputStartCollapsedAndCanCollapseAgain() {
@@ -258,7 +324,7 @@ final class PhoneRecoveryInterfaceTests: XCTestCase {
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["Fixture Mac"].exists)
         app.buttons["Close"].tap()
-        XCTAssertTrue(app.buttons["Send"].isEnabled)
+        XCTAssertFalse(app.buttons["Send"].isEnabled, "An empty draft must remain unavailable after cancelling Forget")
         app.buttons["More"].tap()
         app.buttons["Connections"].tap()
         XCTAssertTrue(app.buttons["Fixture Mac"].waitForExistence(timeout: 5))

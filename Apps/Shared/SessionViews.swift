@@ -78,16 +78,32 @@ private struct SessionListView: View {
                     DirectoryBrowser(selecting: true, request: request, pathEntry: true, initialPath: directory) { id, _ in
                         _ = try await request(.createSession(directory: id)); selected()
                     }
-                } label: { Label("New session", systemImage: "plus") }
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("New session", systemImage: "plus")
+                        Text("Review or change this folder").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                    .accessibilityIdentifier("space-new-session")
+                    .accessibilityLabel("New session")
+                    .accessibilityHint("Review or change this folder before starting Pi.")
                     .frame(minHeight: sessionControlMinimum).disabled(state.working)
             } else {
                 Button("New session", systemImage: "plus", action: newSession)
                     .frame(minHeight: sessionControlMinimum).disabled(state.working)
             }
             if state.capabilities.contains("session-lifecycle"), isCurrentDirectory {
-                NavigationLink("New in current directory") {
+                NavigationLink {
                     NewManagedSessionView(state: state, request: request, created: selected)
-                }.frame(minHeight: sessionControlMinimum).disabled(state.working)
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("New session options")
+                        Text("Current folder · Optional parent link").font(.caption).foregroundStyle(.secondary)
+                    }
+                }.accessibilityIdentifier("space-new-session-options")
+                    .accessibilityLabel("New session options")
+                    .accessibilityHint("Use the current folder with an optional parent link. Messages are not copied.")
+                    .frame(minHeight: sessionControlMinimum).disabled(state.working)
             }
             if let error { Text(error).foregroundStyle(.primary) }
             ForEach(sessions) { session in
@@ -133,6 +149,8 @@ struct SessionControls: View {
     @Environment(\.macInterfaceMode) private var interfaceMode
     @State private var details = false
     @State private var advanced = false
+    #else
+    @State private var details = false
     #endif
     let preview: (FilePreview) -> Void
     @State private var confirmClose = false
@@ -148,7 +166,7 @@ struct SessionControls: View {
                 standardControls
             }
             #else
-            standardControls
+            phoneControls
             #endif
         }
         .navigationTitle("Session controls")
@@ -204,6 +222,43 @@ struct SessionControls: View {
         pendingSection
         SessionCommandActions(state: state, request: request, operation: command)
     }
+
+    #if !os(macOS)
+    private var phoneControls: some View {
+        Group {
+            Section {
+                modelPicker
+                thinkingPicker
+                if state.capabilities.contains("model-cycling") {
+                    Button("Cycle model") { perform(.cycleModel) }.frame(minHeight: sessionControlMinimum)
+                    Button("Cycle thinking level") { perform(.cycleThinking) }.frame(minHeight: sessionControlMinimum)
+                }
+            }.disabled(state.working || state.selected == nil)
+            if let error { Text(error).foregroundStyle(.primary) }
+            directorySection
+            retryRecovery
+            usageSection
+            outputSection
+            exportSection
+            runtimeSection
+            sessionSection
+            pendingSection
+            SessionCommandActions(state: state, request: request, operation: command)
+            Section {
+                DisclosureGroup("Details", isExpanded: $details) {
+                    if details {
+                        Text("Version: " + state.piVersion).font(.caption)
+                        if state.capabilities.contains("pi-release-notes") {
+                            NavigationLink("Pi changelog") { ReleaseNotesView(request: request) }
+                                .frame(minHeight: sessionControlMinimum)
+                        }
+                    }
+                }.accessibilityIdentifier("phone-session-details")
+                    .frame(minHeight: sessionControlMinimum)
+            }
+        }
+    }
+    #endif
 
     #if os(macOS)
     private var desktopControls: some View {

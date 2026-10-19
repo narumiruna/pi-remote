@@ -29,8 +29,13 @@ struct PhoneRoot: View {
                             HStack(alignment: .top, spacing: 12) {
                                 Button { model.panel = "recovery" } label: {
                                     Label(fault.title, systemImage: "exclamationmark.triangle")
-                                        .fixedSize(horizontal: false, vertical: true).frame(minHeight: 44)
-                                }.buttonStyle(.plain).accessibilityHint("Show recovery instructions. " + fault.explanation)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(minWidth: 44, minHeight: 44, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }.buttonStyle(.plain)
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(fault.title)
+                                    .accessibilityHint("Show recovery instructions. " + fault.explanation)
                                 Spacer(minLength: 0)
                                 Button { model.reviewedFault() } label: {
                                     Text(model.needsActionReview ? "Reviewed" : "Dismiss").frame(minWidth: 44, minHeight: 44)
@@ -54,7 +59,7 @@ struct PhoneRoot: View {
                             if model.image != nil {
                                 HStack { Label("Image attached", systemImage: "photo"); Button("Remove") { model.image = nil; photo = nil } }.font(.caption).padding(.horizontal)
                             }
-                            ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending, remoteAvailable: model.connected,
+                            ConversationView(state: state, text: $model.text, delivery: $model.delivery, sending: model.sending, remoteAvailable: model.connected, hasAttachment: model.image != nil,
                                              send: { model.send(context: state.context) },
                                              stop: { Task { _ = try? await model.scopedRequest(for: state)(.stop) } },
                                              request: model.connected ? model.scopedRequest(for: state) : nil) {
