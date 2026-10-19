@@ -18,8 +18,8 @@ Other architectures, runtime versions and Linux secret-store providers were not 
 
 | Check | Result |
 | --- | --- |
-| macOS `PI_REMOTE_TEST_OS_SECRETS=1 npm run ci` | 155 Bun tests pass; two Linux-only tests skip; seven hook tests pass; build and local/global tarball installation pass |
-| Linux equivalent full gate | 156 Bun tests pass; one root-only permission skip; seven hook tests, build and local/global installation pass |
+| macOS `PI_REMOTE_TEST_OS_SECRETS=1 npm run ci` after PR review | 170 Bun tests pass; two Linux-only tests skip; seven hook tests pass; build and local/global tarball installation pass |
+| Linux equivalent full gate after PR review | 171 Bun tests pass; one root-only permission skip; seven hook tests, build and local/global installation pass |
 | Linux non-root storage/directory/identity/secret subset | 36 pass, no skips; includes the permission case skipped as root |
 | Current Swift JSON encoder versus `src/fixtures/wire-v1.json` | Parsed values match |
 | TypeScript packet encoding decoded with production Swift types | Pass, including the minimal CLI snapshot |
@@ -34,6 +34,18 @@ Other architectures, runtime versions and Linux secret-store providers were not 
 The controlled flow uses the production `RemoteClient` and pinned TLS channel. It pairs with request-bound fixture-local approval, browses parent/nested/explicit paths, selects a project before starting Pi, writes `acceptance.txt`, verifies one accepted coding prompt after disconnect, displays thinking/tool activity, changes model/thinking, answers a dialog, sends steering/follow-up, clears input with Stop, closes/resumes, restarts the host, explicitly resumes interrupted work, revokes access and confirms denial on reconnect. The provider-free Pi fixture writes the file; this is not real-provider coding evidence.
 
 `src/fixtures/host.ts` is an explicit test harness. Its memory store and private fixture control files are not product arguments or authentication exceptions. The Linux cross-language run also exercises the actual Secret Service integration. Fixture code and credentials are excluded from the npm artifact.
+
+## PR #24 review corrections
+
+All three review findings were reproduced with failing tests before the fixes. The focused coordinator suite now passes 46 tests. Fifteen tests cover the review cases and their related boundaries. Both full CLI gates above pass. The installed-Pi managed creation/resume probe also passes without provider prompts. The original Swift/iPhone checks remain evidence from the first milestone; they were not rerun for these TypeScript-only fixes.
+
+| Finding | Verified outcome |
+| --- | --- |
+| [R1: select response values](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4315848256), P2 | Valid values, including a 512-byte UTF-8 value, reach Pi unchanged. Oversized, sanitized, non-string, excessive or duplicate options are cancelled with a notice. Unicode-equivalent Swift identifiers are also rejected. Unoffered answers do not consume the pending dialog. |
+| [R2: Stop after receipt-write failure](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4315848265), P1 | Persistent `ENOSPC`/`EACCES` cannot block an admitted, authorized Stop. Tests confirm the managed PID is gone and `storageFailure` remains visible. A failed final receipt write does not erase confirmed idle or repeat abort on a duplicate request. Unauthorized/stale-session requests remain rejected. Unconfirmed termination still returns `unknownOutcome`. |
+| [R3: cross-session editor offers](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4315848272), P2 | Create, resume and Close clear `draft` and `draftID` before the new context is published. Current-session snapshots and replay contain no prior-session offer. Phone-local saved drafts are not deleted. |
+
+No review item was deferred or left for clarification. The submitted review receipt and status comment contain no separate code proposal. Their findings are accounted for above. Hosted checks were absent at the review checkpoint; the reported gate results are local checks on macOS and the actual Linux runner.
 
 ## Negative and lifecycle checks
 

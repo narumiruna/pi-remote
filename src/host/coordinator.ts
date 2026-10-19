@@ -317,14 +317,38 @@ export class Coordinator {
       this.receipts[key] = { digest, done: false }
     }
     let performed = false
+    let stopReceiptFailed = false
     try {
-      if (mutation) await this.saveJournal()
+      if (mutation) {
+        try {
+          await this.saveJournal()
+        } catch (error) {
+          if (request.action !== "stop") throw error
+          // Receipt storage must not block authorized emergency cleanup.
+          stopReceiptFailed = true
+          this.unresolvedInput = true
+        }
+      }
       if (!authorized() || this.closing) throw new Fault("unauthorized")
       const result = await this.perform(request, authorized, requestStopRevision)
       performed = true
       if (mutation) {
         this.receipts[key].done = true
-        await this.saveJournal()
+        try {
+          await this.saveJournal()
+        } catch (error) {
+          if (request.action !== "stop") throw error
+          stopReceiptFailed = true
+        }
+        if (stopReceiptFailed) {
+          this.snapshot.error = "storageFailure"
+          const notice =
+            "One or more Stop receipt writes failed. Work stopped. Check disk space and catalog access."
+          this.snapshot.notices = [
+            ...this.snapshot.notices.filter((value) => value !== notice).slice(-7),
+            notice,
+          ]
+        }
         this.publish()
       }
       return result
@@ -425,6 +449,8 @@ export class Coordinator {
         await this.child?.shutdown()
         this.child = undefined
         this.snapshot.selected = undefined
+        this.snapshot.draft = undefined
+        this.snapshot.draftID = undefined
         this.snapshot.phase = "idle"
         this.snapshot.messages = []
         this.snapshot.hasOlderMessages = false
@@ -560,12 +586,15 @@ export class Coordinator {
       case "answer": {
         const id = f.dialog as string
         const expiry = this.dialogIDs.get(id)
-        if (
-          expiry === undefined ||
-          expiry <= performance.now() ||
-          !this.snapshot.dialogs.some((d) => d.id === id)
-        )
+        const dialog = this.snapshot.dialogs.find((d) => d.id === id)
+        if (expiry === undefined || expiry <= performance.now() || !dialog)
           throw new Fault("expired")
+        if (
+          dialog.method === "select" &&
+          !f.cancelled &&
+          !dialog.options.includes(f.value as string)
+        )
+          throw new Fault("invalidRequest")
         if (typeof f.value === "string" && Buffer.byteLength(f.value) > 64 * 1024)
           throw new Fault("tooLarge")
         this.dialogIDs.delete(id)
@@ -601,6 +630,8 @@ export class Coordinator {
     this.reducer.clear()
     this.snapshot.messages = []
     this.snapshot.hasOlderMessages = false
+    this.snapshot.draft = undefined
+    this.snapshot.draftID = undefined
     this.snapshot.dialogs = []
     this.dialogIDs.clear()
     this.snapshot.selected = item.info.id
@@ -790,7 +821,28 @@ export class Coordinator {
     const method = String(event.method),
       id = String(event.id)
     if (["select", "confirm", "input", "editor"].includes(method)) {
-      if (this.snapshot.dialogs.length >= 8 || id.length > 128) {
+      const options = Array.isArray(event.options) ? event.options : []
+      const unsafeSelection =
+        method === "select" &&
+        (!Array.isArray(event.options) ||
+          options.length > 100 ||
+          options.some(
+            (value) =>
+              typeof value !== "string" ||
+              Buffer.byteLength(value) > 512 ||
+              displayText(value, 512) !== value,
+          ) ||
+          new Set((options as string[]).map((value) => value.normalize("NFC"))).size !==
+            options.length)
+      if (unsafeSelection) {
+        this.dialogIDs.delete(id)
+        this.snapshot.dialogs = this.snapshot.dialogs.filter((dialog) => dialog.id !== id)
+        this.snapshot.notices = [
+          ...this.snapshot.notices.slice(-7),
+          "Extension selection is unavailable because its options cannot be shown without changes. The request was cancelled.",
+        ]
+      }
+      if (unsafeSelection || this.snapshot.dialogs.length >= 8 || id.length > 128) {
         void this.rpc()
           .answer({ id, cancelled: true })
           .catch(() => this.ended())
@@ -805,9 +857,7 @@ export class Coordinator {
         method,
         title: displayText(event.title, 4096),
         message: displayText(event.message, 4096),
-        options: (Array.isArray(event.options) ? event.options : [])
-          .slice(0, 100)
-          .map((v) => displayText(v, 512)),
+        options: method === "select" ? (options as string[]) : [],
         text: displayText(event.prefill ?? event.text, 64 * 1024),
         expires: foundationNow() + duration / 1000,
       })

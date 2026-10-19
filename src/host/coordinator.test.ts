@@ -673,6 +673,251 @@ test("Stop cancels a pending extension dialog and releases the waiting command",
   expect(await send("closeSession")).toEqual({ ok: {} })
 })
 
+test("review regression: oversized select options are cancelled, not changed", async () => {
+  await open()
+  await create()
+  const answers = spyOn(rpc(), "answer")
+  try {
+    const prefix = "é".repeat(256)
+    await events({
+      type: "extension_ui_request",
+      id: "oversized-select",
+      method: "select",
+      title: "Fixture",
+      options: [`${prefix}A`, `${prefix}B`],
+    })
+    await until(() =>
+      answers.mock.calls.some(
+        ([answer]) => answer.id === "oversized-select" && answer.cancelled === true,
+      ),
+    )
+    expect(host.wireSnapshot().dialogs).toEqual([])
+    expect(
+      host.snapshot.notices.some((notice) => notice.includes("selection is unavailable")),
+    ).toBe(true)
+  } finally {
+    answers.mockRestore()
+  }
+})
+
+test("review regression: Stop still stops Pi when its journal cannot be written", async () => {
+  await open()
+  await create()
+  expect(await send("prompt", { text: "CLI fixture: wait for Stop", delivery: "prompt" })).toEqual({
+    ok: {},
+  })
+  const child = rpc(),
+    pid = required(child.childPid)
+  expect(((await child.request("get_state")) as Record<string, unknown>).isStreaming).toBe(true)
+  const original = storage.writeJSON.bind(storage)
+  const mocked = spyOn(storage, "writeJSON").mockImplementation(async (name, value, maximum) => {
+    if (name === "requests.json")
+      throw Object.assign(new Error("fixture full disk"), { code: "ENOSPC" })
+    return original(name, value, maximum)
+  })
+  try {
+    const stop = request("stop")
+    expect(await host.handle(stop, device, () => true)).toEqual({ ok: {} })
+    expect(() => process.kill(pid, 0)).toThrow()
+    expect(host.snapshot.error).toBe("storageFailure")
+    expect(host.snapshot.notices.some((notice) => notice.includes("Stop receipt"))).toBe(true)
+    expect(await host.handle(stop, device, () => true)).toEqual({ ok: {} })
+  } finally {
+    mocked.mockRestore()
+  }
+})
+
+test("review regression: activating another session clears extension editor offers", async () => {
+  await open()
+  await create()
+  await events({
+    type: "extension_ui_request",
+    id: "editor-offer-A",
+    method: "set_editor_text",
+    text: "Instructions for project A",
+  })
+  await until(() => host.snapshot.draftID !== undefined)
+  expect(host.wireSnapshot().draft).toBe("Instructions for project A")
+  const page = await host.directories.list()
+  expect(await send("createSession", { directory: page.id })).toEqual({ ok: {} })
+  expect(host.wireSnapshot().draft).toBeUndefined()
+  expect(host.wireSnapshot().draftID).toBeUndefined()
+})
+
+for (const [label, options] of [
+  ["control text", ["\u001b[31mRed", "Blue"]],
+  ["duplicate values", ["same", "same"]],
+  ["equivalent Swift identifiers", ["é", "e\u0301"]],
+  ["too many options", Array.from({ length: 101 }, (_, index) => String(index))],
+  ["non-string option", ["safe", 42]],
+] as const) {
+  test(`unsafe select dialog is unavailable: ${label}`, async () => {
+    await open()
+    await create()
+    const answers = spyOn(rpc(), "answer")
+    try {
+      await events({ type: "extension_ui_request", id: "unsafe-select", method: "select", options })
+      await until(() =>
+        answers.mock.calls.some(
+          ([answer]) => answer.id === "unsafe-select" && answer.cancelled === true,
+        ),
+      )
+      expect(host.wireSnapshot().dialogs).toEqual([])
+    } finally {
+      answers.mockRestore()
+    }
+  })
+}
+
+test("safe select options reach Pi unchanged and unoffered answers do not consume the dialog", async () => {
+  await open()
+  await create()
+  const answers = spyOn(rpc(), "answer")
+  try {
+    const options = ["é".repeat(256), "Second"]
+    await events({ type: "extension_ui_request", id: "exact-select", method: "select", options })
+    await until(() => host.snapshot.dialogs.some((dialog) => dialog.id === "exact-select"))
+    expect(host.wireSnapshot().dialogs[0]?.options).toEqual(options)
+    expect(
+      await send("answer", { dialog: "exact-select", value: "not offered", cancelled: false }),
+    ).toEqual({ failure: { _0: "invalidRequest" } })
+    expect(host.snapshot.dialogs).toHaveLength(1)
+    expect(answers).not.toHaveBeenCalled()
+    expect(
+      await send("answer", { dialog: "exact-select", value: options[0], cancelled: false }),
+    ).toEqual({ ok: {} })
+    expect(answers).toHaveBeenCalledWith({
+      id: "exact-select",
+      value: options[0],
+      confirmed: undefined,
+      cancelled: false,
+    })
+  } finally {
+    answers.mockRestore()
+  }
+})
+
+for (const code of ["EACCES", "ENOSPC"] as const) {
+  test(`Stop bypasses failed receipt admission, not authorization: ${code}`, async () => {
+    await open()
+    await create()
+    expect(
+      await send("prompt", { text: "CLI fixture: wait for Stop", delivery: "prompt" }),
+    ).toEqual({ ok: {} })
+    const pid = required(rpc().childPid),
+      original = storage.writeJSON.bind(storage)
+    const mocked = spyOn(storage, "writeJSON").mockImplementation(async (name, value, maximum) => {
+      if (name === "requests.json" || name === "sessions.json")
+        throw Object.assign(new Error("fixture unavailable disk"), { code })
+      return original(name, value, maximum)
+    })
+    try {
+      expect(await host.handle(request("stop"), device, () => false)).toEqual({
+        failure: { _0: "unauthorized" },
+      })
+      expect(await send("stop", {}, { session: randomUUID().toUpperCase() })).toEqual({
+        failure: { _0: "conflict" },
+      })
+      expect(process.kill(pid, 0)).toBe(true)
+      expect(await send("stop")).toEqual({ ok: {} })
+      expect(() => process.kill(pid, 0)).toThrow()
+      expect(host.wireSnapshot().error).toBe("storageFailure")
+      expect(host.snapshot.phase).toBe("interrupted")
+    } finally {
+      mocked.mockRestore()
+    }
+  })
+}
+
+test("a failed final Stop receipt does not erase confirmed idle or repeat the abort", async () => {
+  await open()
+  await create()
+  expect(await send("prompt", { text: "CLI fixture: wait for Stop", delivery: "prompt" })).toEqual({
+    ok: {},
+  })
+  const child = rpc(),
+    calls = spyOn(child, "request"),
+    original = storage.writeJSON.bind(storage)
+  let writes = 0
+  const mocked = spyOn(storage, "writeJSON").mockImplementation(async (name, value, maximum) => {
+    if (name === "requests.json" && ++writes >= 2)
+      throw Object.assign(new Error("fixture full disk"), { code: "ENOSPC" })
+    return original(name, value, maximum)
+  })
+  try {
+    const stop = request("stop")
+    expect(await host.handle(stop, device, () => true)).toEqual({ ok: {} })
+    expect(host.snapshot.phase).toBe("idle")
+    expect(host.snapshot.error).toBe("storageFailure")
+    expect(await host.handle(stop, device, () => true)).toEqual({ ok: {} })
+    expect(calls.mock.calls.filter(([command]) => command === "abort")).toHaveLength(1)
+    expect(((await child.request("get_state")) as Record<string, unknown>).isStreaming).toBe(false)
+  } finally {
+    mocked.mockRestore()
+    calls.mockRestore()
+  }
+})
+
+test("failed Stop receipt storage cannot turn unconfirmed process cleanup into success", async () => {
+  await open()
+  await create()
+  const child = rpc(),
+    original = storage.writeJSON.bind(storage)
+  const shutdown = spyOn(child, "shutdown").mockRejectedValue(
+    new RPCError("unknownOutcome", "Fixture termination not confirmed"),
+  )
+  const mocked = spyOn(storage, "writeJSON").mockImplementation(async (name, value, maximum) => {
+    if (name === "requests.json")
+      throw Object.assign(new Error("fixture full disk"), { code: "ENOSPC" })
+    return original(name, value, maximum)
+  })
+  try {
+    expect(await send("stop")).toEqual({ failure: { _0: "unknownOutcome" } })
+    expect(host.snapshot.error).toBe("unknownOutcome")
+    expect(process.kill(required(child.childPid), 0)).toBe(true)
+  } finally {
+    mocked.mockRestore()
+    shutdown.mockRestore()
+  }
+})
+
+for (const action of ["resumeSession", "closeSession"] as const) {
+  test(`${action} clears session-scoped editor offers in snapshots and replay`, async () => {
+    await open()
+    await create()
+    const first = required(host.snapshot.selected)
+    const page = await host.directories.list()
+    expect(await send("createSession", { directory: page.id })).toEqual({ ok: {} })
+    await events({
+      type: "extension_ui_request",
+      id: "editor-B",
+      method: "set_editor_text",
+      text: "Project B only",
+    })
+    await until(() => host.snapshot.draftID !== undefined)
+    const after = host.snapshot.sequence
+    expect(await send(action, action === "resumeSession" ? { id: first } : {})).toEqual({ ok: {} })
+    const snapshot = (await send("snapshot")) as {
+      snapshot: { _0: { draft?: string; draftID?: string } }
+    }
+    expect(snapshot.snapshot._0.draft).toBeUndefined()
+    expect(snapshot.snapshot._0.draftID).toBeUndefined()
+    const replay = (await send("synchronize", { epoch: host.snapshot.epoch, after })) as {
+      synchronized: { _0: { events: { selected?: string; draft?: string; draftID?: string }[] } }
+    }
+    const current = replay.synchronized._0.events.filter(
+      (state) => state.selected === host.snapshot.selected,
+    )
+    expect(current.length).toBeGreaterThan(0)
+    for (const state of current) {
+      expect(state.draft).toBeUndefined()
+      expect(state.draftID).toBeUndefined()
+    }
+    if (action === "closeSession") expect(host.snapshot.selected).toBeUndefined()
+    else expect(host.snapshot.selected).toBe(first)
+  })
+}
+
 test("dialogs expire, reject duplicate answers and reject stale session context", async () => {
   await open()
   await create()
