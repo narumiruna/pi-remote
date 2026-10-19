@@ -2,7 +2,7 @@
 
 Date: 2026-10-19. Base: `d51221d` (`main`, including PR #23). Handoff: [PR #24](https://github.com/narumiruna/pi-remote/pull/24). This record covers the reduced CLI milestone, not the unfinished native-app plan or complete upstream Pi RPC coverage.
 
-The final macOS and Linux CI gates pass, including the packed local/global npm artifact and native secret-store workers. Required skips are identified below; no failing acceptance check remains.
+Full-gate checkpoints and later focused review checks are recorded below. The packed local/global npm artifact passes on both platforms. Required skips are identified below; no failing acceptance check remains.
 
 ## Environments
 
@@ -18,8 +18,8 @@ Other architectures, runtime versions and Linux secret-store providers were not 
 
 | Check | Result |
 | --- | --- |
-| macOS `PI_REMOTE_TEST_OS_SECRETS=1 npm run ci` after PR review | 170 Bun tests pass; two Linux-only tests skip; seven hook tests pass; build and local/global tarball installation pass |
-| Linux equivalent full gate after PR review | 171 Bun tests pass; one root-only permission skip; seven hook tests, build and local/global installation pass |
+| macOS `PI_REMOTE_TEST_OS_SECRETS=1 npm run ci` at `285a058` | 170 Bun tests pass; two Linux-only tests skip; seven hook tests pass; build and local/global tarball installation pass |
+| Linux equivalent full gate at `285a058` | 171 Bun tests pass; one root-only permission skip; seven hook tests, build and local/global installation pass |
 | Linux non-root storage/directory/identity/secret subset | 36 pass, no skips; includes the permission case skipped as root |
 | Current Swift JSON encoder versus `src/fixtures/wire-v1.json` | Parsed values match |
 | TypeScript packet encoding decoded with production Swift types | Pass, including the minimal CLI snapshot |
@@ -37,7 +37,7 @@ The controlled flow uses the production `RemoteClient` and pinned TLS channel. I
 
 ## PR #24 review corrections
 
-All three review findings were reproduced with failing tests before the fixes. The focused coordinator suite now passes 46 tests. Fifteen tests cover the review cases and their related boundaries. Both full CLI gates above pass. The installed-Pi managed creation/resume probe also passes without provider prompts. The original Swift/iPhone checks remain evidence from the first milestone; they were not rerun for these TypeScript-only fixes.
+The first three review findings were reproduced with failing tests before the fixes. At `285a058`, the focused coordinator suite passed 46 tests. Fifteen tests covered those review cases and their related boundaries. Both full CLI gates above pass. The installed-Pi managed creation/resume probe also passes without provider prompts. The original Swift/iPhone checks remain evidence from the first milestone; they were not rerun for these TypeScript-only fixes.
 
 | Finding | Verified outcome |
 | --- | --- |
@@ -46,6 +46,14 @@ All three review findings were reproduced with failing tests before the fixes. T
 | [R3: cross-session editor offers](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4315848272), P2 | Create, resume and Close clear `draft` and `draftID` before the new context is published. Current-session snapshots and replay contain no prior-session offer. Phone-local saved drafts are not deleted. |
 
 No review item was deferred or left for clarification. The submitted review receipt and status comment contain no separate code proposal. Their findings are accounted for above. Hosted checks were absent at the review checkpoint; the reported gate results are local checks on macOS and the actual Linux runner.
+
+### Receipt-capacity follow-up
+
+[R4: Stop at receipt capacity](https://github.com/narumiruna/pi-remote/pull/24#discussion_r4316032019), P2, was reproduced at `285a058`: a streaming runtime remained active because Stop returned `capacity`. The new emergency path preserves all 10,000 existing receipts and adds none. It terminates the runtime and prevents new work until restart. Earlier request results still use normal deduplication. Repeated emergency Stop requests do not grow the table or repeat an abort after the runtime is gone.
+
+The updated coordinator suite passes 53 tests, including seven capacity cases. Coordinator and WSS checks pass 65 tests with no skips on each of macOS and Linux. Both platforms also pass Biome, full TypeScript typecheck, build and clean local/global package installation. Tests cover repeated requests, old receipt retention, authorization/epoch/session checks, unavailable storage, unconfirmed termination, pending-admission fencing and explicit recovery after restart. The earlier full-gate and native-app results above were reused; no new provider, Swift/iPhone or hardware check was needed for this TypeScript-only change.
+
+R1–R3 remain addressed. R4 is addressed by the bounded emergency path. No item is deferred or needs clarification.
 
 ## Negative and lifecycle checks
 

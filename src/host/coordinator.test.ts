@@ -700,6 +700,192 @@ test("review regression: oversized select options are cancelled, not changed", a
   }
 })
 
+function fillReceiptTable(): Record<string, { digest: string; done: boolean; fault?: string }> {
+  const receipts = (
+    host as unknown as {
+      receipts: Record<string, { digest: string; done: boolean; fault?: string }>
+    }
+  ).receipts
+  for (let index = Object.keys(receipts).length; index < 10_000; index++) {
+    receipts[`capacity-fixture-${index}`] = {
+      digest: "0".repeat(64),
+      done: true,
+      ...(index % 2 ? { fault: "invalidRequest" } : {}),
+    }
+  }
+  return receipts
+}
+
+test("review regression: full receipt storage cannot block Stop", async () => {
+  await open()
+  await create()
+  expect(await send("prompt", { text: "CLI fixture: wait for Stop", delivery: "prompt" })).toEqual({
+    ok: {},
+  })
+  const child = rpc(),
+    pid = required(child.childPid),
+    receipts = fillReceiptTable()
+  expect(((await child.request("get_state")) as Record<string, unknown>).isStreaming).toBe(true)
+  expect(await send("stop")).toEqual({ ok: {} })
+  expect(() => process.kill(pid, 0)).toThrow()
+  expect(Object.keys(receipts)).toHaveLength(10_000)
+  expect(host.snapshot.error).toBe("capacity")
+  expect(host.snapshot.notices.some((notice) => notice.includes("Restart the host"))).toBe(true)
+})
+
+test("capacity Stop keeps old receipts and remains bounded across repeated requests", async () => {
+  await open()
+  await create()
+  const prompt = request("prompt", { text: "CLI fixture: wait for Stop", delivery: "prompt" })
+  expect(await host.handle(prompt, device, () => true)).toEqual({ ok: {} })
+  const child = rpc(),
+    calls = spyOn(child, "request"),
+    receipts = fillReceiptTable()
+  const keys = Object.keys(receipts),
+    journal = spyOn(storage, "writeJSON")
+  try {
+    const stop = request("stop")
+    expect(await host.handle(stop, device, () => true)).toEqual({ ok: {} })
+    expect(await host.handle(stop, device, () => true)).toEqual({ ok: {} })
+    for (let index = 0; index < 32; index++) expect(await send("stop")).toEqual({ ok: {} })
+    expect(Object.keys(receipts)).toEqual(keys)
+    expect(journal.mock.calls.filter(([name]) => name === "requests.json")).toHaveLength(0)
+    expect(calls.mock.calls.filter(([command]) => command === "abort")).toHaveLength(1)
+    expect(await host.handle(prompt, device, () => true)).toEqual({ ok: {} })
+    expect(await send("prompt", { text: "Do not start new work", delivery: "prompt" })).toEqual({
+      failure: { _0: "capacity" },
+    })
+    expect(await send("createSession", { directory: (await host.directories.list()).id })).toEqual({
+      failure: { _0: "capacity" },
+    })
+    expect(rpc()).toBeUndefined()
+    expect(Object.keys(receipts)).toEqual(keys)
+  } finally {
+    calls.mockRestore()
+    journal.mockRestore()
+  }
+})
+
+test("capacity Stop keeps authorization, epoch and session checks", async () => {
+  await open()
+  await create()
+  expect(await send("prompt", { text: "CLI fixture: wait for Stop", delivery: "prompt" })).toEqual({
+    ok: {},
+  })
+  const child = rpc(),
+    pid = required(child.childPid)
+  fillReceiptTable()
+  expect(await host.handle(request("stop"), device, () => false)).toEqual({
+    failure: { _0: "unauthorized" },
+  })
+  expect(await send("stop", {}, { epoch: randomUUID().toUpperCase() })).toEqual({
+    failure: { _0: "unknownOutcome" },
+  })
+  expect(await send("stop", {}, { session: randomUUID().toUpperCase() })).toEqual({
+    failure: { _0: "conflict" },
+  })
+  expect(((await child.request("get_state")) as Record<string, unknown>).isStreaming).toBe(true)
+  expect(await send("stop")).toEqual({ ok: {} })
+  expect(() => process.kill(pid, 0)).toThrow()
+})
+
+test("capacity Stop can stop Pi while receipt and catalog storage are unavailable", async () => {
+  await open()
+  await create()
+  const pid = required(rpc().childPid),
+    receipts = fillReceiptTable()
+  const original = storage.writeJSON.bind(storage)
+  const journal = spyOn(storage, "writeJSON").mockImplementation(async (name, value, maximum) => {
+    if (name === "requests.json" || name === "sessions.json")
+      throw Object.assign(new Error("fixture full disk"), { code: "ENOSPC" })
+    return original(name, value, maximum)
+  })
+  try {
+    expect(await send("stop")).toEqual({ ok: {} })
+    expect(() => process.kill(pid, 0)).toThrow()
+    expect(Object.keys(receipts)).toHaveLength(10_000)
+    expect(journal.mock.calls.filter(([name]) => name === "requests.json")).toHaveLength(0)
+    expect(
+      host.snapshot.notices.some((notice) => notice.includes("Private session storage failed")),
+    ).toBe(true)
+  } finally {
+    journal.mockRestore()
+  }
+})
+
+test("capacity Stop reports unconfirmed termination and releases interrupt admission", async () => {
+  await open()
+  await create()
+  const child = rpc(),
+    pid = required(child.childPid),
+    receipts = fillReceiptTable()
+  const shutdown = spyOn(child, "shutdown").mockRejectedValue(
+    new RPCError("unknownOutcome", "Fixture exit not confirmed"),
+  )
+  try {
+    expect(await send("stop")).toEqual({ failure: { _0: "unknownOutcome" } })
+    expect(host.snapshot.error).toBe("unknownOutcome")
+    expect(process.kill(pid, 0)).toBe(true)
+    expect(Object.keys(receipts)).toHaveLength(10_000)
+  } finally {
+    shutdown.mockRestore()
+  }
+  expect(await send("stop")).toEqual({ ok: {} })
+  expect(() => process.kill(pid, 0)).toThrow()
+})
+
+test("restart resets receipt capacity without activating or replaying work", async () => {
+  await open()
+  await create()
+  const id = required(host.snapshot.selected),
+    epoch = host.snapshot.epoch
+  fillReceiptTable()
+  expect(await send("stop")).toEqual({ ok: {} })
+  await host.shutdown()
+  await open()
+  expect(host.snapshot.epoch).not.toBe(epoch)
+  expect(host.snapshot.selected).toBeUndefined()
+  expect(rpc()).toBeUndefined()
+  expect(await send("resumeSession", { id })).toEqual({ ok: {} })
+  expect(host.snapshot.selected).toBe(id)
+})
+
+test("capacity Stop fences a prompt still waiting for durable catalog acceptance", async () => {
+  await open()
+  await create()
+  const child = rpc(),
+    calls = spyOn(child, "request"),
+    original = storage.writeJSON.bind(storage)
+  let reached = false,
+    release = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const mocked = spyOn(storage, "writeJSON").mockImplementation(async (name, value, maximum) => {
+    if (name === "sessions.json" && !reached) {
+      reached = true
+      await gate
+    }
+    return original(name, value, maximum)
+  })
+  const waiting = send("prompt", { text: "Must not start after capacity Stop", delivery: "prompt" })
+  try {
+    await until(() => reached)
+    fillReceiptTable()
+    const stopped = send("stop")
+    await until(() => (host as unknown as { stopRevision: number }).stopRevision > 0)
+    release()
+    expect(await stopped).toEqual({ ok: {} })
+    expect(await waiting).toEqual({ failure: { _0: "cancelled" } })
+    expect(calls.mock.calls.filter(([command]) => command === "prompt")).toHaveLength(0)
+    expect(rpc()).toBeUndefined()
+  } finally {
+    release()
+    mocked.mockRestore()
+    calls.mockRestore()
+  }
+})
+
 test("review regression: Stop still stops Pi when its journal cannot be written", async () => {
   await open()
   await create()

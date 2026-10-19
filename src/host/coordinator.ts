@@ -310,7 +310,11 @@ export class Coordinator {
     if (mutation && ((this.mutating && !interrupt) || this.interrupting))
       return enumValue("failure", "busy")
     if (mutation) {
-      if (Object.keys(this.receipts).length >= 10_000) return enumValue("failure", "capacity")
+      if (Object.keys(this.receipts).length >= 10_000) {
+        if (request.action === "stop")
+          return this.stopAtCapacity(request, authorized, requestStopRevision)
+        return enumValue("failure", "capacity")
+      }
       if (interrupt) this.interrupting = true
       else this.mutating = true
       if (request.action === "stop") this.stopRevision += 1
@@ -380,6 +384,38 @@ export class Coordinator {
         if (interrupt) this.interrupting = false
         else this.mutating = false
       }
+    }
+  }
+
+  private async stopAtCapacity(
+    request: Request,
+    authorized: () => boolean,
+    requestStopRevision: number,
+  ): Promise<Record<string, unknown>> {
+    this.interrupting = true
+    try {
+      if (!authorized() || this.closing) throw new Fault("unauthorized")
+      this.stopRevision += 1
+      // No new work can be admitted until restart. Stop the runtime instead of
+      // growing the receipt table or evicting receipts for earlier work.
+      this.unresolvedInput = true
+      const result = await this.perform(request, authorized, requestStopRevision)
+      this.snapshot.error = "capacity"
+      const notice =
+        "Receipt storage is full. Work stopped. Restart the host before sending more work."
+      this.snapshot.notices = [
+        ...this.snapshot.notices.filter((value) => value !== notice).slice(-7),
+        notice,
+      ]
+      this.publish()
+      return result
+    } catch (error) {
+      const fault = faultCode(error)
+      this.snapshot.error = fault
+      this.publish()
+      return enumValue("failure", fault)
+    } finally {
+      this.interrupting = false
     }
   }
 
