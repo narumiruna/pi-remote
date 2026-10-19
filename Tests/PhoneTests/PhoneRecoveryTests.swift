@@ -332,6 +332,17 @@ final class PhoneRecoveryTests: XCTestCase {
         XCTAssertEqual(PhoneExtensionNotices.information(in: state), ["Ready", "Widget"])
     }
 
+    func testNoticeSummaryCountsSeverityWithoutIncludingDiagnosticText() {
+        let notices = [ExtensionNotice(id: "i", text: "Private information"),
+                       ExtensionNotice(id: "w", text: String(repeating: "Long warning\n", count: 100), severity: .warning),
+                       ExtensionNotice(id: "e", text: "Private error", severity: .error)]
+        XCTAssertEqual(PhoneExtensionNotices.summary(for: notices), "1 error · 1 warning")
+        XCTAssertEqual(PhoneExtensionNotices.summary(for: notices + notices), "2 errors · 2 warnings")
+        XCTAssertEqual(PhoneExtensionNotices.summary(for: [notices[1]]), "1 warning")
+        XCTAssertEqual(PhoneExtensionNotices.summary(for: [notices[0]]), "Extension information")
+        XCTAssertEqual(PhoneExtensionNotices.summary(for: []), "Extension information")
+    }
+
     func testTypedNoticesKeepSeverityAndLegacyFallbackDoesNotDuplicate() {
         var state = HostSnapshot(host: UUID(), epoch: UUID())
         state.notices = ["Information", "Warning", "Error"]
