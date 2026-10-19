@@ -170,7 +170,8 @@ public struct TranscriptReducer: Sendable {
                                      isError: !cancelled && exit.map { $0 != 0 } == true,
                                      truncated: value["truncated"]?.bool == true || body.utf8.count + outcome.utf8.count > 16_384)
         }
-        let text = content(value["content"])
+        let projection = contentProjection(value["content"])
+        let text = projection.text
         let fallback = value["summary"]?.string ?? value["output"]?.string ?? value["errorMessage"]?.string ?? ""
         let toolPrefix = role == "toolResult" ? value["toolName"]?.string.flatMap { $0.isEmpty ? nil : $0 + "\n" } ?? "" : ""
         let body = toolPrefix + (text.isEmpty ? fallback : text)
@@ -190,7 +191,8 @@ public struct TranscriptReducer: Sendable {
             isError: isError,
             truncated: presentation?.truncated == true || (value["content"]?.array ?? []).filter({ $0["type"]?.string == "image" }).count > 16,
             images: imageReferences(value["content"]),
-            tool: presentation?.tool
+            tool: presentation?.tool,
+            toolCallRanges: role == "assistant" && !projection.toolCallRanges.isEmpty ? projection.toolCallRanges : nil
         )
         _ = Self.boundMessage(&message, bytes: 16_384)
         return message
@@ -205,15 +207,32 @@ public struct TranscriptReducer: Sendable {
     }
 
     public static func content(_ value: JSONValue?) -> String {
-        if let string = value?.string { return string }
-        return (value?.array ?? []).compactMap { block -> String? in
+        contentProjection(value).text
+    }
+
+    private static func contentProjection(_ value: JSONValue?) -> (text: String, toolCallRanges: [Range<Int>]) {
+        if let string = value?.string { return (string, []) }
+        let parts = (value?.array ?? []).compactMap { block -> (text: String, toolCall: Bool)? in
             switch block["type"]?.string {
-            case "text": return block["text"]?.string
-            case "image": return "[Image]"
-            case "toolCall": return toolCallText(block)
+            case "text": return block["text"]?.string.map { ($0, false) }
+            case "image": return ("[Image]", false)
+            case "toolCall": return (toolCallText(block), true)
             default: return nil
             }
-        }.joined(separator: "\n")
+        }
+        return joinedContent(parts)
+    }
+
+    private static func joinedContent(_ parts: [(text: String, toolCall: Bool)]) -> (text: String, toolCallRanges: [Range<Int>]) {
+        var text = ""
+        var ranges: [Range<Int>] = []
+        for (index, part) in parts.enumerated() {
+            if index > 0 { text += "\n" }
+            let start = text.utf8.count
+            text += part.text
+            if part.toolCall { ranges.append(start..<text.utf8.count) }
+        }
+        return (text, ranges)
     }
 
     private mutating func updateBlocks(_ update: JSONValue?) {
@@ -228,9 +247,9 @@ public struct TranscriptReducer: Sendable {
         }
         guard blocks[index] != nil || blocks.count < 64 else { messages[row].truncated = true; return }
         let kind = type.hasPrefix("thinking") ? "thinking" : (type.hasPrefix("toolcall") ? "tool" : "text")
-        var block = blocks[index] ?? Block(kind: kind, text: "")
+        var block = blocks[index] ?? Block(kind: kind, text: "", name: kind == "tool" ? "Tool" : "")
         if type == "toolcall_start" {
-            let name = update?["toolName"]?.string ?? "Tool"
+            let name = update?["toolName"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Tool"
             block = Block(kind: kind, text: "", name: DisplayLimit.text(name, bytes: 16_384), truncated: name.utf8.count > 16_384)
         } else if type == "toolcall_end" {
             block = Block(kind: kind, text: Self.toolCallText(update?["toolCall"]))
@@ -240,9 +259,11 @@ public struct TranscriptReducer: Sendable {
         if block.text.utf8.count > 16_384 { block.text = DisplayLimit.text(block.text, bytes: 16_384); block.truncated = true }
         blocks[index] = block
         let ordered = blocks.sorted { $0.key < $1.key }.map(\.value)
-        messages[row].text = ordered.filter { $0.kind != "thinking" }.map {
-            $0.name.isEmpty ? $0.text : $0.name + "\n" + $0.text
-        }.joined(separator: "\n")
+        let projection = Self.joinedContent(ordered.filter { $0.kind != "thinking" }.map {
+            ($0.name.isEmpty ? $0.text : $0.name + "\n" + $0.text, $0.kind == "tool")
+        })
+        messages[row].text = projection.text
+        messages[row].toolCallRanges = projection.toolCallRanges.isEmpty ? nil : projection.toolCallRanges
         let thinking = ordered.filter { $0.kind == "thinking" }.map(\.text).joined(separator: "\n")
         messages[row].thinking = thinking.isEmpty ? nil : thinking
         messages[row].truncated = messages[row].truncated || ordered.contains { $0.truncated }
@@ -259,7 +280,7 @@ public struct TranscriptReducer: Sendable {
     }
 
     private static func toolCallText(_ call: JSONValue?) -> String {
-        let name = call?["name"]?.string ?? "Tool"
+        let name = call?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "Tool"
         guard let args = call?["arguments"] else { return name }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
@@ -268,13 +289,37 @@ public struct TranscriptReducer: Sendable {
     }
 
     private static func boundMessage(_ message: inout TranscriptMessage, bytes: Int) -> Bool {
-        let metadataBytes = message.tool?.displayBytes ?? 0
+        let toolBytes = message.tool?.displayBytes ?? 0
         // Do not retain a tool row without its outcome, or a shell row without its footer.
-        guard metadataBytes <= bytes else { return false }
-        let textLimit = bytes - metadataBytes
+        guard toolBytes <= bytes else { return false }
+        var textLimit = bytes - toolBytes
+        if let ranges = message.toolCallRanges {
+            var retained: [Range<Int>] = []
+            for range in ranges {
+                guard range.lowerBound < textLimit else { break }
+                let nextLimit = bytes - toolBytes - (retained.count + 1) * 16
+                // Never retain arguments without their typed disclosure range.
+                // If its metadata cannot fit, stop before the next tool call.
+                guard range.lowerBound < nextLimit else {
+                    textLimit = min(textLimit, range.lowerBound)
+                    break
+                }
+                retained.append(range)
+                textLimit = nextLimit
+            }
+            message.toolCallRanges = retained.isEmpty ? nil : retained
+        }
         if message.text.utf8.count > textLimit {
             if message.role == "bash" { return false }
             message.text = DisplayLimit.text(message.text, bytes: textLimit); message.truncated = true
+        }
+        if let ranges = message.toolCallRanges {
+            let end = message.text.utf8.count
+            let retained = ranges.compactMap { range -> Range<Int>? in
+                guard range.lowerBound >= 0, range.lowerBound < end else { return nil }
+                return range.lowerBound..<min(range.upperBound, end)
+            }
+            message.toolCallRanges = retained.isEmpty ? nil : retained
         }
         let thoughtLimit = max(0, textLimit - message.text.utf8.count)
         if let thinking = message.thinking, thinking.utf8.count > thoughtLimit {
@@ -293,6 +338,7 @@ public struct TranscriptReducer: Sendable {
             guard limit > 0 else { omitted = true; break }
             guard Self.boundMessage(&message, bytes: limit) else { omitted = true; break }
             remaining -= message.text.utf8.count + (message.thinking?.utf8.count ?? 0) + (message.tool?.displayBytes ?? 0)
+                + (message.toolCallRanges?.count ?? 0) * 16
             retained.append(message)
         }
         if retained.count < messages.count { omitted = true }

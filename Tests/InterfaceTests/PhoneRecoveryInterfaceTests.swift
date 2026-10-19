@@ -58,6 +58,111 @@ final class PhoneRecoveryInterfaceTests: XCTestCase {
         XCTAssertFalse(pending.exists)
     }
 
+    func testCompactWorkingComposerKeepsTranscriptVisibleWithKeyboard() {
+        let app = launch("compact-working")
+        defer { app.terminate() }
+        let editor = app.textFields["instruction"]
+        editor.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        editor.typeText("Keep this draft")
+        for _ in 0..<30 {
+            if keyboard.frame.minY < app.frame.maxY - 200 { break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "compact-working-keyboard"
+        capture.lifetime = .keepAlways
+        add(capture)
+        XCTAssertLessThan(keyboard.frame.minY, app.frame.maxY - 200)
+        let transcript = app.scrollViews["phone-conversation-transcript"]
+        let send = app.buttons["Send"]
+        let stop = app.buttons["Stop"]
+        let delivery = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Send as")).firstMatch
+        XCTAssertTrue(transcript.exists)
+        // Keyboard accessibility bounds can exclude the prediction row above the keys.
+        XCTAssertLessThanOrEqual(keyboard.frame.minY - send.frame.minY, 112)
+        let top = app.navigationBars.firstMatch.frame.maxY
+        let space = keyboard.frame.minY - top
+        let visibleTranscript = transcript.frame.intersection(CGRect(x: 0, y: top, width: app.frame.width, height: space))
+        XCTAssertGreaterThanOrEqual(visibleTranscript.height, 200)
+        XCTAssertGreaterThanOrEqual(visibleTranscript.height, space * 0.6)
+        for button in [send, stop, delivery, app.buttons["Attach"]] {
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+        XCTAssertLessThanOrEqual(send.frame.height, 48)
+        XCTAssertLessThan(abs(delivery.frame.midY - send.frame.midY), 10)
+        XCTAssertTrue(app.buttons["extension-notice-summary"].isHittable)
+        XCTAssertTrue(app.staticTexts["Fixture session"].exists)
+        XCTAssertTrue(app.staticTexts["Working"].exists)
+        delivery.tap()
+        app.buttons["Follow-up"].tap()
+        XCTAssertTrue(delivery.label.contains("Follow-up"))
+        XCTAssertEqual(editor.value as? String, "Keep this draft")
+    }
+
+    func testToolArgumentsAndOutputStartCollapsedAndCanCollapseAgain() {
+        let app = launch("tool-details")
+        defer { app.terminate() }
+        let tools = app.buttons.matching(NSPredicate(format: "label == %@", "bash"))
+        let call = tools.element(boundBy: 0)
+        let arguments = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "phone-tool-arguments-")).firstMatch
+        XCTAssertTrue(call.waitForExistence(timeout: 5))
+        XCTAssertTrue(call.label.contains("bash"))
+        XCTAssertGreaterThanOrEqual(call.frame.height, 44)
+        XCTAssertLessThanOrEqual(call.frame.height, 60)
+        XCTAssertTrue(app.staticTexts["Before the tool call."].isHittable)
+        XCTAssertTrue(app.staticTexts["After the tool call."].isHittable)
+        XCTAssertTrue(app.staticTexts["read {\"path\":\"ordinary prose\"}"].isHittable)
+        XCTAssertFalse(arguments.exists)
+        let output = app.staticTexts["bash\nFixture tool output."]
+        XCTAssertFalse(output.exists)
+        call.tap()
+        XCTAssertTrue(arguments.waitForExistence(timeout: 5))
+        XCTAssertTrue(arguments.label.contains("echo fixture;"))
+        app.scrollViews.firstMatch.swipeDown()
+        call.tap()
+        XCTAssertTrue(arguments.waitForNonExistence(timeout: 5))
+        let result = tools.element(boundBy: 1)
+        result.tap()
+        XCTAssertTrue(output.waitForExistence(timeout: 5))
+        result.tap()
+        XCTAssertTrue(output.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Send"].isHittable)
+    }
+
+    func testLargeEditArgumentsDoNotReplaceVisibleAssistantText() {
+        let app = launch("tool-edit")
+        defer { app.terminate() }
+        let call = app.buttons["edit"]
+        let arguments = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "phone-tool-arguments-")).firstMatch
+        XCTAssertTrue(call.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(call.frame.height, 60)
+        XCTAssertFalse(arguments.exists)
+        XCTAssertTrue(app.staticTexts["I will update the Spaces list."].isHittable)
+        XCTAssertTrue(app.staticTexts["The explanation stays visible."].isHittable)
+        XCTAssertTrue(app.buttons["Stop"].isHittable)
+        call.tap()
+        XCTAssertTrue(arguments.waitForExistence(timeout: 5))
+        XCTAssertTrue(arguments.label.contains("struct SpaceListView"))
+        XCTAssertTrue(arguments.label.contains("newText"))
+        app.scrollViews.firstMatch.swipeDown()
+        call.tap()
+        XCTAssertTrue(arguments.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["The explanation stays visible."].isHittable)
+    }
+
+    func testToolFailureStaysVisibleWithOutputCollapsed() {
+        let app = launch("tool-details-error")
+        defer { app.terminate() }
+        let error = app.staticTexts["Tool error: bash\nFixture tool output."]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(error.isHittable)
+        XCTAssertFalse(app.staticTexts["bash\nFixture tool output."].exists)
+        XCTAssertTrue(app.buttons["Send"].isHittable)
+    }
+
     func testWarningAndErrorUseCompactSummaryWithCompleteDetails() {
         let app = launch("extension-notices")
         defer { app.terminate() }

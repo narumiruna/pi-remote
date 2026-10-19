@@ -38,9 +38,6 @@ struct PhoneRoot: View {
                             }.font(.caption).padding(12)
                         }
                         if let state = model.state {
-                            if let session = state.sessions.first(where: { $0.id == state.selected }) {
-                                WorkingDirectoryHeader(directory: session.directory, status: model.connected ? state.phase.capitalized : "Disconnected")
-                            }
                             if !model.connected {
                                 HStack {
                                     Text("Disconnected · Cached conversation").font(.caption)
@@ -81,7 +78,14 @@ struct PhoneRoot: View {
                     .navigationTitle(model.state?.sessions.first(where: { $0.id == model.state?.selected })?.title ?? "Pi Remote")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
-                        ToolbarItem(placement: .topBarLeading) { Button("Sessions", systemImage: "sidebar.left") { model.panel = "sessions" }.labelStyle(.iconOnly).accessibilityLabel("Sessions").disabled(!model.connected) }
+                        ToolbarItem(placement: .principal) {
+                            if let state = model.state,
+                               let session = state.sessions.first(where: { $0.id == state.selected }) {
+                                PhoneConversationTitle(title: session.title, directory: session.directory,
+                                                       status: model.connected ? state.phase.capitalized : "Disconnected")
+                            }
+                        }
+                        ToolbarItem(placement: .topBarLeading) { Button("Spaces", systemImage: "square.grid.2x2") { model.panel = "sessions" }.labelStyle(.iconOnly).accessibilityLabel("Spaces").disabled(!model.connected) }
                         ToolbarItem(placement: .topBarTrailing) {
                             Menu {
                                 Button("Session controls") { model.panel = "controls" }.disabled(!model.connected)
@@ -177,7 +181,7 @@ struct PhoneRoot: View {
             let scope = model.contentScope
             Group {
                 switch model.panel {
-                case "sessions": SessionListView(state: state, request: request, newSession: { model.panel = "directory" }, selected: { model.panel = nil })
+                case "sessions": SpaceListView(state: state, request: request, newSession: { model.panel = "directory" }, selected: { model.panel = nil })
                 case "directory":
                     DirectoryBrowser(selecting: true, request: request, pathEntry: state.capabilities.contains("directory-path")) { id, _ in
                         _ = try await request(.createSession(directory: id)); model.panel = nil
@@ -204,19 +208,22 @@ struct PhoneRoot: View {
     }
 }
 
-private struct WorkingDirectoryHeader: View {
+private struct PhoneConversationTitle: View {
+    let title: String
     let directory: String
     let status: String
-    private var path: some View {
-        Text(URL(fileURLWithPath: directory).lastPathComponent).font(.caption.monospaced()).lineLimit(1)
-            .accessibilityHint("Working directory: " + directory + ". Open Session controls for the full path.")
-    }
+
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack { path.fixedSize(); Spacer(); Text(status).fixedSize() }
-            VStack(alignment: .leading, spacing: 4) { path.fixedSize(horizontal: false, vertical: true); Text(status) }
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }.font(.caption).padding(.horizontal)
+        VStack(spacing: 1) {
+            Text(title).font(.headline).lineLimit(1)
+            HStack(spacing: 6) {
+                Text(URL(fileURLWithPath: directory).lastPathComponent).lineLimit(1)
+                    .accessibilityHint("Working directory: " + directory + ". Open Session controls for the full path.")
+                Text("·").accessibilityHidden(true)
+                Text(status).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            }.font(.caption2).foregroundStyle(.secondary)
+        }
+        .accessibilityIdentifier("phone-session-header")
     }
 }
 

@@ -58,8 +58,8 @@ final class InterfaceTests: XCTestCase {
     }
 
     private func openImportReview(_ app: XCUIApplication) {
-        app.buttons["Sessions"].tap()
-        XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
+        app.buttons["Spaces"].tap()
+        XCTAssertTrue(app.navigationBars["Spaces"].waitForExistence(timeout: 5))
         app.buttons["Import JSONL session"].tap()
         XCTAssertTrue(app.navigationBars["Import session"].waitForExistence(timeout: 5))
         let choose = app.buttons["Choose session file"]
@@ -262,7 +262,8 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Close this Pi session?"].waitForExistence(timeout: 5))
         let confirm = try XCTUnwrap(app.buttons.matching(identifier: "Close Pi session").allElementsBoundByIndex.first { $0.isHittable })
         confirm.tap()
-        XCTAssertTrue(app.navigationBars["Sessions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Spaces"].waitForExistence(timeout: 5))
+        app.buttons["space-/Users/fixture/project"].tap()
         let saved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Fixture session")).firstMatch
         XCTAssertTrue(saved.waitForExistence(timeout: 5)); saved.tap()
         XCTAssertTrue(app.buttons["Send"].waitForExistence(timeout: 5))
@@ -512,6 +513,8 @@ final class InterfaceTests: XCTestCase {
     func testImageOutputOpensNativePreviewAndFullResolution() throws {
         let app = launch(["images"])
         let viewImage = app.buttons["View image 1"]
+        XCTAssertFalse(viewImage.exists)
+        app.buttons["Read image"].tap()
         for _ in 0..<6 where !viewImage.isHittable { app.scrollViews.firstMatch.swipeDown() }
         XCTAssertTrue(viewImage.isHittable)
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Image 2:")).firstMatch.exists)
@@ -538,8 +541,10 @@ final class InterfaceTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Image output"].waitForExistence(timeout: 5))
         XCUIDevice.shared.press(.home)
         app.activate()
-        XCTAssertTrue(viewImage.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Read image"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.navigationBars["Image output"].exists, "Background protection must remove image output sheets")
+        app.buttons["Read image"].tap()
+        XCTAssertTrue(viewImage.waitForExistence(timeout: 5))
     }
 
     func testSessionUsageIsReadableAndRefreshable() throws {
@@ -584,7 +589,7 @@ final class InterfaceTests: XCTestCase {
     func testDisconnectedRecoveryAndSavedConnectionsRemainReachable() throws {
         let app = launch(["disconnected"])
         XCTAssertTrue(app.buttons["Unavailable"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Sessions"].isEnabled)
+        XCTAssertFalse(app.buttons["Spaces"].isEnabled)
         let reconnect = app.buttons["Reconnect"]
         for _ in 0..<6 where !reconnect.isHittable { app.scrollViews.firstMatch.swipeUp() }
         reachable(reconnect, app: app)
@@ -604,7 +609,7 @@ final class InterfaceTests: XCTestCase {
         let app = launch([])
         instruction(app).tap(); instruction(app).typeText("Directory draft")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        app.buttons["Sessions"].tap()
+        app.buttons["Spaces"].tap()
         app.buttons["New session"].tap()
         XCTAssertTrue(app.buttons["project"].waitForExistence(timeout: 5))
         app.buttons["project"].tap()

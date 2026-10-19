@@ -33,7 +33,16 @@ actor FixtureConnection: PhoneConnection {
         let session = UUID()
         state.selected = session
         state.sessions = [SessionInfo(id: session, title: "Fixture session", directory: "/Users/fixture/project")]
-        state.phase = phase == "working" || phase == "streaming" ? "working" : "idle"
+        if phase.hasPrefix("spaces") {
+            state.sessions += [
+                SessionInfo(id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+                            title: "Fixture session", directory: "/Users/fixture/project", interrupted: true),
+                SessionInfo(id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+                            title: "Other directory session", directory: "/Users/fixture/other/project")
+            ]
+        }
+        if phase == "spaces-empty" { state.sessions = []; state.selected = nil }
+        state.phase = phase == "working" || phase == "streaming" || phase == "spaces-working" ? "working" : "idle"
         if phase == "retrying" { state.phase = "retrying" }
         state.piVersion = "UI fixture"
         state.runtime = RuntimeSettings(steeringMode: .oneAtATime, followUpMode: .oneAtATime, autoCompactionEnabled: true)
@@ -71,6 +80,37 @@ actor FixtureConnection: PhoneConnection {
                 widgets: [ExtensionWidget(id: "above", text: "Fixture above widget", placement: .aboveEditor),
                           ExtensionWidget(id: "below", text: "Fixture below widget", placement: .belowEditor)],
                 notices: notices)
+        }
+        if ["tool-details", "tool-details-error", "compact-working"].contains(phase) {
+            let call: JSONValue = .object(["role": .string("assistant"), "content": .array([
+                .object(["type": .string("text"), "text": .string("Before the tool call.")]),
+                .object(["type": .string("toolCall"), "name": .string("bash"), "arguments": .object([
+                    "command": .string(String(repeating: "echo fixture; ", count: 100))
+                ])]),
+                .object(["type": .string("text"), "text": .string("After the tool call.")])
+            ])])
+            state.messages = [TranscriptReducer.message(call)!,
+                              TranscriptMessage(role: "tool", text: "bash\nFixture tool output.", isError: phase == "tool-details-error"),
+                              TranscriptMessage(role: "assistant", text: "read {\"path\":\"ordinary prose\"}")]
+        }
+        if phase == "tool-edit" {
+            let call: JSONValue = .object(["role": .string("assistant"), "content": .array([
+                .object(["type": .string("text"), "text": .string("I will update the Spaces list.")]),
+                .object(["type": .string("toolCall"), "name": .string("edit"), "arguments": .object([
+                    "edits": .array([.object(["newText": .string("struct SpaceListView: View {\\n" + String(repeating: "    let state: HostSnapshot\\n", count: 50) + "}")])]),
+                    "path": .string("Apps/Shared/SessionViews.swift")
+                ])]),
+                .object(["type": .string("text"), "text": .string("The explanation stays visible.")])
+            ])])
+            state.messages = [TranscriptReducer.message(call)!]
+            state.messages[0].streaming = true
+            state.phase = "working"
+        }
+        if phase == "compact-working" {
+            state.phase = "working"
+            state.extensionDisplay = ExtensionDisplayState(notices: [
+                ExtensionNotice(id: "warning", text: "Fixture warning", severity: .warning)
+            ])
         }
         if phase == "images" {
             state.messages = [TranscriptMessage(role: "tool", text: "Read image\n[Image]", images: [OutputImageReference(id: Self.imageID), OutputImageReference(id: UUID(), fault: .tooLarge)])]
